@@ -254,6 +254,20 @@ export class TabManager {
     this.emitChange();
   }
 
+  // Drag-reorder from the tab strip — dragId moves to sit right before
+  // dropId's current position, same semantics as the header favorites bar's
+  // own reorder() (use-header-favorites.ts).
+  reorderTab(dragId: string, dropId: string) {
+    if (dragId === dropId) return;
+    if (!this.order.includes(dragId) || !this.order.includes(dropId)) return;
+    const rest = this.order.filter((id) => id !== dragId);
+    const dropIndex = rest.indexOf(dropId);
+    if (dropIndex === -1) return;
+    rest.splice(dropIndex, 0, dragId);
+    this.order = rest;
+    this.emitChange();
+  }
+
   switchTab(id: string) {
     const view = this.views.get(id);
     if (!view || id === this.activeId) return;

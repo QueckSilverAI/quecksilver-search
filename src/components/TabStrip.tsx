@@ -9,6 +9,7 @@ type Props = {
   loadingTabIds: Set<string>;
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
+  onReorder: (dragId: string, dropId: string) => void;
   onNewTab: () => void;
   onLogoClick: () => void;
   hasNativeControls: boolean;
@@ -77,6 +78,7 @@ export function TabStrip({
   loadingTabIds,
   onSelect,
   onClose,
+  onReorder,
   onNewTab,
   onLogoClick,
   hasNativeControls,
@@ -86,6 +88,13 @@ export function TabStrip({
   onCloseWindow,
 }: Props) {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  // Drag-reorder — same pattern as the header favorites bar
+  // (HeaderFavoritesBar.tsx): native HTML5 drag-and-drop, draggedId is the
+  // tab being picked up, dropTargetId is whichever tab it's currently
+  // hovering over. onReorder inserts draggedId right before dropTargetId's
+  // current position.
+  const [draggedId, setDraggedId] = useState<string | null>(null);
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null);
 
   return (
     <div className="relative flex h-12 shrink-0 items-center gap-0 rounded-t-[10px] pl-2.5 pr-3 [-webkit-app-region:drag]" style={{ background: "var(--chrome-strip)" }}>
@@ -121,14 +130,45 @@ export function TabStrip({
                   style={{ opacity: dividerHidden ? 0 : 1 }}
                 />
               )}
+              {/* Drop-position indicator — a thin brand-colored bar that
+                  pushes the tabs apart, same idea as the favorites bar's own
+                  drag indicator (HeaderFavoritesBar.tsx). */}
+              {dropTargetId === tab.id && draggedId && draggedId !== tab.id && (
+                <div className="mb-2 h-6 w-[2px] shrink-0 self-end rounded-full" style={{ background: "var(--brand)" }} />
+              )}
               <div
+                draggable
+                onDragStart={(e) => {
+                  // The empty setData call is required, not optional —
+                  // Chromium doesn't reliably fire drop at all without SOME
+                  // data actually set here.
+                  e.dataTransfer.setData("text/plain", tab.id);
+                  e.dataTransfer.effectAllowed = "move";
+                  setDraggedId(tab.id);
+                }}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  if (draggedId && draggedId !== tab.id) setDropTargetId(tab.id);
+                }}
+                onDragLeave={() => setDropTargetId((v) => (v === tab.id ? null : v))}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  if (draggedId && draggedId !== tab.id) onReorder(draggedId, tab.id);
+                  setDraggedId(null);
+                  setDropTargetId(null);
+                }}
+                onDragEnd={() => {
+                  setDraggedId(null);
+                  setDropTargetId(null);
+                }}
                 onClick={() => onSelect(tab.id)}
                 onMouseEnter={() => setHoveredId(tab.id)}
                 onMouseLeave={() => setHoveredId((v) => (v === tab.id ? null : v))}
                 className={
-                  active
+                  (active
                     ? `relative flex ${TAB_HEIGHT} shrink-0 cursor-pointer items-center gap-2 self-end rounded-t-[10px] bg-background px-2.5`
-                    : `flex ${TAB_HEIGHT} shrink-0 cursor-pointer items-center gap-2 self-end rounded-t-lg px-2.5 text-muted-foreground transition-colors hover:bg-foreground/5`
+                    : `flex ${TAB_HEIGHT} shrink-0 cursor-pointer items-center gap-2 self-end rounded-t-lg px-2.5 text-muted-foreground transition-colors hover:bg-foreground/5`) +
+                  (draggedId === tab.id ? " opacity-40" : "")
                 }
                 style={{ width: TAB_WIDTH }}
               >

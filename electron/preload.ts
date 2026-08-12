@@ -18,6 +18,9 @@ const tabs = {
   close: (id: string): Promise<void> => ipcRenderer.invoke("tabs:close", id),
   switch: (id: string): Promise<void> => ipcRenderer.invoke("tabs:switch", id),
   list: (): Promise<TabsSnapshot> => ipcRenderer.invoke("tabs:list"),
+  // Drag-reorder in the tab strip — moves dragId to sit right before
+  // dropId's current position.
+  reorder: (dragId: string, dropId: string): Promise<void> => ipcRenderer.invoke("tabs:reorder", dragId, dropId),
   navigate: (id: string, url: string): Promise<void> => ipcRenderer.invoke("tabs:navigate", id, url),
   goBack: (id: string): Promise<void> => ipcRenderer.invoke("tabs:goBack", id),
   goForward: (id: string): Promise<void> => ipcRenderer.invoke("tabs:goForward", id),

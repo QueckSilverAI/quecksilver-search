@@ -2,7 +2,10 @@
   "name": "quecksilver-search",
   "version": "1.0.0",
   "description": "QueckSilver Search — a minimal, Swiss-designed desktop browser with Zora built in.",
-  "author": "QueckSilver AI",
+  "author": {
+    "name": "QueckSilver AI",
+    "email": "team@quecksilver.ch"
+  },
   "private": true,
   "sideEffects": false,
   "type": "module",
@@ -16,7 +19,7 @@
     "format": "prettier --write .",
     "electron:build:main": "node scripts/build-electron.mjs",
     "electron:dev": "concurrently -k -n vite,electron -c blue,magenta \"npm run dev\" \"node scripts/build-electron.mjs --watch\" \"wait-on http://localhost:8080 electron/dist/main.cjs electron/dist/preload.cjs electron/dist/tab-preload.cjs && cross-env NODE_ENV=development electron .\"",
-    "electron:pack": "npm run build && npm run electron:build:main && electron-builder"
+    "electron:pack": "npm run build && npm run electron:build:main && electron-builder --publish never"
   },
   "dependencies": {
     "sql.js": "^1.13.0",
