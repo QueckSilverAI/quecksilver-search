@@ -524,7 +524,7 @@ function Index() {
           loadingTabIds={loadingHomeTabs}
           onSelect={(id) => switchTab(id)}
           onClose={(id) => closeTab(id)}
-          onReorder={(dragId, dropId) => reorderTabs(dragId, dropId)}
+          onReorder={(newOrder) => reorderTabs(newOrder)}
           onNewTab={() => newTab()}
           onLogoClick={openQuecksilverWebsite}
           hasNativeControls={hasNativeControls}

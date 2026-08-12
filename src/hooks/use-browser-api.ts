@@ -41,7 +41,7 @@ type BrowserAPI = {
     close: (id: string) => Promise<void>;
     switch: (id: string) => Promise<void>;
     list: () => Promise<TabsSnapshot>;
-    reorder: (dragId: string, dropId: string) => Promise<void>;
+    reorder: (newOrder: string[]) => Promise<void>;
     navigate: (id: string, url: string) => Promise<void>;
     goBack: (id: string) => Promise<void>;
     goForward: (id: string) => Promise<void>;
@@ -178,7 +178,7 @@ export function useBrowserApi() {
   const newTab = useCallback((url?: string) => api?.tabs.new(url), [api]);
   const closeTab = useCallback((id: string) => api?.tabs.close(id), [api]);
   const switchTab = useCallback((id: string) => api?.tabs.switch(id), [api]);
-  const reorderTabs = useCallback((dragId: string, dropId: string) => api?.tabs.reorder(dragId, dropId), [api]);
+  const reorderTabs = useCallback((newOrder: string[]) => api?.tabs.reorder(newOrder), [api]);
   const navigate = useCallback((id: string, url: string) => api?.tabs.navigate(id, url), [api]);
   const goBack = useCallback((id: string) => api?.tabs.goBack(id), [api]);
   const goForward = useCallback((id: string) => api?.tabs.goForward(id), [api]);

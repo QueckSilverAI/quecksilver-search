@@ -348,7 +348,7 @@ function registerIpc() {
   ipcMain.handle("tabs:close", (e, id: string) => contextFor(e)?.tabs.closeTab(id));
   ipcMain.handle("tabs:switch", (e, id: string) => contextFor(e)?.tabs.switchTab(id));
   ipcMain.handle("tabs:list", (e) => contextFor(e)?.tabs.listTabs());
-  ipcMain.handle("tabs:reorder", (e, dragId: string, dropId: string) => contextFor(e)?.tabs.reorderTab(dragId, dropId));
+  ipcMain.handle("tabs:reorder", (e, newOrder: string[]) => contextFor(e)?.tabs.reorderTabs(newOrder));
   ipcMain.handle("tabs:navigate", (e, id: string, url: string) => contextFor(e)?.tabs.navigate(id, url));
   ipcMain.handle("tabs:goBack", (e, id: string) => contextFor(e)?.tabs.goBack(id));
   ipcMain.handle("tabs:goForward", (e, id: string) => contextFor(e)?.tabs.goForward(id));
