@@ -644,6 +644,30 @@ export function TabStrip({
           });
         })()}
 
+        {/* Same trailing divider as between two adjacent inactive tabs —
+            without it the last tab ran straight into the "+" button with
+            no separation at all, while every other inactive/inactive
+            boundary got one. Skipped when the last slot IS the active tab
+            (that already has its own notch-corner separation, same rule
+            as the between-tab dividers above) or when hovering that tab. */}
+        {(() => {
+          const lastTab = orderedTabs[orderedTabs.length - 1];
+          if (!lastTab) return null;
+          const lastGroup = lastTab.groupId ? groupsById.get(lastTab.groupId) : undefined;
+          const lastIsCollapsedGroup = Boolean(lastGroup?.collapsed);
+          const lastSlotActive = lastIsCollapsedGroup
+            ? orderedTabs.some((t) => t.groupId === lastGroup!.id && t.id === activeId)
+            : lastTab.id === activeId;
+          const lastDividerHidden = !lastIsCollapsedGroup && hoveredId === lastTab.id;
+          if (lastSlotActive) return null;
+          return (
+            <div
+              className="mb-2 h-6 w-px shrink-0 self-end bg-black/10 transition-opacity"
+              style={{ opacity: lastDividerHidden || draggingId !== null ? 0 : 1 }}
+            />
+          );
+        })()}
+
         <button
           onClick={onNewTab}
           aria-label="New tab"

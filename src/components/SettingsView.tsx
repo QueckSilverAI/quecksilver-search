@@ -142,13 +142,17 @@ export function SettingsView({ nightModeTabId }: { nightModeTabId?: string | nul
   const { level: zoomLevel, setLevel: setZoomLevel } = useZoomLevel();
   const { style: toolbarStyle, setStyle: setToolbarStyle } = useToolbarStyle();
   const [toolbarStyleOpen, setToolbarStyleOpen] = useState(false);
-  // Sample data for the style picker's live previews — a fixed "download
-  // in progress" and "split active" state so every option actually shows
-  // its busy/active treatment, not just the plain resting look.
+  // Sample data for the style picker's live previews — a fixed "split
+  // active" state so options showing an active treatment aren't stuck on
+  // the plain resting look. The download icon deliberately isn't marked
+  // busy here: that used to spin a loading ring in every preview, which
+  // was just visual noise for a state that (now that an in-progress
+  // download replaces the whole toolbar, see ToolbarActionIcons) these
+  // per-style previews don't actually represent anyway.
   const previewActions: ToolbarAction[] = [
     { id: "edit", icon: Edit3, label: "Edit", onClick: () => {} },
     { id: "settings", icon: SettingsIcon, label: "Settings", onClick: () => {} },
-    { id: "download", icon: Download, label: "Downloads", onClick: () => {}, busy: true },
+    { id: "download", icon: Download, label: "Downloads", onClick: () => {} },
     { id: "pip", icon: PictureInPicture2, label: "Picture-in-Picture", onClick: () => {} },
     { id: "split", icon: Columns2, label: "Split", onClick: () => {}, active: true },
   ];

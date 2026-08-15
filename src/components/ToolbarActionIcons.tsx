@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, type LucideIcon } from "lucide-react";
+import { Check, Download, Plus, type LucideIcon } from "lucide-react";
 import type { ToolbarStyleId } from "@/lib/toolbar-style";
 import type { ToolbarIconId } from "@/lib/settings-store";
 
@@ -13,9 +13,25 @@ export type ToolbarAction = {
   justDone?: boolean; // e.g. a download just finished — brief checkmark
 };
 
+// The one download currently driving the toolbar's unified download state
+// (see the early return below). Only the single most-recent progressing
+// download is shown — the toolbar isn't a download manager, it's a status
+// glance; Settings → Downloads is still where every download lives.
+export type ActiveDownload = {
+  filename: string;
+  receivedBytes: number;
+  totalBytes: number;
+};
+
 type Props = {
   style: ToolbarStyleId;
   actions: ToolbarAction[];
+  // When set, the whole toolbar cluster renders as a single green
+  // download-progress pill instead of whatever `style` normally draws —
+  // deliberately the same look regardless of style, since a 17-way
+  // reskin of an in-progress download isn't worth the upkeep and would
+  // make the "something is downloading" signal less consistent, not more.
+  activeDownload?: ActiveDownload;
   // Drag-reorder — same mechanism regardless of visual style, since it's
   // just which array position each action renders at.
   draggedId: ToolbarIconId | null;
@@ -69,7 +85,7 @@ function dragProps(a: ToolbarAction, draggedId: ToolbarIconId | null, onDragStar
   };
 }
 
-export function ToolbarActionIcons({ style, actions, draggedId, onDragStart, onDropOn, onDragEnd }: Props) {
+export function ToolbarActionIcons({ style, actions, activeDownload, draggedId, onDragStart, onDropOn, onDragEnd }: Props) {
   const [clickedId, setClickedId] = useState<ToolbarIconId | null>(null);
   // Declared unconditionally here (not inside the sliding-highlight branch
   // below) — React requires the same hooks in the same order on every
@@ -85,6 +101,76 @@ export function ToolbarActionIcons({ style, actions, draggedId, onDragStart, onD
     setClickedId(a.id);
     setTimeout(() => setClickedId((v) => (v === a.id ? null : v)), 420);
   };
+
+  // ── unified download state — overrides every style below while a
+  // download is progressing. Clicking it opens Downloads, same as the
+  // normal download icon (reuses that action's onClick rather than
+  // hardcoding a route, so it stays correct if that ever changes). Placed
+  // after every hook above (not as an early return right at the top) for
+  // the exact same reason as the hoverIdx comment above: an early return
+  // before a hook call changes the hook count between renders and crashes
+  // the page the moment a download starts or finishes.
+  if (activeDownload) {
+    const pct = activeDownload.totalBytes > 0 ? Math.min(1, activeDownload.receivedBytes / activeDownload.totalBytes) : null;
+    const openDownloads = actions.find((a) => a.id === "download")?.onClick;
+    return (
+      <button
+        onClick={openDownloads}
+        className="flex h-8 items-center gap-1.5 rounded-full bg-green-600 pl-2 pr-3 text-white shadow-[0_1px_3px_rgba(0,0,0,0.15)]"
+      >
+        {/* Download icon — static, far left, deliberately its own element
+            rather than the spinner drawn on top of it (that read as one
+            confused icon instead of two separate signals: "this is a
+            download" + "it's in progress"). */}
+        <Download className="h-3.5 w-3.5 shrink-0" />
+        {/* Spinner — a plain ring, nothing inside it, sitting beside the
+            download icon rather than wrapping it. */}
+        <span className="h-3 w-3 shrink-0 rounded-full border-2 border-white/40 border-t-white animate-spin" />
+        {/* Name + progress bar — a fixed min/max width range so a short
+            filename doesn't leave the whole pill looking squashed, but a
+            very long one still gets truncated instead of growing forever. */}
+        <span className="flex min-w-[110px] max-w-[180px] flex-col items-start gap-0.5">
+          <span className="w-full truncate text-left text-[11px] font-semibold leading-none">{activeDownload.filename}</span>
+          <span className="h-[3px] w-full overflow-hidden rounded-full bg-white/25">
+            <span
+              className="block h-full rounded-full bg-white transition-[width] duration-200"
+              style={{ width: pct !== null ? `${Math.round(pct * 100)}%` : "40%", ...(pct === null ? { animation: "toolbar-download-indeterminate 1.2s ease-in-out infinite" } : {}) }}
+            />
+          </span>
+        </span>
+        <style>{`
+          @keyframes toolbar-download-indeterminate {
+            0% { transform: translateX(-60%); }
+            100% { transform: translateX(160%); }
+          }
+        `}</style>
+      </button>
+    );
+  }
+
+  // ── seamless-pill — one h-8 pill, same height/shadow as the profile
+  // pill next to it, all icons inside with just a per-icon hover circle
+  // (no dividers between them, unlike segmented-pill above).
+  if (style === "seamless-pill") {
+    return (
+      <div className="flex h-8 items-center gap-0.5 rounded-full bg-card px-1 shadow-[0_1px_3px_rgba(0,0,0,0.15)]">
+        {actions.map((a) => (
+          <button
+            key={a.id}
+            {...drag(a)}
+            onClick={a.onClick}
+            className={`relative flex h-6 w-6 items-center justify-center rounded-full text-foreground transition-colors hover:bg-foreground/10 ${opacity(a)}`}
+          >
+            {a.busy ? (
+              <span className="h-4 w-4 shrink-0 rounded-full border-2 border-green-500 border-t-transparent animate-spin" />
+            ) : (
+              <Glyph a={a} className="h-[15px] w-[15px]" />
+            )}
+          </button>
+        ))}
+      </div>
+    );
+  }
 
   // ── plain — the original, always-visible row ──────────────────────
   if (style === "plain") {
@@ -355,7 +441,7 @@ export function ToolbarActionIcons({ style, actions, draggedId, onDragStart, onD
     return (
       <div className="group/fan relative flex items-center">
         <button className="flex h-8 w-8 items-center justify-center rounded-full text-white" style={{ background: "var(--brand)" }} tabIndex={0}>
-          <span className="text-base leading-none">+</span>
+          <Plus className="h-4 w-4" />
         </button>
         <div className="ml-1.5 flex items-center gap-1 rounded-full border border-border bg-card p-1 opacity-0 shadow-md transition-opacity duration-150 group-focus-within/fan:opacity-100 group-hover/fan:opacity-100">
           {actions.map((a) => (

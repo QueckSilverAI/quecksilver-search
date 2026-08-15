@@ -58,11 +58,27 @@ export function registerDownloadTracking(onChanged: () => void) {
     onChanged();
 
     item.on("updated", (_e, state) => {
-      addOrUpdate({ ...record, state: state === "interrupted" ? "interrupted" : "progressing", receivedBytes: item.getReceivedBytes() });
+      // item.getSavePath() — not the `savePath` we requested up front — is
+      // the actual final location Electron/Chromium is writing to. Usually
+      // identical to our request, but not guaranteed: this is exactly what
+      // silently went stale for zip downloads specifically (Chromium's
+      // extra scrutiny for archive/executable-bearing files can still
+      // rename or relocate the file even after setSavePath was called).
+      // Trusting our own precomputed guess here is what caused "Open"
+      // (shell.openPath, which checks the file really is there) to fail
+      // with "path not found" while "Show in folder" (shell.showItemInFolder,
+      // which just opens the containing directory regardless of whether the
+      // exact file exists) kept working and masked the mismatch.
+      addOrUpdate({ ...record, path: item.getSavePath() || record.path, state: state === "interrupted" ? "interrupted" : "progressing", receivedBytes: item.getReceivedBytes() });
       onChanged();
     });
     item.once("done", (_e, state) => {
-      addOrUpdate({ ...record, state: state === "completed" ? "completed" : state === "cancelled" ? "cancelled" : "interrupted", receivedBytes: item.getReceivedBytes() });
+      addOrUpdate({
+        ...record,
+        path: item.getSavePath() || record.path,
+        state: state === "completed" ? "completed" : state === "cancelled" ? "cancelled" : "interrupted",
+        receivedBytes: item.getReceivedBytes(),
+      });
       onChanged();
     });
   });

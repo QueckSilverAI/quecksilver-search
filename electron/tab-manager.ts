@@ -531,8 +531,17 @@ export class TabManager {
           },
         };
       }
+      // Anything that isn't a known auth-popup flow (checked above) still
+      // shouldn't spawn a real OS window, but overwriting the CURRENT tab
+      // with wherever the popup wanted to go is its own bug: this is the
+      // exact path a lot of ad/redirect popups use (e.g. "click a video
+      // thumbnail" firing a window.open() to some other site), and having
+      // that silently replace the page someone was actually reading is
+      // worse than the popup itself. Opens in a new tab instead — close
+      // enough to what the site asked for (a separate destination) without
+      // either spawning a native window or blowing away the current one.
       const target = trackingParamsEnabled() ? (stripTrackingParams(url) ?? url) : url;
-      view.webContents.loadURL(target).catch(() => {});
+      this.createTab(target);
       return { action: "deny" };
     });
     // Popups created via the "allow" branch above are plain Electron
@@ -554,6 +563,29 @@ export class TabManager {
       this.onContextMenuRequest?.(id, view.webContents, params, this.bounds);
     });
     view.webContents.on("dom-ready", () => view.setBackgroundColor("#ffffff"));
+    // HTML5 Fullscreen API (YouTube's fullscreen button, video players,
+    // etc.) — a *document* asking to fill the screen, completely separate
+    // from F11's OS-level "hide our own chrome" fullscreen (see
+    // onShortcutF11 in routes/index.tsx). Without handling this, the page
+    // gets exactly nothing: Electron never resizes the WebContentsView
+    // past its normal content-area bounds on its own, so a site's
+    // `:fullscreen` CSS ends up fighting a view that never actually grew —
+    // some sites visibly do nothing, others hide their own chrome via that
+    // CSS without their video/canvas filling the (still content-rect-sized)
+    // view, which is the blank white page.
+    //
+    // Reusing the exact win.setFullScreen() the F11 shortcut already calls
+    // (see main.ts's enter-full-screen/leave-full-screen → chromeHidden)
+    // is deliberate: that already hides our header and resizes this tab's
+    // view to the full window through the normal ResizeObserver →
+    // tabs:setBounds round-trip — no separate "fullscreen video" bounds
+    // logic needed, it's the same path F11 already uses.
+    view.webContents.on("enter-html-full-screen", () => this.win.setFullScreen(true));
+    // Covers both "site's own exit-fullscreen button" and Escape — Chromium
+    // itself already exits the *document's* fullscreen on Escape regardless
+    // of anything here, but without this our chrome would stay hidden and
+    // the view stuck at full-window size after that happened.
+    view.webContents.on("leave-html-full-screen", () => this.win.setFullScreen(false));
     // Ctrl+wheel scroll or a trackpad pinch — Electron detects the native
     // gesture itself and just tells us which direction; actually applying
     // it is on us, same as a real browser's per-page zoom (separate from

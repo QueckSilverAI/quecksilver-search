@@ -19,10 +19,12 @@ export type ToolbarStyleId =
   | "click-pulse"
   | "radial-fan"
   | "progressive-dots"
-  | "sliding-drawer";
+  | "sliding-drawer"
+  | "seamless-pill";
 
 export const TOOLBAR_STYLES: { id: ToolbarStyleId; label: string }[] = [
-  { id: "underline-slide", label: "Default" },
+  { id: "seamless-pill", label: "Default" },
+  { id: "underline-slide", label: "Sliding underline" },
   { id: "plain", label: "Plain" },
   { id: "segmented-pill", label: "Segmented pill" },
   { id: "tinted-circles", label: "Tinted circles" },
@@ -41,7 +43,7 @@ export const TOOLBAR_STYLES: { id: ToolbarStyleId; label: string }[] = [
 ];
 
 const KEY = "qs-toolbar-style";
-const DEFAULT_STYLE: ToolbarStyleId = "underline-slide";
+const DEFAULT_STYLE: ToolbarStyleId = "seamless-pill";
 
 // Settings (where the picker lives) and the toolbar itself (routes/index.tsx)
 // are separate component instances, each with their own useToolbarStyle()

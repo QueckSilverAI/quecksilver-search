@@ -150,6 +150,19 @@ export function applyPrivacyHardening(targetSession?: Electron.Session) {
   // doesn't have a dedicated toggle for (geolocation, MIDI, HID, ...) —
   // those stay hardcoded-denied regardless, there's no UI for them.
   ses.setPermissionRequestHandler((webContents, permission, callback) => {
+    // The Fullscreen API (a video player's fullscreen button, etc.) isn't
+    // a privacy-sensitive permission the way camera/mic/geolocation are —
+    // it's "let this page fill the window", nothing it can spy with. It
+    // has no per-site toggle in Settings either. Without this early
+    // allow, it fell through to the same "no stored decision → denied"
+    // path as everything else below, which silently killed every
+    // fullscreen request before enter-html-full-screen ever got a chance
+    // to fire — the actual cause of fullscreen doing nothing on real
+    // pages.
+    if (permission === "fullscreen") {
+      callback(true);
+      return;
+    }
     const kind = PERMISSION_KIND_MAP[permission];
     const win = BrowserWindow.fromWebContents(webContents);
     if (!kind || !win) {
@@ -172,6 +185,7 @@ export function applyPrivacyHardening(targetSession?: Electron.Session) {
     callback(entry[kind] === "allow");
   });
   ses.setPermissionCheckHandler((webContents, permission) => {
+    if (permission === "fullscreen") return true;
     const kind = PERMISSION_KIND_MAP[permission];
     const win = webContents ? BrowserWindow.fromWebContents(webContents) : null;
     if (!kind || !win) return false;

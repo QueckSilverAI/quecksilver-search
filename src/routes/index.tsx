@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, Check, ChevronDown, ChevronUp, Columns2, Copy, Download, Edit3, ExternalLink, EyeOff, FolderPlus, Globe, Link2, PictureInPicture2, Plus, RotateCw, Search, Settings, SquareArrowOutUpRight, Star, User, X } from "lucide-react";
 import { TorOnionLogo } from "@/components/TorOnionLogo";
+import { QueckSilverLogo } from "@/components/QueckSilverLogo";
 import { TabStrip } from "@/components/TabStrip";
 import { SearchEngineChooser } from "@/components/SearchEngineChooser";
 import { HeaderFavoritesBar } from "@/components/HeaderFavoritesBar";
@@ -122,6 +123,13 @@ function Index() {
   const { visible: headerFavoritesBarVisible } = useHeaderFavoritesBarVisible();
   const { items: downloadItems } = useDownloads();
   const activeDownloadCount = downloadItems.filter((d) => d.state === "progressing").length;
+  // The toolbar's unified download state (see ToolbarActionIcons) can only
+  // show one download at a time, so when several run at once we surface
+  // the most recently started one — that's the one the person just kicked
+  // off and is most likely watching.
+  const activeDownload = downloadItems
+    .filter((d) => d.state === "progressing")
+    .sort((a, b) => b.startedAt - a.startedAt)[0];
   const { order: toolbarIconOrder, moveIcon: moveToolbarIcon } = useToolbarIconOrder();
   const { engine, setEngine } = useSearchEngine();
   const currentEngine = SEARCH_ENGINES.find((e) => e.id === engine) ?? SEARCH_ENGINES[0]!;
@@ -762,6 +770,10 @@ function Index() {
   };
 
   const autoSavedPillTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Chat pill (next to the profile button) — briefly shows "Coming soon"
+  // on click, then reverts on its own, same timer pattern as autoSavedPill.
+  const [chatComingSoon, setChatComingSoon] = useState(false);
+  const chatComingSoonTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     const api = typeof window !== "undefined" ? window.browserAPI?.passwords : undefined;
     if (!api) return;
@@ -1353,6 +1365,7 @@ function Index() {
             <>
               <ToolbarActionIcons
                 style={toolbarStyle}
+                activeDownload={activeDownload}
                 actions={toolbarIconOrder.map((id) => {
                   const defs: Record<ToolbarIconId, ToolbarAction> = {
                     edit: { id: "edit", icon: Edit3, label: "Edit", onClick: () => goToSettings("favorites") },
@@ -1381,57 +1394,66 @@ function Index() {
               {authPending ? (
                 <button
                   onClick={() => cancelLogin()}
-                  className="ml-2 flex h-8 items-center gap-2 rounded-full bg-card pl-1 pr-4 text-[13px] font-semibold text-foreground shadow-[0_1px_3px_rgba(0,0,0,0.15)]"
+                  aria-label="Cancel sign in"
+                  className="ml-2 grid h-8 w-8 shrink-0 place-items-center rounded-full border-4 border-white bg-card shadow-[0_1px_3px_rgba(0,0,0,0.15)]"
                 >
-                  <span className="grid h-6 w-6 place-items-center rounded-full bg-muted">
-                    <User className="h-3.5 w-3.5 text-muted-foreground" />
-                  </span>
-                  Signing in…
-                  <X className="h-3.5 w-3.5 text-muted-foreground" />
+                  <User className="h-3.5 w-3.5 text-muted-foreground" />
                 </button>
               ) : isGuest ? (
                 <button
                   onClick={openProfilePopup}
-                  className="ml-2 flex h-8 items-center gap-2 rounded-full bg-card pl-1 pr-4 text-[13px] font-semibold text-foreground shadow-[0_1px_3px_rgba(0,0,0,0.15)]"
+                  aria-label={isTorWindow ? "Tor" : activeIdentity.windowMode === "incognito" ? "Incognito" : "Guest"}
+                  className="ml-2 grid h-8 w-8 shrink-0 place-items-center rounded-full border-4 border-white bg-card shadow-[0_1px_3px_rgba(0,0,0,0.15)]"
                 >
-                  <span className="grid h-6 w-6 place-items-center rounded-full bg-muted">
-                    {isTorWindow ? (
-                      <TorOnionLogo className="h-3.5 w-3.5 text-muted-foreground" strokeWidth={2} />
-                    ) : activeIdentity.windowMode === "incognito" ? (
-                      <EyeOff className="h-3.5 w-3.5 text-muted-foreground" />
-                    ) : (
-                      <User className="h-3.5 w-3.5 text-muted-foreground" />
-                    )}
-                  </span>
-                  {isTorWindow ? "Tor" : activeIdentity.windowMode === "incognito" ? "Incognito" : "Guest"}
+                  {isTorWindow ? (
+                    <TorOnionLogo className="h-3.5 w-3.5 text-muted-foreground" strokeWidth={2} />
+                  ) : activeIdentity.windowMode === "incognito" ? (
+                    <EyeOff className="h-3.5 w-3.5 text-muted-foreground" />
+                  ) : (
+                    <User className="h-3.5 w-3.5 text-muted-foreground" />
+                  )}
                 </button>
               ) : activeProfile ? (
                 <button
                   onClick={openProfilePopup}
-                  className="ml-2 flex h-8 items-center gap-2 rounded-full bg-card pl-1 pr-4 shadow-[0_1px_3px_rgba(0,0,0,0.15)]"
+                  aria-label={activeProfile.kind === "quecksilver" && activeProfile.email ? nameFromEmail(activeProfile.email) : activeProfile.name}
+                  className="ml-2 grid h-8 w-8 shrink-0 place-items-center rounded-full border-4 border-white text-[11px] font-semibold text-white shadow-[0_1px_3px_rgba(0,0,0,0.15)]"
+                  style={{ background: activeProfile.kind === "quecksilver" ? "var(--brand)" : "hsl(240 4% 46%)" }}
                 >
-                  <span
-                    className="grid h-6 w-6 place-items-center rounded-full text-[11px] font-semibold text-white"
-                    style={{ background: activeProfile.kind === "quecksilver" ? "var(--brand)" : "hsl(240 4% 46%)" }}
-                  >
-                    {(activeProfile.kind === "quecksilver" ? activeProfile.email : activeProfile.name)?.charAt(0).toUpperCase() ?? "?"}
-                  </span>
-                  <span className="text-[13px] font-semibold text-foreground">
-                    {activeProfile.kind === "quecksilver" && activeProfile.email ? nameFromEmail(activeProfile.email) : activeProfile.name}
-                  </span>
+                  {(activeProfile.kind === "quecksilver" ? activeProfile.email : activeProfile.name)?.charAt(0).toUpperCase() ?? "?"}
                 </button>
               ) : (
                 <button
                   onClick={openProfilePopup}
                   disabled={!isElectron}
-                  className="ml-2 flex h-8 items-center gap-2 rounded-full bg-card pl-1 pr-4 text-[13px] font-semibold text-foreground shadow-[0_1px_3px_rgba(0,0,0,0.15)] disabled:opacity-50"
+                  aria-label="Sign in"
+                  className="ml-2 grid h-8 w-8 shrink-0 place-items-center rounded-full border-4 border-white bg-card shadow-[0_1px_3px_rgba(0,0,0,0.15)] disabled:opacity-50"
                 >
-                  <span className="grid h-6 w-6 place-items-center rounded-full bg-muted">
-                    <User className="h-3.5 w-3.5 text-muted-foreground" />
-                  </span>
-                  Sign in
+                  <User className="h-3.5 w-3.5 text-muted-foreground" />
                 </button>
               )}
+              {/* Chat pill — same pill design as the profile button (bg-card,
+                  h-8, matching shadow). Product isn't live yet, so the click
+                  is just a brief "Coming soon" flip instead of navigating
+                  anywhere — chatComingSoon reverts on its own timer, same
+                  pattern as autoSavedPill above. */}
+              <button
+                onClick={() => {
+                  setChatComingSoon(true);
+                  if (chatComingSoonTimer.current) clearTimeout(chatComingSoonTimer.current);
+                  chatComingSoonTimer.current = setTimeout(() => setChatComingSoon(false), 1400);
+                }}
+                className="ml-2 flex h-8 items-center gap-1.5 rounded-full bg-card pl-2 pr-3.5 text-[13px] font-semibold text-foreground shadow-[0_1px_3px_rgba(0,0,0,0.15)]"
+              >
+                {chatComingSoon ? (
+                  <span className="px-0.5">Coming soon</span>
+                ) : (
+                  <>
+                    <QueckSilverLogo className="h-4 w-4" style={{ color: "var(--brand)" }} />
+                    Chat
+                  </>
+                )}
+              </button>
             </>
           )}
         </div>

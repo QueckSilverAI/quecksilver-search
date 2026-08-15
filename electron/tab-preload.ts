@@ -536,6 +536,56 @@ if (process.isMainFrame) {
   }
 }
 
+// --- Modifier-click / middle-click links open in a new tab -----------------
+//
+// A plain left-click on a link is left completely alone — that's the one
+// browsers agree on everywhere, and it's what tab-manager.ts's normal
+// will-navigate handling already does. What was missing is the *other*
+// standard way every real browser lets you open a link without leaving the
+// page you're on: Ctrl/Cmd-click, Shift-click, and middle-click. Electron
+// doesn't give any of these special treatment on its own for a plain
+// same-window `<a href>` navigation (unlike target="_blank", which is
+// already handled separately via setWindowOpenHandler in tab-manager.ts) —
+// without this, every link click looked identical to Electron regardless of
+// which modifier was held, so there was never a way to open something
+// in the background short of the right-click menu.
+//
+// Not main-frame-only: a link worth Ctrl/Cmd-clicking can just as easily
+// sit inside an embedded frame (same reasoning as the autofill listeners
+// below).
+document.addEventListener(
+  "click",
+  (e) => {
+    const target = e.target as HTMLElement | null;
+    if (!target) return;
+    const link = target.closest<HTMLAnchorElement>("a[href]");
+    if (!link || !link.href) return;
+    if (!(e.ctrlKey || e.metaKey || e.shiftKey)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    ipcRenderer.invoke("links:openInNewTab", link.href).catch(() => {});
+  },
+  true, // capture — beats the page's own click handler to the punch, same as the autofill click listener further below
+);
+
+// Middle-click (mouse button 1) is its own event, separate from "click" —
+// browsers fire "auxclick" for it, not "click". Same new-tab behavior as
+// the modifier-clicks above.
+document.addEventListener(
+  "auxclick",
+  (e) => {
+    if (e.button !== 1) return;
+    const target = e.target as HTMLElement | null;
+    if (!target) return;
+    const link = target.closest<HTMLAnchorElement>("a[href]");
+    if (!link || !link.href) return;
+    e.preventDefault();
+    e.stopPropagation();
+    ipcRenderer.invoke("links:openInNewTab", link.href).catch(() => {});
+  },
+  true,
+);
+
 // --- Password autofill -------------------------------------------------------
 //
 // Looks up saved passwords for the current page's hostname and, if there's
