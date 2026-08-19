@@ -32,9 +32,71 @@ import { ipcRenderer, webFrame } from "electron";
 // on every page would drown out anything useful. Autofill logic further
 // below deliberately does NOT have this guard — it's meant to run in
 // every frame.
-if (process.isMainFrame) {
-  ipcRenderer.send("__qs_debug_tab_preload_loaded", location.href);
+// Extracted so it can be applied at MULTIPLE points (document-start,
+// again once <body> exists, and again at 'load') — see the call sites
+// below for why each one matters. Two separate mechanisms, applied
+// together:
+//
+// 1. A real CSS property (`scrollbar-width: none`) set as an INLINE
+//    style with the JS `!important` priority flag. Inline styles set
+//    this way take precedence over ANY stylesheet rule, including a
+//    page's own `!important` one, regardless of when that stylesheet
+//    loads relative to ours — unlike a stylesheet-vs-stylesheet fight
+//    (the previous approach here), which only wins if OUR stylesheet
+//    happens to load last, and stops winning the moment a page injects
+//    more CSS after that. This is the actually-robust fix for "our
+//    hiding rule got overridden by the page's own scrollbar styling",
+//    which is the concrete "double scrollbar" bug reported (our widget
+//    renders fine, but Chromium's native one comes back next to it).
+// 2. The webFrame.insertCSS stylesheet (kept as-is) for the
+//    ::-webkit-scrollbar pseudo-element rule, which genuinely CAN'T be
+//    set as an inline style at all (pseudo-elements have no JS style
+//    object) — inline styles handle scrollbar-width, this handles the
+//    older WebKit-specific pseudo-element API as a second layer, and
+//    also the "site draws its own fake scrollbar via ::before/::after"
+//    case documented below.
+function hideNativeScrollbarInline(extra?: HTMLElement | null) {
+  const important = (el: HTMLElement | null | undefined) => el?.style.setProperty("scrollbar-width", "none", "important");
+  important(document.documentElement);
+  important(document.body);
+  // Covers the case documented at this function's other call sites in
+  // buildScrollbar()/retarget()/measure() below: when the page's REAL
+  // scrolling element isn't <html>/<body> at all but some inner
+  // container (common on heavily-JS-driven layouts, where html/body are
+  // pinned with their own overflow:hidden and an inner div does the
+  // actual scrolling), hiding only html/body's scrollbar does nothing
+  // for THAT element's own native one. The existing <style> tag inserted
+  // for this case (see [data-qs-hide-native-scrollbar] below) is a
+  // regular DOM stylesheet — same cascade priority as anything the page
+  // itself loads, so a page rule of equal specificity loaded later can
+  // still beat it. This inline style, same as the html/body case above,
+  // can't be beaten by ANY external/internal stylesheet regardless of
+  // load order — inline style has the highest specificity there is.
+  important(extra);
+}
 
+// Diagnostic-only, called from measure() below at most a handful of
+// times per page (not every call — see the counter at its call site) —
+// reports what the browser actually RESOLVED scrollbar-width to after
+// our hiding attempts, on both html and body, plus whether the
+// currently-tracked scroll element still visually reserves space for a
+// scrollbar (offsetWidth > clientWidth is the classic native-scrollbar
+// tell: the box is wider than its own content area specifically because
+// something is carving out a scrollbar gutter). If "computed" ever comes
+// back as anything other than "none", something with higher cascade
+// priority than our inline !important is winning — that's the actual,
+// concrete thing to chase, instead of guessing further blind.
+function debugReportScrollbarState(el: HTMLElement) {
+  const htmlComputed = getComputedStyle(document.documentElement).scrollbarWidth;
+  const bodyComputed = document.body ? getComputedStyle(document.body).scrollbarWidth : "(no body)";
+  const gutter = el.offsetWidth - el.clientWidth;
+  debugReport(
+    "native-scrollbar-check",
+    `html computed scrollbar-width="${htmlComputed}", body computed scrollbar-width="${bodyComputed}", tracked-el(${describeElement(el)}) offsetWidth-clientWidth=${gutter}px (>0 usually means a native scrollbar is still taking up space)`,
+  );
+}
+
+function insertScrollbarHidingCss() {
   // Hides the top-level document's own scrollbar on both html and body
   // (some sites, e.g. YouTube, style body::-webkit-scrollbar rather than
   // html's even though html is the actual scrolling element in standards
@@ -63,8 +125,46 @@ if (process.isMainFrame) {
   `);
 }
 
+if (process.isMainFrame) {
+  ipcRenderer.send("__qs_debug_tab_preload_loaded", location.href);
+  insertScrollbarHidingCss();
+  hideNativeScrollbarInline(); // document.body doesn't exist yet this early; only documentElement gets set here
+  // Catches body as soon as it exists (documentElement often does, body
+  // usually doesn't yet at document-start) — a MutationObserver on
+  // documentElement's childList fires the instant <body> is inserted,
+  // which for most pages is much earlier than DOMContentLoaded/'load'.
+  const bodyObserver = new MutationObserver(() => {
+    hideNativeScrollbarInline();
+    if (document.body) bodyObserver.disconnect();
+  });
+  bodyObserver.observe(document.documentElement, { childList: true });
+
+  // Belt-and-suspenders on top of everything above: a plain, unconditional
+  // interval that re-applies the hiding every 500ms for the page's first
+  // 15 seconds, completely independent of whether our own scrollbar
+  // widget (below) ever successfully builds at all. Every other
+  // mechanism in this file for re-asserting the hide is tied to SOME
+  // other thing happening first (body existing, our widget's own
+  // measure() loop running, ...) — if any of those preconditions don't
+  // hold on a given page for any reason, hiding silently never happens
+  // again after the very first document-start call. This one has no
+  // precondition at all — it just runs, unconditionally, on a timer.
+  let scrollbarEnforceCount = 0;
+  const scrollbarEnforceTimer = setInterval(() => {
+    hideNativeScrollbarInline();
+    scrollbarEnforceCount++;
+    if (scrollbarEnforceCount >= 30) clearInterval(scrollbarEnforceTimer);
+  }, 500);
+}
+
 function initScrollbar() {
   if (document.getElementById("__qs_scrollbar_host__")) return; // already built (defensive; init only ever runs once per document)
+  // Re-applied here too — belt and suspenders alongside the
+  // MutationObserver above, in case some page's own script directly
+  // overwrites html/body's whole style attribute (wiping out anything
+  // set earlier) sometime between document-start and load.
+  hideNativeScrollbarInline();
+  insertScrollbarHidingCss();
 
   hideForeignScrollbarWidgets();
   const target = findScrollTarget();
@@ -101,7 +201,16 @@ function initScrollbar() {
 // see the SPA-routing case this was built for) don't redo the work.
 function hideForeignScrollbarWidgets() {
   const isOurs = (el: Element) => el.id?.startsWith("__qs_") || [...el.classList].some((c) => c.startsWith("__qs_"));
-  for (const el of document.querySelectorAll<HTMLElement>('[class*="scrollbar" i], [id*="scrollbar" i]')) {
+  // deepQuerySelectorAll (defined further below, alongside the password-
+  // autofill code that originally needed it), not plain
+  // document.querySelectorAll — a component-library-built page (YouTube's
+  // own UI is exactly this: Polymer/Web-Components-based, most of its
+  // actual interactive chrome lives inside open shadow roots) can render
+  // its own fake/duplicate scrollbar-looking element entirely INSIDE a
+  // shadow root, which document.querySelectorAll structurally cannot see
+  // at all — not a timing issue, there's nothing to find in the light DOM
+  // in that case no matter how many times this re-runs.
+  for (const el of deepQuerySelectorAll<HTMLElement>(document, '[class*="scrollbar" i], [id*="scrollbar" i]')) {
     if (isOurs(el) || el === document.documentElement || el === document.body) continue;
     if (el.dataset.qsForeignScrollbarHidden) continue;
     el.dataset.qsForeignScrollbarHidden = "true";
@@ -263,8 +372,14 @@ function buildScrollbar(target: ScrollTarget) {
     // scrollbar was never hidden, so it kept showing right alongside (or
     // underneath) our own widget. Scoped to this exact element via a
     // marker attribute, since inline styles can't target the
-    // ::-webkit-scrollbar pseudo-element.
+    // ::-webkit-scrollbar pseudo-element. The [data-qs-hide-native-
+    // scrollbar] stylesheet rule below handles the ::-webkit-scrollbar
+    // pseudo-element specifically (inline styles structurally can't);
+    // hideNativeScrollbarInline's inline scrollbar-width handles the
+    // rest, and — unlike this <style> tag — can't be beaten by any page
+    // stylesheet regardless of load order (see its own doc comment).
     scrollEl.setAttribute("data-qs-hide-native-scrollbar", "");
+    hideNativeScrollbarInline(scrollEl);
   }
 
   const host = document.createElement("div");
@@ -361,16 +476,30 @@ function buildScrollbar(target: ScrollTarget) {
   let cachedScrollH = 0;
   let cachedClientH = 0;
   let measureLogCount = 0;
-  // Once a real scrollable target is confirmed, there's nothing left to
-  // retry — this also caps how long retarget() below keeps re-scanning
-  // the whole document on every mutation (cheap-ish, but not free).
-  let confirmedScrollable = false;
 
   // Re-runs findScrollTarget() and switches scrollEl/scrollEventTarget to
   // whatever it finds NOW, if that's different from (and better than)
   // what's currently set — see the comment on scrollEl's declaration
-  // above for why this needs to exist at all. Only called from measure()
-  // while nothing scrollable has been confirmed yet.
+  // above for why this needs to exist at all.
+  //
+  // BUG FIXED HERE: this used to stop running entirely the first time ANY
+  // target confirmed scrollable (a `confirmedScrollable` flag gated the
+  // call below) — reasonable-looking as a perf cap, but wrong: a page
+  // whose document itself scrolls a little on first load gets "confirmed"
+  // almost immediately, permanently locking the widget onto that target
+  // even if the page's REAL scrolling region only becomes the true
+  // scrollable one later (lazy-loaded product content, a layout shift
+  // that switches scrolling from the document to an inner container,
+  // ...). The now-real scroll container's own native scrollbar was never
+  // hidden (only whatever retarget() actually switches scrollEl TO gets
+  // data-qs-hide-native-scrollbar), so it showed up right alongside our
+  // widget — a double-scrollbar sighting on exactly this kind of page.
+  // Now unconditional: every measure() call re-checks. Bounded the same
+  // way measure() itself already is — the MutationObserver driving most
+  // measure() calls disconnects after 8s (see below), and scroll events
+  // only ever trigger the cheap render() path, not measure()/retarget()
+  // at all, so this doesn't reopen the "rescanning forever" cost the
+  // original flag was guarding against.
   function retarget() {
     const fresh = findScrollTarget();
     if (fresh.el === scrollEl) return;
@@ -380,21 +509,29 @@ function buildScrollbar(target: ScrollTarget) {
     scrollEl = fresh.el;
     scrollEventTarget = fresh.isDocument ? window : scrollEl;
     isDocumentTarget = fresh.isDocument;
-    if (!isDocumentTarget) scrollEl.setAttribute("data-qs-hide-native-scrollbar", "");
+    if (!isDocumentTarget) {
+      scrollEl.setAttribute("data-qs-hide-native-scrollbar", "");
+      hideNativeScrollbarInline(scrollEl);
+    }
     scrollEventTarget.addEventListener("scroll", scheduleRender, { passive: true } as AddEventListenerOptions);
   }
 
   function measure() {
+    // Re-assert on every measure — cheap, and catches a page's late
+    // script overwriting html/body's (or, if isDocumentTarget is false,
+    // the actual tracked element's) style attribute after document-
+    // start/load already ran.
+    hideNativeScrollbarInline(isDocumentTarget ? null : scrollEl);
     hideForeignScrollbarWidgets();
-    if (!confirmedScrollable) retarget();
+    retarget();
     cachedTrackH = track.clientHeight;
     cachedScrollH = scrollEl.scrollHeight;
     cachedClientH = scrollEl.clientHeight;
-    if (cachedScrollH > cachedClientH + 1) confirmedScrollable = true;
 
     if (measureLogCount < 3) {
       measureLogCount++;
       debugReport("update", `#${measureLogCount} scrollable=${cachedScrollH > cachedClientH + 1} scrollH=${cachedScrollH} clientH=${cachedClientH}`);
+      debugReportScrollbarState(scrollEl);
     }
 
     render();

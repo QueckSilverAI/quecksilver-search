@@ -122,9 +122,18 @@ export function HomeContent({ urlDraft, onUrlDraftChange, onSubmit, bookmarks, o
                   </div>
                 </div>
               ) : (
-                <button key={i} onClick={() => onOpenSlot(i)} className="flex flex-col items-center gap-2">
+                <button key={i} onClick={() => onOpenSlot(i)} className="group flex flex-col items-center gap-2">
                   <div className="flex h-14 w-14 items-center justify-center rounded-[14px] bg-card shadow-[0_2px_8px_rgba(0,0,0,0.12)]">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="text-muted-foreground">
+                    <svg
+                      width="24"
+                      height="24"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      className="text-muted-foreground transition-transform duration-150 group-hover:scale-125"
+                    >
                       <line x1="12" y1="5" x2="12" y2="19" />
                       <line x1="5" y1="12" x2="19" y2="12" />
                     </svg>

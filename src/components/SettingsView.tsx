@@ -159,6 +159,11 @@ export function SettingsView({ nightModeTabId }: { nightModeTabId?: string | nul
   const { favorites, add: addFavorite, addMany: addManyFavorites, update: updateFavorite, remove: removeFavorite } = useHeaderFavorites();
   const { visible: headerFavoritesBarVisible, setVisible: setHeaderFavoritesBarVisible } = useHeaderFavoritesBarVisible();
   const { items: downloadItems, folder: downloadFolder, remove: removeDownload, open: openDownload, showInFolder, pickFolder } = useDownloads();
+  const downloadSearchRef = useRef<HTMLInputElement | null>(null);
+  const [downloadSearchQuery, setDownloadSearchQuery] = useState("");
+  const filteredDownloadItems = downloadSearchQuery.trim()
+    ? downloadItems.filter((d) => d.filename.toLowerCase().includes(downloadSearchQuery.trim().toLowerCase()))
+    : downloadItems;
   const { color: accentColor, setColor: setAccentColor } = useAccentColor();
   const { scheme, setScheme } = useColorScheme();
   const { isGuest } = useProfiles();
@@ -205,7 +210,15 @@ export function SettingsView({ nightModeTabId }: { nightModeTabId?: string | nul
   // component that was already mounted).
   useEffect(() => {
     const scrollTo = (id: string) => {
-      requestAnimationFrame(() => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" }));
+      // "downloads:search" is the same downloads section, just also
+      // focusing the search field below once scrolled there — see
+      // DownloadsPopoverContent.tsx's search icon (openSettingsSearch)
+      // and goToSettings's handling of it in routes/index.tsx.
+      const targetId = id === "downloads:search" ? "downloads" : id;
+      requestAnimationFrame(() => {
+        document.getElementById(targetId)?.scrollIntoView({ behavior: "smooth", block: "start" });
+        if (id === "downloads:search") setTimeout(() => downloadSearchRef.current?.focus(), 300);
+      });
     };
     const anchor = takePendingSettingsAnchor();
     if (anchor) scrollTo(anchor);
@@ -427,13 +440,29 @@ export function SettingsView({ nightModeTabId }: { nightModeTabId?: string | nul
               </Row>
             </CardSection>
           </SettingsCard>
+          {downloadItems.length > 0 && (
+            <div className="relative mb-3">
+              <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                ref={downloadSearchRef}
+                value={downloadSearchQuery}
+                onChange={(e) => setDownloadSearchQuery(e.target.value)}
+                placeholder="Search downloads"
+                className="rounded-full pl-10"
+              />
+            </div>
+          )}
           {downloadItems.length === 0 ? (
             <SettingsCard>
               <CardSection className="py-6 text-center text-sm text-muted-foreground">No downloads yet.</CardSection>
             </SettingsCard>
+          ) : filteredDownloadItems.length === 0 ? (
+            <SettingsCard>
+              <CardSection className="py-6 text-center text-sm text-muted-foreground">No downloads match "{downloadSearchQuery}".</CardSection>
+            </SettingsCard>
           ) : (
             <SettingsCard>
-              {downloadItems.map((d, i) => (
+              {filteredDownloadItems.map((d, i) => (
                 <div key={d.id}>
                   {i > 0 && <Divider />}
                   <CardSection className="flex items-center gap-3">
@@ -783,7 +812,7 @@ export function SettingsView({ nightModeTabId }: { nightModeTabId?: string | nul
                 <div key={opt.id} className="flex items-center gap-4 px-4 py-3.5">
                   <span className="w-36 shrink-0 text-xs font-medium text-muted-foreground">{opt.label}</span>
                   <div className="flex flex-1 items-center overflow-x-auto py-1">
-                    <ToolbarActionIcons style={opt.id} actions={previewActions} draggedId={null} onDragStart={() => {}} onDropOn={() => {}} onDragEnd={() => {}} />
+                    <ToolbarActionIcons style={opt.id} actions={previewActions} onOpenDownloads={() => {}} draggedId={null} onDragStart={() => {}} onDropOn={() => {}} onDragEnd={() => {}} />
                   </div>
                   <Button
                     size="sm"

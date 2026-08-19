@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, Check, ChevronDown, ChevronUp, Columns2, Copy, Download, Edit3, ExternalLink, EyeOff, FolderPlus, Globe, Link2, PictureInPicture2, Plus, RotateCw, Search, Settings, SquareArrowOutUpRight, Star, User, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, ChevronDown, ChevronUp, Columns2, Copy, Download, Edit3, ExternalLink, EyeOff, Folder, Link2, PictureInPicture2, RotateCw, Search, Settings, SquareArrowOutUpRight, Star, User, X } from "lucide-react";
 import { TorOnionLogo } from "@/components/TorOnionLogo";
 import { QueckSilverLogo } from "@/components/QueckSilverLogo";
 import { TabStrip } from "@/components/TabStrip";
@@ -15,15 +15,6 @@ import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/componen
 import { setPendingSettingsAnchor } from "@/lib/settings-anchor";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { useBrowserApi, HOME_URL, SETTINGS_URL } from "@/hooks/use-browser-api";
 import { useBookmarks } from "@/hooks/use-bookmarks";
 import { useHeaderFavorites } from "@/hooks/use-header-favorites";
@@ -34,9 +25,10 @@ import { ToolbarActionIcons, type ToolbarAction } from "@/components/ToolbarActi
 import { useAuth } from "@/hooks/use-auth";
 import { useProfiles } from "@/hooks/use-profiles";
 import { useTorStatus } from "@/hooks/use-tor-status";
-import { ProfilePopup } from "@/components/ProfilePopup";
+import type { BookmarkOverlayAction, ContextMenuOverlayAction, DownloadsOverlayAction, FavoriteContextMenuOverlayAction, FavoriteEditOverlayAction, FavoriteFolderOverlayAction, GroupDialogOverlayAction, NewFavoriteFolderOverlayAction, ProfileOverlayAction, TabSearchOverlayAction } from "@/overlay/types";
+import { TAB_GROUP_COLORS } from "@/overlay/types";
 import { useWindowControls } from "@/hooks/use-window-controls";
-import { parseUrlBarInput } from "@/lib/url-bar";
+import { parseUrlBarInput, isLikelyDirectUrl } from "@/lib/url-bar";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -72,24 +64,15 @@ function nameFromEmail(email: string): string {
 // maximized windows, full stop, regardless of what any app does.
 const CONTENT_INSET = { top: 0, right: 0, bottom: 0, left: 0 };
 
-// Cycled through when a new tab group is created via the tab context menu
-// — same idea as Chrome's fixed group color palette, just QueckSilver's own
-// swatch instead of reusing Chrome's exact hues.
-const TAB_GROUP_COLORS = ["#4a7c9e", "#c2694a", "#5a9e6f", "#9e7c4a", "#8a5a9e", "#4a9e9e"];
+// See openDownloadsPopup's comment — shifts the downloads flyout's anchor
+// this many pixels further right than the download icon's own edge.
+// Increased from 60 — a person reported it still wasn't far enough right.
+const DOWNLOADS_ANCHOR_NUDGE = 160;
 
 // A single right-click-menu row — icon + label, rounded and inset from the
 // menu's own edges (the outer menu's own p-1.5 padding is what keeps the
 // hover highlight from ever touching the edge, this button just needs to
 // fill that padded area and be rounded itself).
-function ContextMenuActionItem({ icon: Icon, label, onClick }: { icon: React.FC<{ className?: string }>; label: string; onClick: () => void }) {
-  return (
-    <button onClick={onClick} className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[13px] text-foreground hover:bg-muted">
-      <Icon className="h-[15px] w-[15px] shrink-0 text-muted-foreground" />
-      <span className="truncate">{label}</span>
-    </button>
-  );
-}
-
 function Index() {
   const {
     tabs,
@@ -119,17 +102,19 @@ function Index() {
     togglePiP,
   } = useBrowserApi();
   const { bookmarks, setBookmarks } = useBookmarks();
-  const { favorites: headerFavorites, add: addHeaderFavorite, reorder: reorderHeaderFavorites } = useHeaderFavorites();
+  const {
+    favorites: headerFavorites,
+    add: addHeaderFavorite,
+    update: updateHeaderFavorite,
+    remove: removeHeaderFavorite,
+    reorder: reorderHeaderFavorites,
+    createFolder: createHeaderFavoriteFolder,
+    addToFolder: addHeaderFavoriteToFolder,
+    removeFromFolder: removeHeaderFavoriteFromFolder,
+  } = useHeaderFavorites();
   const { visible: headerFavoritesBarVisible } = useHeaderFavoritesBarVisible();
-  const { items: downloadItems } = useDownloads();
+  const { items: downloadItems, open: openDownloadItem, showInFolder: showDownloadInFolder, remove: removeDownloadItem, openFolder: openDownloadsFolder } = useDownloads();
   const activeDownloadCount = downloadItems.filter((d) => d.state === "progressing").length;
-  // The toolbar's unified download state (see ToolbarActionIcons) can only
-  // show one download at a time, so when several run at once we surface
-  // the most recently started one — that's the one the person just kicked
-  // off and is most likely watching.
-  const activeDownload = downloadItems
-    .filter((d) => d.state === "progressing")
-    .sort((a, b) => b.startedAt - a.startedAt)[0];
   const { order: toolbarIconOrder, moveIcon: moveToolbarIcon } = useToolbarIconOrder();
   const { engine, setEngine } = useSearchEngine();
   const currentEngine = SEARCH_ENGINES.find((e) => e.id === engine) ?? SEARCH_ENGINES[0]!;
@@ -181,32 +166,366 @@ function Index() {
   // actually did.
   const [chromeHidden, setChromeHidden] = useState(false);
 
-  const [slot, setSlot] = useState<number | null>(null);
-  const [form, setForm] = useState({ label: "", url: "" });
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [profilePopupOpen, setProfilePopupOpen] = useState(false);
-  // Captured from the profile button's own getBoundingClientRect() at
-  // click time - lets ProfilePopup anchor itself right off that button
-  // (top-right, matching a real browser's account switcher) instead of
-  // opening as a centered modal.
-  const [profileAnchorRect, setProfileAnchorRect] = useState<{ top: number; left: number; right: number; bottom: number } | null>(null);
+  // openBookmark itself is defined much further down (needs activeId/
+  // navigate/newTab/setUrlDraft, all in scope by then) — but the overlay
+  // onAction effect that needs to call it (for the favorites-folder
+  // dropdown's "open" action) runs much earlier in this component body.
+  // A ref sidesteps the "used before it was initialized" ordering issue
+  // entirely, same pattern as tabsRef/editingUrlRef further below.
+  const openBookmarkRef = useRef<(url: string, targetId?: string | null) => void>(() => {});
+
+  // Opening the profile menu now opens the native overlay window instead
+  // of an inline DOM panel (see electron/overlay-window.ts and
+  // src/overlay/ProfilePopupContent.tsx, Phase 4a of the native-overlay
+  // plan) — no local open/closed state needed here anymore, the overlay
+  // window's own visibility IS that state. anchorRect is still captured
+  // the same way (getBoundingClientRect() of the button at click time),
+  // just handed to the main process instead of used for local CSS
+  // positioning.
+  const [profileSyncing, setProfileSyncing] = useState(false);
   const openProfilePopup = (e: React.MouseEvent<HTMLButtonElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
-    setProfileAnchorRect({ top: r.top, left: r.left, right: r.right, bottom: r.bottom });
-    setProfilePopupOpen(true);
+    window.browserAPI?.overlay.open(
+      "profile",
+      { profiles, active: activeIdentity, loginPending: authPending, syncing: profileSyncing },
+      { top: r.top, left: r.left, right: r.right, bottom: r.bottom },
+    );
   };
+  // Keeps an already-open profile overlay's content current if the
+  // profiles list, active identity, login-pending, or sync-in-progress
+  // state changes while it's open (e.g. another window finishes a
+  // QueckSilver login, or THIS window's own "syncNow" notify handler
+  // below flips profileSyncing) — see overlay-window.ts's update(), a
+  // no-op if "profile" isn't the kind currently open.
+  useEffect(() => {
+    window.browserAPI?.overlay.update("profile", { profiles, active: activeIdentity, loginPending: authPending, syncing: profileSyncing });
+  }, [profiles, activeIdentity, authPending, profileSyncing]);
+  // Downloads flyout — opens the native overlay instead of navigating to
+  // Settings → Downloads (see ToolbarActionIcons' widened onClick type for
+  // why this can read the button's own position). Kept live via the
+  // update() effect right below it, same pattern as the profile popup
+  // above — downloadItems already changes over time (progress updates)
+  // whether or not the flyout happens to be open. Nudged further right
+  // than the button's own edge (DOWNLOADS_ANCHOR_NUDGE) — a person
+  // reported the flyout sitting too far left relative to the toolbar's
+  // true right edge; the download icon itself isn't necessarily the
+  // rightmost thing in every toolbar style (profile/sync sit further
+  // right in some), so anchoring exactly to ITS edge undershoots that.
+  //
+  // "Remove" itself (the struck-through-for-5s-then-gone behavior) is now
+  // handled entirely inside DownloadsPopoverContent.tsx as local state —
+  // this window's own side of it is just the plain, ordinary download
+  // list, nothing removal-specific to track here at all anymore.
+  const openDownloadsPopup = (e: React.MouseEvent<HTMLButtonElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    window.browserAPI?.overlay.open(
+      "downloads",
+      { items: downloadItems },
+      { top: r.top, left: r.left + DOWNLOADS_ANCHOR_NUDGE, right: r.right + DOWNLOADS_ANCHOR_NUDGE, bottom: r.bottom },
+    );
+  };
+  useEffect(() => {
+    window.browserAPI?.overlay.update("downloads", { items: downloadItems });
+  }, [downloadItems]);
+  // Auto-opens the downloads flyout the moment a NEW download starts —
+  // "the old download state is still there" was reported after the
+  // click-to-open flow started working: the toolbar's own busy-spinner
+  // still needed a click before you'd ever see live progress anywhere.
+  // This shows it automatically instead, no click needed. Reads the
+  // download icon's own DOM position (data-qs-download-anchor, applied
+  // in ToolbarActionIcons' shared drag() helper so it's present across
+  // all 17 toolbar styles) rather than a stored ref, since this is the
+  // one moment it's guaranteed to already be in the DOM — activeDownload
+  // just became truthy, so React has already committed it by the time
+  // this effect runs.
+  const prevActiveDownloadCount = useRef(0);
+  useEffect(() => {
+    if (prevActiveDownloadCount.current === 0 && activeDownloadCount > 0) {
+      const el = document.querySelector("[data-qs-download-anchor]");
+      if (el) {
+        const r = el.getBoundingClientRect();
+        window.browserAPI?.overlay.open(
+          "downloads",
+          { items: downloadItems },
+          { top: r.top, left: r.left + DOWNLOADS_ANCHOR_NUDGE, right: r.right + DOWNLOADS_ANCHOR_NUDGE, bottom: r.bottom },
+        );
+      }
+    }
+    prevActiveDownloadCount.current = activeDownloadCount;
+  }, [activeDownloadCount, downloadItems]);
+  // Executes whatever the person picked in the profile overlay — the
+  // overlay renderer itself has no access to useProfiles()/useAuth()'s
+  // actual Supabase/IPC-backed logic (separate webContents, separate
+  // preload — see overlay-preload.ts), so it just reports back what was
+  // chosen and this window's own existing hooks do the real work, exactly
+  // like the old inline <ProfilePopup> callbacks used to.
+  useEffect(() => {
+    return window.browserAPI?.overlay.onAction((event) => {
+      if (event.kind === "profile") {
+        const action = event.action as ProfileOverlayAction;
+        switch (action.type) {
+          case "openProfileInNewWindow":
+            openProfileInNewWindow(action.id);
+            break;
+          case "openGuestInNewWindow":
+            openGuestInNewWindow();
+            break;
+          case "openIncognitoInNewWindow":
+            openIncognitoInNewWindow();
+            break;
+          case "openTorInNewWindow":
+            openTorInNewWindow();
+            break;
+          case "remove":
+            removeProfile(action.id);
+            notify("Profile removed");
+            break;
+          case "createSimple":
+            createSimpleProfile(action.name);
+            break;
+          case "loginQuecksilver":
+            login("new-profile");
+            break;
+          case "syncNow":
+            // The popup's reload icon now spins based on this state
+            // (payload.syncing, pushed via the overlay.update() effect
+            // above) instead of the old inline popup's local spinner —
+            // see ProfileOverlayAction's "syncNow" comment in
+            // src/overlay/types.ts for why a live in-popup await isn't
+            // available across the overlay/owner-window process
+            // boundary; this is the closest equivalent that is.
+            setProfileSyncing(true);
+            {
+              const result = syncNow();
+              if (result) void result.finally(() => setProfileSyncing(false));
+              else setProfileSyncing(false);
+            }
+            break;
+        }
+        return;
+      }
+      if (event.kind === "contextmenu") {
+        const action = event.action as ContextMenuOverlayAction;
+        switch (action.type) {
+          case "openLinkHere":
+            // tabId isn't in the action itself (the overlay content never
+            // needed it — see ContextMenuContent.tsx), but there's only
+            // ever one active tab a context menu could have come from.
+            if (activeId) window.browserAPI?.links.openHere(activeId, action.url);
+            break;
+          case "openLinkInNewTab":
+            window.browserAPI?.tabs.new(action.url);
+            break;
+          case "openLinkInNewWindow":
+            window.browserAPI?.links.openInNewWindow(action.url);
+            break;
+          case "copyLink":
+            window.browserAPI?.links.copy(action.url);
+            break;
+          case "saveLinkAs":
+            window.browserAPI?.links.saveAs(action.url);
+            break;
+          case "copyImage":
+            window.browserAPI?.images.copy(action.url);
+            break;
+          case "saveImage":
+            window.browserAPI?.images.saveDirect(action.url);
+            break;
+          case "saveImageAs":
+            window.browserAPI?.images.save(action.url);
+            break;
+          case "copySelection":
+            if (activeId) window.browserAPI?.tabs.copySelectionFor(activeId);
+            break;
+          case "searchSelection":
+            window.browserAPI?.tabs.new(currentEngine.buildUrl(action.text));
+            break;
+        }
+        return;
+      }
+      if (event.kind === "bookmark") {
+        const action = event.action as BookmarkOverlayAction;
+        if (action.type === "save") {
+          const url = normalizeBookmarkUrl(action.url);
+          setBookmarks((prev) => prev.map((b, i) => (i === action.slot ? { label: action.label, url } : b)));
+          notifySuccess("Bookmark saved");
+        }
+        return;
+      }
+      if (event.kind === "groupDialog") {
+        const action = event.action as GroupDialogOverlayAction;
+        if (action.type === "create") {
+          void (async () => {
+            const groupId = await createGroup(action.name, action.color);
+            if (groupId) setTabGroup(action.tabId, groupId);
+          })();
+        }
+        return;
+      }
+      if (event.kind === "tabSearch") {
+        const action = event.action as TabSearchOverlayAction;
+        if (action.type === "switch") switchTab(action.id);
+        return;
+      }
+      if (event.kind === "downloads") {
+        const action = event.action as DownloadsOverlayAction;
+        switch (action.type) {
+          case "open":
+            openDownloadItem(action.path);
+            break;
+          case "showInFolder":
+            showDownloadInFolder(action.path);
+            break;
+          case "remove":
+            // The struck-through-for-5s-then-gone display is now entirely
+            // DownloadsPopoverContent.tsx's own local concern (a plain
+            // setTimeout there delays sending this exact action) — by the
+            // time it arrives here, the 5s has already elapsed and this
+            // is just an ordinary, real removal.
+            removeDownloadItem(action.id);
+            break;
+          case "openFolder":
+            openDownloadsFolder();
+            break;
+          case "openSettings":
+            goToSettings("downloads");
+            break;
+          case "openSettingsSearch":
+            goToSettings("downloads:search");
+            break;
+        }
+        return;
+      }
+      if (event.kind === "favoriteContextMenu") {
+        const action = event.action as FavoriteContextMenuOverlayAction;
+        switch (action.type) {
+          case "openInNewTab":
+            window.browserAPI?.tabs.new(action.url);
+            break;
+          case "openInNewWindow":
+            window.browserAPI?.links.openInNewWindow(action.url);
+            break;
+          case "openInIncognitoWindow":
+            window.browserAPI?.links.openInIncognitoWindow(action.url);
+            break;
+          case "edit": {
+            const fav = headerFavorites.find((f) => f.id === action.id);
+            if (fav) {
+              window.browserAPI?.overlay.open(
+                "favoriteEditDialog",
+                { id: fav.id, label: fav.label, url: fav.url },
+                { top: 0, left: 0, right: 0, bottom: 0, placement: "cover" },
+              );
+            }
+            break;
+          }
+          case "toggleIconOnly":
+            updateHeaderFavorite(action.id, { iconOnly: action.iconOnly });
+            break;
+          case "cut":
+            window.browserAPI?.links.copy(action.url);
+            removeHeaderFavorite(action.id);
+            break;
+          case "copy":
+            window.browserAPI?.links.copy(action.url);
+            break;
+          case "removeFromFolder":
+            removeHeaderFavoriteFromFolder(action.id);
+            break;
+          case "newFolder":
+            window.browserAPI?.overlay.open("newFavoriteFolderDialog", {}, { top: 0, left: 0, right: 0, bottom: 0, placement: "cover" });
+            break;
+          case "delete":
+            removeHeaderFavorite(action.id);
+            break;
+        }
+        return;
+      }
+      if (event.kind === "favoriteEditDialog") {
+        const action = event.action as FavoriteEditOverlayAction;
+        if (action.type === "save") updateHeaderFavorite(action.id, { label: action.label, url: action.url });
+        return;
+      }
+      if (event.kind === "newFavoriteFolderDialog") {
+        const action = event.action as NewFavoriteFolderOverlayAction;
+        if (action.type === "create") createHeaderFavoriteFolder(action.label);
+        return;
+      }
+      if (event.kind === "favoriteFolder") {
+        const action = event.action as FavoriteFolderOverlayAction;
+        switch (action.type) {
+          case "open":
+            openBookmarkRef.current(action.url);
+            break;
+          case "edit": {
+            const fav = headerFavorites.find((f) => f.id === action.id);
+            if (fav) {
+              window.browserAPI?.overlay.open(
+                "favoriteEditDialog",
+                { id: fav.id, label: fav.label, url: fav.url },
+                { top: 0, left: 0, right: 0, bottom: 0, placement: "cover" },
+              );
+            }
+            break;
+          }
+          case "openInNewTab":
+            window.browserAPI?.tabs.new(action.url);
+            break;
+          case "openInNewWindow":
+            window.browserAPI?.links.openInNewWindow(action.url);
+            break;
+          case "openInIncognitoWindow":
+            window.browserAPI?.links.openInIncognitoWindow(action.url);
+            break;
+          case "toggleIconOnly":
+            updateHeaderFavorite(action.id, { iconOnly: action.iconOnly });
+            break;
+          case "cut":
+            window.browserAPI?.links.copy(action.url);
+            removeHeaderFavorite(action.id);
+            break;
+          case "copy":
+            window.browserAPI?.links.copy(action.url);
+            break;
+          case "removeFromFolder":
+            removeHeaderFavoriteFromFolder(action.id);
+            break;
+          case "delete":
+            removeHeaderFavorite(action.id);
+            break;
+        }
+      }
+    });
+  }, [
+    openProfileInNewWindow,
+    openGuestInNewWindow,
+    openIncognitoInNewWindow,
+    openTorInNewWindow,
+    removeProfile,
+    createSimpleProfile,
+    login,
+    syncNow,
+    activeId,
+    currentEngine,
+    setBookmarks,
+    createGroup,
+    setTabGroup,
+    switchTab,
+    openDownloadItem,
+    showDownloadInFolder,
+    removeDownloadItem,
+    openDownloadsFolder,
+    headerFavorites,
+    updateHeaderFavorite,
+    removeHeaderFavorite,
+    removeHeaderFavoriteFromFolder,
+    createHeaderFavoriteFolder,
+  ]);
   const [urlDraft, setUrlDraft] = useState("");
   const [homeUrlDraft, setHomeUrlDraft] = useState("");
   const [secondaryHomeUrlDraft, setSecondaryHomeUrlDraft] = useState("");
   const [urlCopied, setUrlCopied] = useState(false);
   const [autoSavedPill, setAutoSavedPill] = useState<{ url: string; username: string } | null>(null);
-  // "New group" popup — asks for a name + color instead of assigning one
-  // silently, opened from the tab context menu (see TabStrip's
-  // onCreateGroup). tabId is which tab triggered it, so confirming knows
-  // what to assign the freshly-created group to.
-  const [groupDialogTabId, setGroupDialogTabId] = useState<string | null>(null);
-  const [groupDialogName, setGroupDialogName] = useState("");
-  const [groupDialogColor, setGroupDialogColor] = useState(TAB_GROUP_COLORS[0]!);
   // Offered once at startup (see session:getRecovery) — same capsule slot
   // as the password-saved pill, just with a Restore/Dismiss choice instead
   // of auto-dismissing. Takes priority over autoSavedPill since it's a
@@ -219,46 +538,23 @@ function Index() {
   // Ctrl+F — same toolbar slot again. null = closed.
   const [findBar, setFindBar] = useState<{ query: string; matches: number; activeMatchOrdinal: number } | null>(null);
   const findInputRef = useRef<HTMLInputElement | null>(null);
-  // Ctrl+Shift+A — command-palette-style tab search.
-  const [tabSearchOpen, setTabSearchOpen] = useState(false);
-  const [tabSearchQuery, setTabSearchQuery] = useState("");
-  const tabSearchInputRef = useRef<HTMLInputElement | null>(null);
-  // Right-click on an image/link/selection inside a tab — see
-  // tab-manager.ts's "context-menu" listener + main.ts's showContextMenu.
-  // Includes a screenshot captured at the moment of the click: showing
-  // this menu means hiding the tab's native view (see anyDialogOpen
-  // below and the big comment on showContextMenu for why that's
-  // unavoidable), and a frozen picture of the page reads as "paused"
-  // instead of "gone" while it's hidden.
-  const [contextMenu, setContextMenu] = useState<{
-    tabId: string;
-    x: number;
-    y: number;
-    boundsX: number;
-    boundsY: number;
-    boundsWidth: number;
-    boundsHeight: number;
-    srcURL: string | null;
-    linkURL: string | null;
-    selectionText: string | null;
-    screenshot: string | null;
-    isChromeUI: boolean;
-  } | null>(null);
-  const contextMenuPopupRef = useRef<HTMLDivElement | null>(null);
-  // Always-ready standby copy of the active tab's last background capture
-  // — invisible during normal browsing (the live native view sits on top
-  // of it the whole time, same as everything else in the chrome UI), but
-  // means opening a context menu no longer needs to wait on the actual
-  // image arriving over IPC at click time at all: it's already sitting
-  // right here, already decoded and painted, the instant it's needed.
-  const [standbyScreenshot, setStandbyScreenshot] = useState<{ tabId: string; url: string } | null>(null);
-  const [contentBounds, setContentBounds] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
+  // Ctrl+Shift+A — command-palette-style tab search. Now a native "cover"
+  // overlay window (see src/overlay/TabSearchContent.tsx) instead of an
+  // inline Dialog — no open/query state needed here anymore, just keeping
+  // an already-open overlay's tab list current (mirrors the profile
+  // popup's own overlay.update effect above).
   useEffect(() => {
-    return window.browserAPI?.tabs.onBackgroundScreenshotUpdate((payload) => {
-      setStandbyScreenshot({ tabId: payload.tabId, url: payload.screenshot });
-    });
-  }, []);
-
+    window.browserAPI?.overlay.update("tabSearch", { tabs: tabs.map((t) => ({ id: t.id, title: t.title, url: t.url, isHome: t.isHome, isSettings: t.isSettings })) });
+  }, [tabs]);
+  // Right-click on an image/link/selection inside a tab now opens the
+  // native overlay window directly from the main process — see
+  // electron/main.ts's showContextMenu and src/overlay/ContextMenuContent
+  // (Phase 4b of the native-overlay plan). No renderer-side state for it
+  // anymore: the old contextMenu state, its screenshot-backdrop JSX, and
+  // the mousedown/wheel close-on-outside-click handling all lived here
+  // specifically to fake a DOM popup sitting above the tab's native view;
+  // none of that's needed once the menu is a genuinely separate native
+  // window the OS itself layers on top.
   // A freshly-opened tab's home page fades in with a brief loading spinner
   // around the search icon, like a real page that just finished loading —
   // only once per tab (tracked by id), not every time you switch back to
@@ -335,15 +631,12 @@ function Index() {
     }
   });
 
-  const anyDialogOpen = dialogOpen || profilePopupOpen || groupDialogTabId !== null || tabSearchOpen || contextMenu !== null;
-  // Dialogs have their own full-screen dark backdrop — but that backdrop is
-  // DOM, and native content always paints above ALL DOM regardless, so it
-  // can't actually show the page dimmed-but-visible underneath either.
-  // Hiding here isn't "lossless", it's the same trade-off as everywhere
-  // else, just applied to the whole window instead of a corner. Settings
-  // itself is no longer a dialog at all now — it's regular tab content
-  // (see isSettings above), so it never needs this in the first place.
-  const nativeShouldHide = anyDialogOpen;
+  // Bookmark editor, new-group, and tab search are all native "cover"
+  // overlay windows now (see src/overlay/{Bookmark,GroupDialog,TabSearch}
+  // Content.tsx) — genuinely separate windows the OS layers on top, so
+  // unlike the old inline Dialogs, none of them need the active tab's
+  // native view hidden anymore. Nothing left here that ever needs to hide
+  // it for a dialog's sake.
 
   const [editingUrl, setEditingUrl] = useState(false);
   // Frequent-sites AND favorites autocomplete — see
@@ -490,27 +783,15 @@ function Index() {
     pendingCompletionSelectionRef.current = null;
     urlBarRef.current?.setSelectionRange(pending.start, pending.end);
   }, [urlDraft]);
-  // Same autocomplete, for the bookmark-slot dialog's URL field.
-  const [bookmarkUrlFocused, setBookmarkUrlFocused] = useState(false);
-  const [bookmarkUrlSuggestions, setBookmarkUrlSuggestions] = useState<{ domain: string; visitCount: number; lastVisit: number }[]>([]);
-  useEffect(() => {
-    if (!bookmarkUrlFocused || !form.url.trim()) {
-      setBookmarkUrlSuggestions([]);
-      return;
-    }
-    let cancelled = false;
-    const timer = setTimeout(() => {
-      window.browserAPI?.frequentSites.list(form.url).then((results) => {
-        if (!cancelled) setBookmarkUrlSuggestions(results);
-      });
-    }, 120);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [bookmarkUrlFocused, form.url]);
   const editingUrlRef = useRef(false);
   editingUrlRef.current = editingUrl;
+  // Read inside onShortcutTabSearch below — that effect only resubscribes
+  // on chromeHidden changing (same minimal-deps pattern as its neighbors),
+  // so closing over `tabs` directly there would freeze the list at
+  // whatever it was on the last resubscribe instead of the tab search
+  // overlay's own live overlay.update effect keeping it current.
+  const tabsRef = useRef(tabs);
+  tabsRef.current = tabs;
   useEffect(() => {
     // Simple on purpose: only ever actively BLANK the field for the two
     // clear, stable states (home/settings). For every other update,
@@ -535,10 +816,6 @@ function Index() {
   const secondaryIsSettings = secondaryTab?.isSettings ?? false;
 
   useEffect(() => {
-    if (nativeShouldHide) {
-      setVisible(false);
-      return;
-    }
     if (secondaryId) {
       // In split view either half might be the only one that actually
       // needs a native page attached — the backend's own applySplitLayout
@@ -550,7 +827,7 @@ function Index() {
     } else {
       setVisible(!isHome && !isSettings);
     }
-  }, [isHome, isSettings, secondaryId, secondaryIsHome, secondaryIsSettings, nativeShouldHide, setVisible]);
+  }, [isHome, isSettings, secondaryId, secondaryIsHome, secondaryIsSettings, setVisible]);
 
   // chromeHidden is an explicit dependency here (not just relying on the
   // ResizeObserver alone) so bounds are force-recalculated the instant the
@@ -571,7 +848,6 @@ function Index() {
         height: Math.round(Math.max(0, rect.height - inset.top - inset.bottom)),
       };
       setBounds(nextBounds);
-      setContentBounds(nextBounds);
     };
     report();
     const observer = new ResizeObserver(report);
@@ -652,99 +928,17 @@ function Index() {
   }, [activeId]);
 
   // Right-click context menu — only meaningful for the active tab (a
-  // background tab can't be the one currently being right-clicked).
-  useEffect(() => {
-    const api = typeof window !== "undefined" ? window.browserAPI?.tabs : undefined;
-    if (!api) return;
-    return api.onContextMenuRequest((payload) => {
-      if (payload.tabId !== activeId) return;
-      setContextMenu(payload);
-    });
-  }, [activeId]);
-
-  // Centralized so every menu-item click and the backdrop click all go
-  // through the same restore-before-clear ordering — the native view's
-  // restore is itself an async IPC round trip (setVisible has to ask the
-  // main process to actually reattach it), and clearing contextMenu
-  // (removing the screenshot backdrop + the menu itself) BEFORE that
-  // finishes would leave a gap where neither the frozen picture nor the
-  // real live page is on screen, just the bare chrome UI background —
-  // the same kind of visible cut this whole screenshot approach was
-  // trying to avoid on the way in. Awaiting it first means the backdrop
-  // stays put right up until the real page is confirmed back, so there's
-  // never a frame with nothing under the cursor.
-  const closeContextMenu = () => {
-    if (!contextMenu || contextMenu.isChromeUI) {
-      setContextMenu(null);
-      return;
-    }
-    window.browserAPI?.tabs.setVisible(true).finally(() => setContextMenu(null));
-  };
-  // Closes the menu on any interaction outside its own popup — WITHOUT
-  // blocking/consuming the event, unlike the content-area backdrop above
-  // (which intentionally does swallow its click, since clicking the frozen
-  // page has nothing underneath it to actually hit). This is specifically
-  // for the header/toolbar/tab strip — those areas have real buttons that
-  // need to receive the click themselves too, not just close the menu and
-  // require a second click to actually press them. mousedown, not click —
-  // fires earlier, so the menu is already closing by the time the target
-  // element's own click handler runs.
-  useEffect(() => {
-    if (!contextMenu) return;
-    const onMouseDown = (e: MouseEvent) => {
-      if (e.button !== 0) return; // right-clicks are handled separately by onContextMenu — don't race with retriggerContextMenuAt
-      if (contextMenuPopupRef.current?.contains(e.target as Node)) return;
-      closeContextMenu();
-    };
-    // Scrolling (mouse wheel or trackpad) anywhere while the menu is open
-    // — the page underneath is a frozen picture at this point, so there's
-    // nothing for a scroll to actually do there anyway, and leaving the
-    // menu open while the person's clearly moved on to something else
-    // just gets in the way. Doesn't need the same "let it reach its real
-    // target" treatment mousedown gets above — scrolling isn't a targeted
-    // interaction the way clicking a specific button is, there's nothing
-    // it would otherwise need to still receive.
-    const onWheel = (e: WheelEvent) => {
-      if (contextMenuPopupRef.current?.contains(e.target as Node)) return; // scrolling inside the menu itself (unlikely to ever be tall enough to need it, but just in case) shouldn't close it
-      closeContextMenu();
-    };
-    document.addEventListener("mousedown", onMouseDown);
-    document.addEventListener("wheel", onWheel, { passive: true });
-    return () => {
-      document.removeEventListener("mousedown", onMouseDown);
-      document.removeEventListener("wheel", onWheel);
-    };
-  }, [contextMenu]);
-
-  // Right-clicking the backdrop of an already-open menu — the backdrop is
-  // a frozen picture, not the real page, so there's no way to know what's
-  // actually at that point (an image? a link? nothing?) without asking the
-  // real page. Fires a synthetic right-click straight at the tab's
-  // webContents WITHOUT restoring its visibility first — sendInputEvent
-  // is delivered to the renderer process directly and hit-tested against
-  // its own DOM/layout, which doesn't require the view to be attached to
-  // the window's visible compositor tree at all, so there's no need to
-  // show the real page (and hide it again right after) just to ask it a
-  // question. Chromium's own context-menu detection still fires exactly
-  // as if a person had actually clicked there, landing right back in the
-  // usual onContextMenuRequest flow with a fresh, honest menu for
-  // whatever's really there — and since the page was never shown again in
-  // between, the SAME backdrop just keeps sitting there the whole time
-  // (nothing to visually cut at all, unless the new menu's own content —
-  // a genuinely different image/link/text — means it needs updating,
-  // which is a prop change on an already-mounted element, not a hide/show
-  // cycle). contextMenu is deliberately NOT cleared here — the new
-  // request coming back in updates it in place.
-  const retriggerContextMenuAt = (e: React.MouseEvent) => {
-    if (!contextMenu || contextMenu.isChromeUI) {
-      setContextMenu(null);
-      return;
-    }
-    const tabId = contextMenu.tabId;
-    const contentX = e.clientX - contextMenu.boundsX;
-    const contentY = e.clientY - contextMenu.boundsY;
-    window.browserAPI?.tabs.simulateRightClickAt(tabId, contentX, contentY);
-  };
+  // Right-click on an image/link/selection inside a tab: opening the menu
+  // is now entirely handled main-process-side (electron/main.ts's
+  // showContextMenu calls straight into OverlayWindowManager.open — see
+  // that function's own comment) — no IPC round trip to this window is
+  // needed to open it, so there's nothing to listen for here anymore.
+  // Same for closing: the overlay window's own blur/Escape handling (see
+  // overlay-window.ts) covers it without any renderer-side "click
+  // outside"/"scroll closes it" bookkeeping. What routes/index.tsx still
+  // owns is only EXECUTING the action once one's picked — see the
+  // browserAPI.overlay.onAction effect further down, alongside the same
+  // handling for the profile popup.
 
   const closeFindBar = () => {
     window.browserAPI?.tabs.stopFindInPage();
@@ -824,9 +1018,11 @@ function Index() {
     const unsubAddFavorite = onShortcutAddFavorite(() => starCurrentPage());
     const unsubFindInPage = onShortcutFindInPage(() => toggleFindBar());
     const unsubTabSearch = onShortcutTabSearch(() => {
-      setTabSearchQuery("");
-      setTabSearchOpen(true);
-      setTimeout(() => tabSearchInputRef.current?.focus(), 0);
+      window.browserAPI?.overlay.open(
+        "tabSearch",
+        { tabs: tabsRef.current.map((t) => ({ id: t.id, title: t.title, url: t.url, isHome: t.isHome, isSettings: t.isSettings })) },
+        { top: 0, left: 0, right: 0, bottom: 0, placement: "cover" },
+      );
     });
     const unsubOpenPasswordSettings = onShortcutOpenPasswordSettings(() => goToSettings("passwords"));
     return () => {
@@ -848,18 +1044,11 @@ function Index() {
 
   const openSlot = (index: number) => {
     const existing = bookmarks[index];
-    setSlot(index);
-    setForm({ label: existing?.label ?? "", url: existing?.url ?? "" });
-    setDialogOpen(true);
-  };
-
-  const save = () => {
-    const label = form.label.trim();
-    if (slot === null || !label) return;
-    const url = normalizeBookmarkUrl(form.url);
-    setBookmarks((prev) => prev.map((b, i) => (i === slot ? { label, url } : b)));
-    notifySuccess("Bookmark saved");
-    setDialogOpen(false);
+    window.browserAPI?.overlay.open(
+      "bookmark",
+      { slot: index, label: existing?.label ?? "", url: existing?.url ?? "" },
+      { top: 0, left: 0, right: 0, bottom: 0, placement: "cover" },
+    );
   };
 
   const remove = (index: number) => {
@@ -897,7 +1086,21 @@ function Index() {
       return;
     }
     try {
-      await navigator.clipboard.writeText(activeTab?.url ?? "");
+      // Was navigator.clipboard.writeText() — the chrome UI's own
+      // webContents doesn't reliably have clipboard-write permission/focus
+      // for the Clipboard API (Electron's permission handling doesn't
+      // auto-grant it the way a real user-facing page origin would), which
+      // is exactly why every other copy-to-clipboard action in this app
+      // (right-click "Copy link", "Copy image") already goes through the
+      // native electron `clipboard` module over IPC instead. Routing the
+      // address-bar button through that same links:copy handler is what
+      // actually fixes it, not just makes it consistent.
+      const url = activeTab?.url ?? "";
+      if (window.browserAPI?.links) {
+        await window.browserAPI.links.copy(url);
+      } else {
+        await navigator.clipboard.writeText(url);
+      }
       setUrlCopied(true);
       setTimeout(() => setUrlCopied(false), 1400);
     } catch {
@@ -932,6 +1135,7 @@ function Index() {
     if (targetId) navigate(targetId, url);
     else newTab(url);
   };
+  openBookmarkRef.current = openBookmark;
 
   const openQuecksilverWebsite = () => {
     if (activeId) navigate(activeId, "https://quecksilver.ch");
@@ -997,9 +1201,11 @@ function Index() {
             if (group) setGroupCollapsed(groupId, !group.collapsed);
           }}
           onCreateGroup={(tabId) => {
-            setGroupDialogTabId(tabId);
-            setGroupDialogName("");
-            setGroupDialogColor(TAB_GROUP_COLORS[groups.length % TAB_GROUP_COLORS.length]!);
+            window.browserAPI?.overlay.open(
+              "groupDialog",
+              { tabId, defaultColor: TAB_GROUP_COLORS[groups.length % TAB_GROUP_COLORS.length]! },
+              { top: 0, left: 0, right: 0, bottom: 0, placement: "cover" },
+            );
           }}
           onAddToGroup={(tabId, groupId) => setTabGroup(tabId, groupId)}
           onRemoveFromGroup={(tabId) => setTabGroup(tabId, null)}
@@ -1054,7 +1260,8 @@ function Index() {
             // bar, with a dropdown to switch it right there instead of
             // needing a trip to Settings.
             <SearchEngineChooser engine={engine} onChange={setEngine} variant="inline" />
-          ) : (
+          ) : null}
+          {!activeTab?.isHome ? (
             <button onClick={copyUrl} aria-label="Copy URL" className={`shrink-0 ${urlCopied ? "text-green-600" : "text-muted-foreground"}`}>
               {urlCopied ? (
                 <Check className="h-[14px] w-[14px]" strokeWidth={2.5} />
@@ -1065,7 +1272,7 @@ function Index() {
                 </svg>
               )}
             </button>
-          )}
+          ) : null}
           <input
             ref={urlBarRef}
             value={urlDraft}
@@ -1086,14 +1293,18 @@ function Index() {
             }}
             onBlur={(e) => {
               setEditingUrl(false);
-              // Reverts any unsubmitted typed text back to the real
-              // current URL — previously handled implicitly by the sync
-              // effect re-running off editingUrl changing, which is
-              // exactly the mechanism removed above to stop the flash;
-              // doing it explicitly here keeps that original behavior
-              // without bringing the flash back.
-              const url = activeTab?.url ?? "";
-              setUrlDraft(isHome || url === HOME_URL || url === SETTINGS_URL || url === "about:blank" ? "" : url);
+              // Deliberately does NOT revert unsubmitted typed text back
+              // to the real current URL anymore — clicking away used to
+              // discard whatever was typed, which was the actual
+              // complaint (people expect the draft to still be sitting
+              // there if they click back in, same as most other browsers'
+              // combined bars). The sync effect below (keyed off
+              // activeTab?.url / isHome, and itself gated on
+              // !editingUrlRef.current) still overwrites this draft the
+              // moment a REAL navigation actually lands, so a stale typed
+              // value never sticks around once the page it was describing
+              // has changed out from under it.
+              //
               // select() on focus leaves the selection visually lingering
               // (as a grey highlight) even after the input loses focus —
               // collapsing it explicitly here is what actually clears it.
@@ -1222,6 +1433,14 @@ function Index() {
             autoCorrect="off"
             spellCheck={false}
           />
+          {activeTab?.isHome && isLikelyDirectUrl(urlDraft) ? (
+            // Once what's typed on the Start page's header bar reads as an
+            // actual address rather than a search term, show that site's
+            // favicon right after the typed text — a quick visual "yes,
+            // this is going to open a real page" confirmation before Enter
+            // is even pressed.
+            <FavIcon url={urlDraft.trim()} label={urlDraft.trim()} size="h-4 w-4" />
+          ) : null}
           {isTorWindow && (
             <button
               onClick={requestNewTorIdentity}
@@ -1365,7 +1584,7 @@ function Index() {
             <>
               <ToolbarActionIcons
                 style={toolbarStyle}
-                activeDownload={activeDownload}
+                onOpenDownloads={openDownloadsPopup}
                 actions={toolbarIconOrder.map((id) => {
                   const defs: Record<ToolbarIconId, ToolbarAction> = {
                     edit: { id: "edit", icon: Edit3, label: "Edit", onClick: () => goToSettings("favorites") },
@@ -1374,7 +1593,7 @@ function Index() {
                       id: "download",
                       icon: Download,
                       label: "Downloads",
-                      onClick: () => goToSettings("downloads"),
+                      onClick: openDownloadsPopup,
                       busy: activeDownloadCount > 0,
                       justDone: justCompletedDownload,
                     },
@@ -1469,8 +1688,32 @@ function Index() {
           <HeaderFavoritesBar
             favorites={headerFavorites}
             onOpen={openBookmark}
+            onOpenFolder={(folder, e) => {
+              const r = e.currentTarget.getBoundingClientRect();
+              window.browserAPI?.overlay.open(
+                "favoriteFolder",
+                {
+                  folderId: folder.id,
+                  label: folder.label,
+                  items: headerFavorites
+                    .filter((f) => f.parentId === folder.id)
+                    .map((f) => ({ id: f.id, label: f.label, url: f.url, iconOnly: Boolean(f.iconOnly) })),
+                },
+                { top: r.top, left: r.left, right: r.right, bottom: r.bottom },
+              );
+            }}
             onReorder={reorderHeaderFavorites}
-            renderIcon={(f) => <FavIcon url={f.url} label={f.label} size="h-5 w-5" />}
+            onAddToFolder={addHeaderFavoriteToFolder}
+            onRemoveFromFolder={removeHeaderFavoriteFromFolder}
+            onContextMenu={(f, e) => {
+              const r = e.currentTarget.getBoundingClientRect();
+              window.browserAPI?.overlay.open(
+                "favoriteContextMenu",
+                { id: f.id, label: f.label, url: f.url, iconOnly: Boolean(f.iconOnly), inFolder: Boolean(f.parentId) },
+                { top: r.top, left: r.left, right: r.right, bottom: r.bottom },
+              );
+            }}
+            renderIcon={(f) => (f.isFolder ? <Folder className="h-5 w-5 text-muted-foreground" /> : <FavIcon url={f.url} label={f.label} size="h-5 w-5" />)}
           />
         </div>
       )}
@@ -1561,363 +1804,6 @@ function Index() {
         </div>
       </div>
 
-      {/* Bookmark dialog (home-page slots) */}
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Bookmark</DialogTitle>
-            <DialogDescription>Name and address of the bookmark.</DialogDescription>
-          </DialogHeader>
-          {/* A real <form onSubmit> (not just a Save button's onClick) is
-              what makes Enter work in either field — the browser submits
-              the nearest form on Enter in a text input natively, no manual
-              keydown wiring needed. type="submit" on the Save button ties
-              it to the same submit event instead of a second onClick path,
-              so both ways of saving stay in sync automatically. */}
-          <form
-            className="space-y-3"
-            onSubmit={(e) => {
-              e.preventDefault();
-              save();
-            }}
-          >
-            <div className="space-y-1.5">
-              <Label htmlFor="bm-label">Name</Label>
-              <Input id="bm-label" value={form.label} onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))} placeholder="" />
-            </div>
-            <div className="relative space-y-1.5">
-              <Label htmlFor="bm-url">URL</Label>
-              <Input
-                id="bm-url"
-                value={form.url}
-                onChange={(e) => setForm((f) => ({ ...f, url: e.target.value }))}
-                onFocus={() => setBookmarkUrlFocused(true)}
-                onBlur={() => setTimeout(() => setBookmarkUrlFocused(false), 150)}
-                placeholder=""
-              />
-              {bookmarkUrlFocused && bookmarkUrlSuggestions.length > 0 && (
-                <div className="absolute left-0 top-full z-50 mt-1 w-full overflow-hidden rounded-xl border border-border bg-popover py-1 shadow-lg">
-                  {bookmarkUrlSuggestions.map((s) => (
-                    <button
-                      key={s.domain}
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        setForm((f) => ({ ...f, url: `https://${s.domain}` }));
-                        setBookmarkUrlFocused(false);
-                      }}
-                      className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-[13px] hover:bg-muted"
-                    >
-                      <Globe className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                      <span className="truncate text-foreground">{s.domain}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-            <DialogFooter>
-              <Button type="button" variant="ghost" onClick={() => setDialogOpen(false)}>Cancel</Button>
-              <Button type="submit">Save</Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      {/* New tab group — asks for a name + color, opened from the tab
-          context menu (see TabStrip.tsx's onCreateGroup). */}
-      <Dialog open={groupDialogTabId !== null} onOpenChange={(open) => !open && setGroupDialogTabId(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <FolderPlus className="h-4 w-4" />
-              New tab group
-            </DialogTitle>
-            <DialogDescription>Name and color for the group.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="group-name">Name</Label>
-              <Input
-                id="group-name"
-                value={groupDialogName}
-                onChange={(e) => setGroupDialogName(e.target.value)}
-                placeholder="New group"
-                autoFocus
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Color</Label>
-              <div className="flex gap-2">
-                {TAB_GROUP_COLORS.map((color) => (
-                  <button
-                    key={color}
-                    type="button"
-                    onClick={() => setGroupDialogColor(color)}
-                    aria-label={`Color ${color}`}
-                    className="grid h-7 w-7 shrink-0 place-items-center rounded-full ring-offset-2 transition-all"
-                    style={{ background: color, boxShadow: groupDialogColor === color ? `0 0 0 2px ${color}` : undefined }}
-                  >
-                    {groupDialogColor === color && <Check className="h-3.5 w-3.5 text-white" strokeWidth={3} />}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setGroupDialogTabId(null)}>Cancel</Button>
-            <Button
-              onClick={async () => {
-                if (!groupDialogTabId) return;
-                const groupId = await createGroup(groupDialogName.trim() || "New group", groupDialogColor);
-                if (groupId) setTabGroup(groupDialogTabId, groupId);
-                setGroupDialogTabId(null);
-              }}
-            >
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
-              Create
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Tab search — Ctrl+Shift+A, a command-palette-style filter over
-          every open tab's title/URL. Reuses the Dialog primitive rather
-          than the toolbar-pill pattern (find bar, session restore) since
-          this needs a taller, scrollable list rather than a single-line
-          control. */}
-      <Dialog open={tabSearchOpen} onOpenChange={setTabSearchOpen}>
-        <DialogContent className="gap-0 p-0">
-          <div className="border-b border-border p-3">
-            <Input
-              ref={tabSearchInputRef}
-              value={tabSearchQuery}
-              onChange={(e) => setTabSearchQuery(e.target.value)}
-              placeholder="Search open tabs"
-              onKeyDown={(e) => {
-                if (e.key === "Escape") setTabSearchOpen(false);
-              }}
-            />
-          </div>
-          <div className="max-h-80 overflow-y-auto p-1.5">
-            {tabs
-              .filter((t) => {
-                const q = tabSearchQuery.trim().toLowerCase();
-                if (!q) return true;
-                return t.title.toLowerCase().includes(q) || t.url.toLowerCase().includes(q);
-              })
-              .map((t) => (
-                <button
-                  key={t.id}
-                  onClick={() => {
-                    switchTab(t.id);
-                    setTabSearchOpen(false);
-                  }}
-                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left hover:bg-muted"
-                >
-                  <Globe className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-[13px] font-medium text-foreground">{t.isHome ? "New Tab" : t.isSettings ? "Settings" : t.title || t.url}</div>
-                    {!t.isHome && !t.isSettings && <div className="truncate text-[11px] text-muted-foreground">{t.url}</div>}
-                  </div>
-                </button>
-              ))}
-            {tabs.filter((t) => {
-              const q = tabSearchQuery.trim().toLowerCase();
-              if (!q) return true;
-              return t.title.toLowerCase().includes(q) || t.url.toLowerCase().includes(q);
-            }).length === 0 && <p className="px-2.5 py-4 text-center text-[13px] text-muted-foreground">No matching tabs</p>}
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* Right-click menu — see the contextMenu state's own comment for
-          why this includes a frozen screenshot of the page underneath: a
-          DOM popup can only ever render on top of the tab's native view by
-          hiding that view first (see anyDialogOpen above), and a plain
-          blank rectangle where the page just was reads as "it broke", not
-          "there's a menu open". The screenshot is sized/positioned to
-          exactly match where the live page sits, so swapping one for the
-          other is not noticeable beyond nothing moving under the cursor
-          anymore. */}
-      {/* Always mounted (not just while a menu is open) whenever there's a
-          real page active — invisible in normal use since the live
-          native view sits on top of it, but continuously rendered by the
-          chrome UI's own webContents regardless (each webContents renders
-          independently of whatever else is layered on top of it), so by
-          the time a context menu needs to reveal it, it's already fully
-          decoded and painted — nothing left to wait on there at all. */}
-      {!isHome && !isSettings && standbyScreenshot?.tabId === activeId && contentBounds && (
-        <div
-          className="fixed z-[89] bg-cover bg-no-repeat"
-          style={{ left: contentBounds.x, top: contentBounds.y, width: contentBounds.width, height: contentBounds.height, backgroundImage: `url(${standbyScreenshot.url})` }}
-        />
-      )}
-      {contextMenu && (
-        <>
-          {/* Fallback only — the standby backdrop above already covers
-              this in the common case. Only actually renders anything
-              when there's a real page (!isChromeUI) AND nothing's been
-              cached for it yet (e.g. a right-click within the very first
-              second of a brand-new tab, before the background timer's
-              first tick has run). */}
-          {!contextMenu.isChromeUI && standbyScreenshot?.tabId !== contextMenu.tabId && (
-            <div
-              className="fixed z-[89] bg-cover bg-no-repeat"
-              style={{
-                left: contextMenu.boundsX,
-                top: contextMenu.boundsY,
-                width: contextMenu.boundsWidth,
-                height: contextMenu.boundsHeight,
-                backgroundImage: contextMenu.screenshot ? `url(${contextMenu.screenshot})` : undefined,
-                backgroundColor: contextMenu.screenshot ? undefined : "var(--background)",
-              }}
-            />
-          )}
-          <div
-            // Restricted to the content area's own bounds — same
-            // boundsX/Y/Width/Height as the screenshot backdrop right
-            // above — rather than the full viewport. Covering the whole
-            // window meant a click on the TOOLBAR/tab strip/address bar
-            // while this menu was open got swallowed by this div first
-            // (just closing the menu), so using anything up there took
-            // two separate clicks: one to close, a second to actually hit
-            // the button. Chrome-UI-originated menus (Start page,
-            // Settings — see contextMenu.isChromeUI) don't have this
-            // problem in the first place, since there's no separate
-            // native page underneath fighting for the same clicks, so
-            // those keep the full-viewport catcher.
-            className="fixed z-[90]"
-            style={
-              contextMenu.isChromeUI
-                ? { top: 0, left: 0, right: 0, bottom: 0 }
-                : { left: contextMenu.boundsX, top: contextMenu.boundsY, width: contextMenu.boundsWidth, height: contextMenu.boundsHeight }
-            }
-            onClick={() => closeContextMenu()}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              retriggerContextMenuAt(e);
-            }}
-          />
-          <div
-            ref={contextMenuPopupRef}
-            className="fixed z-[91] w-64 overflow-hidden rounded-2xl border border-border bg-white p-1.5 shadow-2xl"
-            style={{ left: contextMenu.x, top: contextMenu.y }}
-          >
-            {contextMenu.srcURL && (
-              <div className="flex flex-col">
-                <ContextMenuActionItem
-                  icon={Download}
-                  label="Save image"
-                  onClick={() => {
-                    window.browserAPI?.images.saveDirect(contextMenu.srcURL!);
-                    closeContextMenu();
-                  }}
-                />
-                <ContextMenuActionItem
-                  icon={Download}
-                  label="Save image as…"
-                  onClick={() => {
-                    window.browserAPI?.images.save(contextMenu.srcURL!);
-                    closeContextMenu();
-                  }}
-                />
-                <ContextMenuActionItem
-                  icon={Copy}
-                  label="Copy image"
-                  onClick={() => {
-                    window.browserAPI?.images.copy(contextMenu.srcURL!);
-                    closeContextMenu();
-                  }}
-                />
-                <ContextMenuActionItem
-                  icon={Link2}
-                  label="Copy image address"
-                  onClick={() => {
-                    window.browserAPI?.images.copyLink(contextMenu.srcURL!);
-                    closeContextMenu();
-                  }}
-                />
-                <ContextMenuActionItem
-                  icon={ExternalLink}
-                  label="Open image in new tab"
-                  onClick={() => {
-                    window.browserAPI?.tabs.new(contextMenu.srcURL!);
-                    closeContextMenu();
-                  }}
-                />
-              </div>
-            )}
-
-            {contextMenu.srcURL && contextMenu.linkURL && <div className="mx-1 my-1 h-px bg-border" />}
-
-            {contextMenu.linkURL && (
-              <div className="flex flex-col">
-                <ContextMenuActionItem
-                  icon={ExternalLink}
-                  label="Open link in new tab"
-                  onClick={() => {
-                    window.browserAPI?.links.openInNewTab(contextMenu.linkURL!);
-                    closeContextMenu();
-                  }}
-                />
-                <ContextMenuActionItem
-                  icon={Copy}
-                  label="Copy link"
-                  onClick={() => {
-                    window.browserAPI?.links.copy(contextMenu.linkURL!);
-                    closeContextMenu();
-                  }}
-                />
-                <ContextMenuActionItem
-                  icon={SquareArrowOutUpRight}
-                  label="Open link in new window"
-                  onClick={() => {
-                    window.browserAPI?.links.openInNewWindow(contextMenu.linkURL!);
-                    closeContextMenu();
-                  }}
-                />
-                <ContextMenuActionItem
-                  icon={Download}
-                  label="Save link as…"
-                  onClick={() => {
-                    window.browserAPI?.links.saveAs(contextMenu.linkURL!);
-                    closeContextMenu();
-                  }}
-                />
-                <ContextMenuActionItem
-                  icon={Link2}
-                  label="Open link"
-                  onClick={() => {
-                    window.browserAPI?.links.openHere(contextMenu.tabId, contextMenu.linkURL!);
-                    closeContextMenu();
-                  }}
-                />
-              </div>
-            )}
-
-            {contextMenu.selectionText && !contextMenu.srcURL && !contextMenu.linkURL && (
-              <div className="flex flex-col">
-                <ContextMenuActionItem
-                  icon={Copy}
-                  label="Copy"
-                  onClick={() => {
-                    window.browserAPI?.tabs.copySelectionFor(contextMenu.tabId);
-                    closeContextMenu();
-                  }}
-                />
-                <ContextMenuActionItem
-                  icon={Search}
-                  label={`Search the web for "${contextMenu.selectionText.length > 24 ? contextMenu.selectionText.slice(0, 24) + "…" : contextMenu.selectionText}"`}
-                  onClick={() => {
-                    window.browserAPI?.tabs.new(currentEngine.buildUrl(contextMenu.selectionText!));
-                    closeContextMenu();
-                  }}
-                />
-              </div>
-            )}
-          </div>
-        </>
-      )}
-
       {/* Tor connecting screen — blocks everything (no tabs, no address
           bar interaction) until Tor actually reports 100% bootstrapped.
           Letting anything load before that would mean a request slipping
@@ -1949,25 +1835,9 @@ function Index() {
         </div>
       )}
 
-      <ProfilePopup
-        open={profilePopupOpen}
-        onOpenChange={setProfilePopupOpen}
-        anchorRect={profileAnchorRect}
-        profiles={profiles}
-        active={activeIdentity}
-        onOpenProfileInNewWindow={(id) => openProfileInNewWindow(id)}
-        onOpenGuestInNewWindow={() => openGuestInNewWindow()}
-        onOpenIncognitoInNewWindow={() => openIncognitoInNewWindow()}
-        onOpenTorInNewWindow={() => openTorInNewWindow()}
-        onRemove={(id) => {
-          removeProfile(id);
-          notify("Profile removed");
-        }}
-        onCreateSimple={(name) => createSimpleProfile(name)}
-        onLoginQuecksilver={() => login("new-profile")}
-        onSyncNow={() => syncNow()}
-        loginPending={authPending}
-      />
+      {/* The profile popup itself now renders in the native overlay window
+          — see openProfilePopup above and src/routes/overlay.tsx — nothing
+          left to render inline here. */}
     </div>
   );
 }

@@ -22,7 +22,24 @@ export type TabGroup = { id: string; name: string; color: string; collapsed: boo
 export type TabsSnapshot = { activeId: string | null; secondaryId: string | null; tabs: TabState[]; groups: TabGroup[] };
 export type ContentBounds = { x: number; y: number; width: number; height: number };
 export type Bookmark = { label: string; url: string } | null;
-export type HeaderFavorite = { id: string; label: string; url: string; iconOnly?: boolean; updatedAt?: number; deletedAt?: number };
+export type HeaderFavorite = {
+  id: string;
+  label: string;
+  url: string;
+  iconOnly?: boolean;
+  updatedAt?: number;
+  deletedAt?: number;
+  // Folders: a flat list with parent references, not a tree — keeps the
+  // existing sync/storage format (soft-delete via deletedAt, per-item
+  // updatedAt) completely unchanged; nesting is just one extra field. A
+  // folder entry has isFolder true and url "" (unused — folders aren't
+  // navigable themselves). A favorite (or, in principle, a folder,
+  // though the UI never nests folders inside folders) that's INSIDE a
+  // folder has parentId set to that folder's id; top-level items have no
+  // parentId at all.
+  isFolder?: boolean;
+  parentId?: string | null;
+};
 export type AuthSession = { accessToken: string; userId: string | null; email: string | null; obtainedAt: number } | null;
 export type ToolResult = { ok: boolean; text: string };
 export type ProfileKind = "quecksilver" | "simple";
@@ -76,24 +93,6 @@ type BrowserAPI = {
     toggleMute: (id: string) => Promise<void>;
     focusChrome: () => Promise<void>;
     copySelectionFor: (tabId: string) => Promise<void>;
-    simulateRightClickAt: (tabId: string, x: number, y: number) => Promise<void>;
-    onContextMenuRequest: (
-      cb: (payload: {
-        tabId: string;
-        x: number;
-        y: number;
-        boundsX: number;
-        boundsY: number;
-        boundsWidth: number;
-        boundsHeight: number;
-        srcURL: string | null;
-        linkURL: string | null;
-        selectionText: string | null;
-        screenshot: string | null;
-        isChromeUI: boolean;
-      }) => void,
-    ) => () => void;
-    onBackgroundScreenshotUpdate: (cb: (payload: { tabId: string; screenshot: string }) => void) => () => void;
   };
   bookmarks: {
     list: () => Promise<Bookmark[]>;
@@ -142,6 +141,7 @@ type BrowserAPI = {
     open: (filePath: string) => Promise<void>;
     showInFolder: (filePath: string) => Promise<void>;
     getFolder: () => Promise<string>;
+    openFolder: () => Promise<void>;
     pickFolder: () => Promise<string>;
     onChanged: (cb: (items: DownloadItem[]) => void) => () => void;
   };
@@ -190,6 +190,7 @@ type BrowserAPI = {
     copy: (url: string) => Promise<void>;
     openInNewTab: (url: string) => Promise<void>;
     openInNewWindow: (url: string) => Promise<void>;
+    openInIncognitoWindow: (url: string) => Promise<void>;
     openHere: (tabId: string, url: string) => Promise<void>;
     saveAs: (url: string) => Promise<void>;
   };
@@ -253,6 +254,20 @@ type BrowserAPI = {
           | { state: "error"; message: string },
       ) => void,
     ) => () => void;
+  };
+  // See electron/overlay-window.ts (Phase 1-3 of the native-overlay plan) —
+  // opens/closes the separate native overlay window; anchor is a
+  // getBoundingClientRect()-shaped rect of whatever the overlay should
+  // hang off (matches ProfilePopup.tsx's existing AnchorRect).
+  overlay: {
+    open: (
+      kind: "profile" | "contextmenu" | "bookmark" | "groupDialog" | "tabSearch" | "downloads" | "favoriteContextMenu" | "favoriteEditDialog" | "favoriteFolder" | "newFavoriteFolderDialog",
+      payload: unknown,
+      anchor: { top: number; left: number; right: number; bottom: number; placement?: "belowRight" | "atPoint" | "cover" },
+    ) => Promise<void>;
+    close: () => Promise<void>;
+    update: (kind: "profile" | "contextmenu" | "bookmark" | "groupDialog" | "tabSearch" | "downloads" | "favoriteContextMenu" | "favoriteEditDialog" | "favoriteFolder" | "newFavoriteFolderDialog", payload: unknown) => Promise<void>;
+    onAction: (cb: (action: { kind: "profile" | "contextmenu" | "bookmark" | "groupDialog" | "tabSearch" | "downloads" | "favoriteContextMenu" | "favoriteEditDialog" | "favoriteFolder" | "newFavoriteFolderDialog"; action: unknown }) => void) => () => void;
   };
 };
 

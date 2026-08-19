@@ -16,10 +16,11 @@ export function useDownloads() {
   const remove = useCallback((id: string) => api?.remove(id), [api]);
   const open = useCallback((filePath: string) => api?.open(filePath), [api]);
   const showInFolder = useCallback((filePath: string) => api?.showInFolder(filePath), [api]);
+  const openFolder = useCallback(() => api?.openFolder(), [api]);
   const pickFolder = useCallback(async () => {
     const next = await api?.pickFolder();
     if (next) setFolderState(next);
   }, [api]);
 
-  return { items, folder, remove, open, showInFolder, pickFolder };
+  return { items, folder, remove, open, showInFolder, openFolder, pickFolder };
 }

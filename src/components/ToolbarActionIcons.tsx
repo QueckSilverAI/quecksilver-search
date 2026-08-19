@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, Download, Plus, type LucideIcon } from "lucide-react";
+import { Check, Plus, type LucideIcon } from "lucide-react";
 import type { ToolbarStyleId } from "@/lib/toolbar-style";
 import type { ToolbarIconId } from "@/lib/settings-store";
 
@@ -7,31 +7,31 @@ export type ToolbarAction = {
   id: ToolbarIconId;
   icon: LucideIcon;
   label: string;
-  onClick: () => void;
+  // Optional event param — every style below just does `onClick={a.onClick}`,
+  // which React already calls with the SyntheticEvent as the first arg
+  // regardless of whether the concrete handler declares it (a function
+  // declared with fewer params is always assignable to a type expecting
+  // more, so `edit: { onClick: () => goToSettings(...) }` etc. stay valid
+  // unchanged). Only the "download" action actually reads it, to anchor
+  // the downloads flyout at the button's own position — see index.tsx.
+  onClick: (e: React.MouseEvent<HTMLButtonElement>) => void;
   active?: boolean; // e.g. split is currently on
   busy?: boolean; // e.g. a download is in progress
   justDone?: boolean; // e.g. a download just finished — brief checkmark
 };
 
-// The one download currently driving the toolbar's unified download state
-// (see the early return below). Only the single most-recent progressing
-// download is shown — the toolbar isn't a download manager, it's a status
-// glance; Settings → Downloads is still where every download lives.
-export type ActiveDownload = {
-  filename: string;
-  receivedBytes: number;
-  totalBytes: number;
-};
-
 type Props = {
   style: ToolbarStyleId;
   actions: ToolbarAction[];
-  // When set, the whole toolbar cluster renders as a single green
-  // download-progress pill instead of whatever `style` normally draws —
-  // deliberately the same look regardless of style, since a 17-way
-  // reskin of an in-progress download isn't worth the upkeep and would
-  // make the "something is downloading" signal less consistent, not more.
-  activeDownload?: ActiveDownload;
+  // Passed directly (not looked up via actions.find(a => a.id ===
+  // "download")?.onClick, which this used to do) — that lookup silently
+  // returns undefined, and hence a dead onClick={undefined}, the moment
+  // "download" isn't in `actions` for ANY reason (a customized/reordered
+  // toolbar that dropped it, most plausibly) — a person reported exactly
+  // that: the download icon just sat there, clicking it did nothing, no
+  // popup, no error either since there's nothing to throw. A plain,
+  // always-present prop can't have that failure mode.
+  onOpenDownloads: (e: React.MouseEvent<HTMLButtonElement>) => void;
   // Drag-reorder — same mechanism regardless of visual style, since it's
   // just which array position each action renders at.
   draggedId: ToolbarIconId | null;
@@ -85,7 +85,17 @@ function dragProps(a: ToolbarAction, draggedId: ToolbarIconId | null, onDragStar
   };
 }
 
-export function ToolbarActionIcons({ style, actions, activeDownload, draggedId, onDragStart, onDropOn, onDragEnd }: Props) {
+export function ToolbarActionIcons({ style, actions: actionsProp, onOpenDownloads, draggedId, onDragStart, onDropOn, onDragEnd }: Props) {
+  // The "download" entry's onClick is FORCED to onOpenDownloads here,
+  // unconditionally overriding whatever the actions prop itself carries
+  // for it — not read from it. Every one of the 17 style branches below
+  // renders off THIS array, not the raw prop, so there is no code path
+  // left, in any toolbar style, where the download icon's click could
+  // still resolve to something stale — the actual open-downloads-popup
+  // behavior can only ever come from this one place now, not from
+  // however `actions` happened to be
+  // built by the caller.
+  const actions = actionsProp.map((a) => (a.id === "download" ? { ...a, onClick: onOpenDownloads } : a));
   const [clickedId, setClickedId] = useState<ToolbarIconId | null>(null);
   // Declared unconditionally here (not inside the sliding-highlight branch
   // below) — React requires the same hooks in the same order on every
@@ -94,59 +104,31 @@ export function ToolbarActionIcons({ style, actions, activeDownload, draggedId, 
   // style, which is exactly what was crashing the page ("This page didn't
   // load").
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
-  const drag = (a: ToolbarAction) => dragProps(a, draggedId, onDragStart, onDropOn, onDragEnd);
+  const drag = (a: ToolbarAction) => ({
+    ...dragProps(a, draggedId, onDragStart, onDropOn, onDragEnd),
+    // Applied here (not on the old activeDownload pill, now removed —
+    // see below) so index.tsx's "auto-open the popup when a download
+    // starts" effect can always find SOME real download-icon DOM node to
+    // anchor against, across all 17 styles, without needing to touch
+    // each one individually.
+    ...(a.id === "download" ? { "data-qs-download-anchor": true } : {}),
+  });
   const opacity = (a: ToolbarAction) => (draggedId === a.id ? "opacity-40" : "");
-  const withPulse = (a: ToolbarAction, onClick: () => void) => () => {
-    onClick();
+  const withPulse = (a: ToolbarAction, onClick: (e: React.MouseEvent<HTMLButtonElement>) => void) => (e: React.MouseEvent<HTMLButtonElement>) => {
+    onClick(e);
     setClickedId(a.id);
     setTimeout(() => setClickedId((v) => (v === a.id ? null : v)), 420);
   };
 
-  // ── unified download state — overrides every style below while a
-  // download is progressing. Clicking it opens Downloads, same as the
-  // normal download icon (reuses that action's onClick rather than
-  // hardcoding a route, so it stays correct if that ever changes). Placed
-  // after every hook above (not as an early return right at the top) for
-  // the exact same reason as the hoverIdx comment above: an early return
-  // before a hook call changes the hook count between renders and crashes
-  // the page the moment a download starts or finishes.
-  if (activeDownload) {
-    const pct = activeDownload.totalBytes > 0 ? Math.min(1, activeDownload.receivedBytes / activeDownload.totalBytes) : null;
-    const openDownloads = actions.find((a) => a.id === "download")?.onClick;
-    return (
-      <button
-        onClick={openDownloads}
-        className="flex h-8 items-center gap-1.5 rounded-full bg-green-600 pl-2 pr-3 text-white shadow-[0_1px_3px_rgba(0,0,0,0.15)]"
-      >
-        {/* Download icon — static, far left, deliberately its own element
-            rather than the spinner drawn on top of it (that read as one
-            confused icon instead of two separate signals: "this is a
-            download" + "it's in progress"). */}
-        <Download className="h-3.5 w-3.5 shrink-0" />
-        {/* Spinner — a plain ring, nothing inside it, sitting beside the
-            download icon rather than wrapping it. */}
-        <span className="h-3 w-3 shrink-0 rounded-full border-2 border-white/40 border-t-white animate-spin" />
-        {/* Name + progress bar — a fixed min/max width range so a short
-            filename doesn't leave the whole pill looking squashed, but a
-            very long one still gets truncated instead of growing forever. */}
-        <span className="flex min-w-[110px] max-w-[180px] flex-col items-start gap-0.5">
-          <span className="w-full truncate text-left text-[11px] font-semibold leading-none">{activeDownload.filename}</span>
-          <span className="h-[3px] w-full overflow-hidden rounded-full bg-white/25">
-            <span
-              className="block h-full rounded-full bg-white transition-[width] duration-200"
-              style={{ width: pct !== null ? `${Math.round(pct * 100)}%` : "40%", ...(pct === null ? { animation: "toolbar-download-indeterminate 1.2s ease-in-out infinite" } : {}) }}
-            />
-          </span>
-        </span>
-        <style>{`
-          @keyframes toolbar-download-indeterminate {
-            0% { transform: translateX(-60%); }
-            100% { transform: translateX(160%); }
-          }
-        `}</style>
-      </button>
-    );
-  }
+  // The old "activeDownload replaces the WHOLE toolbar with one big green
+  // pill" behavior lived here — removed. A person reported it directly:
+  // the toolbar visibly disappearing and a green bar taking its place
+  // read as a jarring, unwanted animation, not a helpful status. The
+  // busy-spinner ring already drawn on the download icon itself in every
+  // style below (a.busy, small and non-disruptive) plus index.tsx's own
+  // "auto-open the downloads popup the moment a download starts" effect
+  // together already cover what the pill was for — actual live progress
+  // now shows in that popup, not by hijacking the whole toolbar.
 
   // ── seamless-pill — one h-8 pill, same height/shadow as the profile
   // pill next to it, all icons inside with just a per-icon hover circle

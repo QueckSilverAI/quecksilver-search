@@ -100,16 +100,6 @@ export class TabManager {
   // clicking through would just get checked again, found unsafe again,
   // and show the same warning page again.
   private bypassPhishingCheckFor = new Map<string, string>();
-  // Rolling screenshot cache — refreshed on a timer only for the currently
-  // active tab (see the interval set up in switchTab/createTab below), so
-  // a context-menu request never has to wait on a fresh capture: it's
-  // already sitting here, at most ~1s stale, ready to send immediately.
-  // That's what actually closes most of the remaining gap between the
-  // native view being hidden and something appearing in its place — the
-  // capture itself (even downscaled) was the biggest chunk of that delay,
-  // more than the hide+IPC+render part ever was.
-  private screenshotCache = new Map<string, string>();
-  private screenshotTimer: ReturnType<typeof setInterval> | null = null;
   // The current "Page zoom" setting value (Settings → Zoom) — applied to
   // every newly created tab, and to any existing tab that hasn't been
   // manually zoomed. Kept here (not just pushed out per-tab) so a freshly
@@ -135,9 +125,9 @@ export class TabManager {
   // about how/where visits get persisted.
   private onNavigate: ((url: string) => void) | null = null;
   // Fired on every right-click that lands on an image, a link, or actual
-  // selected text — main.ts wires this to capture a screenshot and push a
-  // context-menu request over to the renderer's own React-rendered menu.
-  // Kept as a callback (not built here) because the actual save/copy/open
+  // selected text — main.ts wires this to open the native overlay window's
+  // right-click menu (showContextMenu → OverlayWindowManager.open). Kept
+  // as a callback (not built here) because the actual save/copy/open
   // actions it needs to call already live in main.ts, right next to the
   // equivalent IPC handlers other UI uses for the same actions — no
   // reason to duplicate that logic here.
@@ -330,14 +320,6 @@ export class TabManager {
     this.emitChange();
   }
 
-  // Whatever's currently cached for this tab (see restartScreenshotCache),
-  // up to ~1s stale — used by main.ts's showContextMenu instead of
-  // capturing a fresh one at click time, which is what was adding most of
-  // the remaining gap before the backdrop could appear.
-  getCachedScreenshot(id: string): string | null {
-    return this.screenshotCache.get(id) ?? null;
-  }
-
   // Copies whatever's currently selected in a specific tab — used by the
   // right-click menu's "Copy" item for plain text selections, where the
   // tab that had something selected isn't necessarily "the active tab" by
@@ -346,19 +328,6 @@ export class TabManager {
   // just the more correct/explicit way to target it either way).
   copySelection(id: string) {
     this.views.get(id)?.webContents.copy();
-  }
-
-  // Fires a real right mouse-button down+up at content-relative coordinates
-  // on a specific tab's webContents — Chromium's own context-menu detection
-  // then fires exactly as if a person had actually clicked there, giving
-  // main.ts's context-menu listener a genuine params object (mediaType,
-  // linkURL, selectionText, ...) for whatever's really at that point,
-  // rather than this having to guess at any of that itself.
-  simulateRightClickAt(id: string, x: number, y: number) {
-    const wc = this.views.get(id)?.webContents;
-    if (!wc || wc.isDestroyed()) return;
-    wc.sendInputEvent({ type: "mouseDown", button: "right", x, y, clickCount: 1 });
-    wc.sendInputEvent({ type: "mouseUp", button: "right", x, y, clickCount: 1 });
   }
 
   snapshot(): SessionSnapshot {
@@ -554,11 +523,9 @@ export class TabManager {
     });
     // Right-click on an image, a link, or actual selected text — see
     // main.ts's onContextMenuRequest wiring (showContextMenu) for the full
-    // reasoning: this is a React-rendered menu (full design control),
-    // fed a screenshot captured at the moment of the click so hiding the
-    // native tab view while the menu is open (unavoidable — see
-    // routes/index.tsx's anyDialogOpen) reads as "the page paused"
-    // instead of "the page vanished".
+    // reasoning: this opens a native overlay window (a React-rendered
+    // menu, full design control) directly above the tab's live native
+    // view — nothing here needs hiding or freezing for it anymore.
     view.webContents.on("context-menu", (_event, params) => {
       this.onContextMenuRequest?.(id, view.webContents, params, this.bounds);
     });
@@ -672,13 +639,6 @@ export class TabManager {
       // on real sites" symptom.
       view.webContents.setVisualZoomLevelLimits(1, 3).catch(() => {});
       if (!this.homeTabs.has(id) && !this.settingsTabs.has(id)) this.onNavigate?.(view.webContents.getURL());
-      // Restarts the screenshot cache too — covers navigating away from
-      // Start/Settings into a real page within the SAME tab (switchTab
-      // isn't involved in that at all, so its own restart call never
-      // fires for this case) as well as just picking up a fresh capture
-      // right after any real navigation instead of waiting up to a full
-      // second for the timer's next tick.
-      if (id === this.activeId) this.restartScreenshotCache();
       emit();
     });
     view.webContents.on("did-navigate-in-page", emit);
@@ -759,7 +719,6 @@ export class TabManager {
     this.nightModeTabs.delete(id);
     this.mutedTabs.delete(id);
     this.audibleTabs.delete(id);
-    this.screenshotCache.delete(id);
     this.tabGroupOf.delete(id);
     this.order = this.order.filter((tabId) => tabId !== id);
     this.pruneEmptyGroups();
@@ -841,47 +800,7 @@ export class TabManager {
       // search-bar focus() call can actually receive keystrokes.
       this.win.webContents.focus();
     }
-    this.restartScreenshotCache();
     this.emitChange();
-  }
-
-  // Restarts the rolling screenshot cache to target whichever tab is
-  // active now — called on every switchTab (including the very first one,
-  // from createTab below) so the cache is never quietly still capturing a
-  // tab that isn't visible anymore.
-  private restartScreenshotCache() {
-    if (this.screenshotTimer) clearInterval(this.screenshotTimer);
-    const captureNow = async () => {
-      const id = this.activeId;
-      const wc = id ? this.views.get(id)?.webContents : null;
-      if (!id || !wc || wc.isDestroyed() || this.homeTabs.has(id) || this.settingsTabs.has(id)) return;
-      try {
-        const image = await wc.capturePage();
-        // Full resolution — the downscale-for-speed logic made sense back
-        // when this was captured live at click time and every millisecond
-        // sat directly in front of the menu appearing. Now that capture
-        // happens on this background timer instead, it's off that
-        // critical path entirely, so there's no more reason to trade
-        // quality for speed here. It actually needs to stay full-res: the
-        // backdrop gets stretched to the tab's real on-screen size
-        // regardless of the source image's resolution, so a downscaled
-        // capture just meant a blurrier backdrop for no remaining benefit.
-        this.screenshotCache.set(id, image.toDataURL());
-        // Pushed to the renderer too, not just kept in this cache — see
-        // routes/index.tsx's standby backdrop for why: it keeps an
-        // always-ready (though invisible, since the live native view
-        // still sits on top of it during normal browsing) copy of this
-        // in the DOM at all times, so opening a context menu no longer
-        // needs to wait on an IPC round trip carrying the actual image at
-        // all — only on hiding the native view, which is the one part of
-        // this whole flow that's already about as fast as it can be.
-        this.win.webContents.send("tabs:backgroundScreenshotUpdate", { tabId: id, screenshot: this.screenshotCache.get(id) });
-      } catch {
-        /* tab navigated away or closed mid-capture — just skip this tick */
-      }
-    };
-    void captureNow(); // don't wait a full interval for the first one
-    this.screenshotTimer = setInterval(captureNow, 1000);
   }
 
   // A rawUrl of HOME_URL/SETTINGS_URL sends the tab to that internal page
@@ -1123,7 +1042,6 @@ export class TabManager {
   }
 
   destroy() {
-    if (this.screenshotTimer) clearInterval(this.screenshotTimer);
     for (const view of this.views.values()) {
       // Defensive: a view's webContents can already be gone by the time
       // this runs (e.g. a tab that crashed, or a window torn down in an
@@ -1138,7 +1056,6 @@ export class TabManager {
     this.nightModeTabs.clear();
     this.mutedTabs.clear();
     this.audibleTabs.clear();
-    this.screenshotCache.clear();
     this.groups.clear();
     this.tabGroupOf.clear();
     this.order = [];

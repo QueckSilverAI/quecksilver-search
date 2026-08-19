@@ -26,6 +26,10 @@ const entries = [
   { entryPoints: [path.join(root, "electron", "main.ts")], ...shared },
   { entryPoints: [path.join(root, "electron", "preload.ts")], ...shared },
   { entryPoints: [path.join(root, "electron", "tab-preload.ts")], ...shared },
+  // Preload for the native overlay-window system (dropdowns/menus that
+  // need to sit above a tab's native WebContentsView) — see
+  // electron/overlay-window.ts.
+  { entryPoints: [path.join(root, "electron", "overlay-preload.ts")], ...shared },
 ];
 
 // sql.js's WASM binary (used by password-import.ts to read Chrome/Edge's
@@ -44,10 +48,10 @@ async function run() {
   if (watch) {
     const ctxs = await Promise.all(entries.map((cfg) => context(cfg)));
     await Promise.all(ctxs.map((ctx) => ctx.watch()));
-    console.log("[electron] watching main.ts + preload.ts + tab-preload.ts for changes...");
+    console.log("[electron] watching main.ts + preload.ts + tab-preload.ts + overlay-preload.ts for changes...");
   } else {
     await Promise.all(entries.map((cfg) => build(cfg)));
-    console.log("[electron] built electron/dist/main.cjs + preload.cjs + tab-preload.cjs");
+    console.log("[electron] built electron/dist/main.cjs + preload.cjs + tab-preload.cjs + overlay-preload.cjs");
   }
 }
 

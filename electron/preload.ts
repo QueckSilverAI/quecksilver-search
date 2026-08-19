@@ -13,6 +13,7 @@ import type {
   TabsSnapshot,
   ToolResult,
 } from "./types";
+import type { OverlayAction, OverlayAnchor, OverlayKind } from "./overlay-types";
 
 const tabs = {
   new: (url?: string): Promise<string> => ipcRenderer.invoke("tabs:new", url),
@@ -64,31 +65,6 @@ const tabs = {
   toggleMute: (id: string): Promise<void> => ipcRenderer.invoke("tabs:toggleMute", id),
   focusChrome: (): Promise<void> => ipcRenderer.invoke("tabs:focusChrome"),
   copySelectionFor: (tabId: string): Promise<void> => ipcRenderer.invoke("tabs:copySelectionFor", tabId),
-  simulateRightClickAt: (tabId: string, x: number, y: number): Promise<void> => ipcRenderer.invoke("tabs:simulateRightClickAt", tabId, x, y),
-  onContextMenuRequest: (cb: (payload: ContextMenuRequestPayload) => void): (() => void) => {
-    const listener = (_event: unknown, payload: ContextMenuRequestPayload) => cb(payload);
-    ipcRenderer.on("tabs:contextMenuRequest", listener);
-    return () => ipcRenderer.removeListener("tabs:contextMenuRequest", listener);
-  },
-  onBackgroundScreenshotUpdate: (cb: (payload: { tabId: string; screenshot: string }) => void): (() => void) => {
-    const listener = (_event: unknown, payload: { tabId: string; screenshot: string }) => cb(payload);
-    ipcRenderer.on("tabs:backgroundScreenshotUpdate", listener);
-    return () => ipcRenderer.removeListener("tabs:backgroundScreenshotUpdate", listener);
-  },
-};
-type ContextMenuRequestPayload = {
-  tabId: string;
-  x: number;
-  y: number;
-  boundsX: number;
-  boundsY: number;
-  boundsWidth: number;
-  boundsHeight: number;
-  srcURL: string | null;
-  linkURL: string | null;
-  selectionText: string | null;
-  screenshot: string | null;
-  isChromeUI: boolean;
 };
 
 const bookmarks = {
@@ -172,6 +148,7 @@ const downloads = {
   open: (filePath: string): Promise<void> => ipcRenderer.invoke("downloads:open", filePath),
   showInFolder: (filePath: string): Promise<void> => ipcRenderer.invoke("downloads:showInFolder", filePath),
   getFolder: (): Promise<string> => ipcRenderer.invoke("downloads:getFolder"),
+  openFolder: (): Promise<void> => ipcRenderer.invoke("downloads:openFolder"),
   pickFolder: (): Promise<string> => ipcRenderer.invoke("downloads:pickFolder"),
   onChanged: (cb: (items: DownloadItem[]) => void): (() => void) => {
     const listener = (_event: unknown, items: DownloadItem[]) => cb(items);
@@ -262,6 +239,7 @@ const links = {
   copy: (url: string): Promise<void> => ipcRenderer.invoke("links:copy", url),
   openInNewTab: (url: string): Promise<void> => ipcRenderer.invoke("links:openInNewTab", url),
   openInNewWindow: (url: string): Promise<void> => ipcRenderer.invoke("links:openInNewWindow", url),
+  openInIncognitoWindow: (url: string): Promise<void> => ipcRenderer.invoke("links:openInIncognitoWindow", url),
   openHere: (tabId: string, url: string): Promise<void> => ipcRenderer.invoke("links:openHere", tabId, url),
   saveAs: (url: string): Promise<void> => ipcRenderer.invoke("links:saveAs", url),
 };
@@ -336,6 +314,29 @@ const windowControls = {
   },
 };
 
+// Opens/closes the native overlay window (Phase 1-3 of the plan) — the
+// chrome UI just tells the main process WHAT to open and WHERE it's
+// anchored; the overlay window's own content is a completely separate
+// renderer (src/routes/overlay.tsx) that receives its payload over its own
+// preload (overlay-preload.ts), not this one. The action a person picks in
+// the overlay comes back here as "overlay:action" (main.ts's
+// OverlayWindowManager forwards it to this exact window's webContents).
+const overlay = {
+  open: (kind: OverlayKind, payload: unknown, anchor: OverlayAnchor): Promise<void> => {
+    if (kind === "downloads") console.log(`[downloads] preload's overlay.open("downloads", ...) called — sending overlay:open to main`);
+    return ipcRenderer.invoke("overlay:open", kind, payload, anchor);
+  },
+  close: (): Promise<void> => ipcRenderer.invoke("overlay:close"),
+  // See overlay-window.ts's update() — refreshes the payload of whichever
+  // overlay is currently open (no-ops otherwise), without repositioning.
+  update: (kind: OverlayKind, payload: unknown): Promise<void> => ipcRenderer.invoke("overlay:update", kind, payload),
+  onAction: (cb: (action: OverlayAction) => void): (() => void) => {
+    const listener = (_event: unknown, action: OverlayAction) => cb(action);
+    ipcRenderer.on("overlay:action", listener);
+    return () => ipcRenderer.removeListener("overlay:action", listener);
+  },
+};
+
 contextBridge.exposeInMainWorld("browserAPI", {
   tabs,
   bookmarks,
@@ -357,6 +358,7 @@ contextBridge.exposeInMainWorld("browserAPI", {
   privacy,
   tor,
   window: windowControls,
+  overlay,
 });
 contextBridge.exposeInMainWorld("platformInfo", { platform: process.platform });
 
@@ -378,4 +380,5 @@ export type BrowserAPI = {
   privacy: typeof privacy;
   tor: typeof tor;
   window: typeof windowControls;
+  overlay: typeof overlay;
 };

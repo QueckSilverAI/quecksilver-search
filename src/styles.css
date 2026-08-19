@@ -195,6 +195,63 @@
   border-radius: 3px;
 }
 
+/* Same native, always-correctly-tracking scrollbar mechanism as
+   .thin-scrollbar above (the browser itself keeps it in sync with scroll
+   position — never the class of bug PageScrollbar.tsx's own hand-built
+   JS version had inside the downloads overlay window), just restyled to
+   match THAT widget's own visual design instead — a fully rounded thumb
+   in muted-foreground at low opacity, brightening on hover, same colors
+   and radius as PageScrollbar.tsx's own thumb div. */
+/* Deliberately does NOT set scrollbar-width/scrollbar-color (the
+   standardized CSS Scrollbars API) alongside the ::-webkit-scrollbar
+   rules below — Chromium can end up preferring the plain standardized
+   styling over the detailed WebKit pseudo-element rules when BOTH are
+   present on the same element, which would explain the thumb/arrows
+   never actually looking any different despite the rules themselves
+   being correct. WebKit-only, on its own, doesn't have that conflict. */
+.custom-scrollbar::-webkit-scrollbar {
+  display: block;
+  width: 12px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+/* border + background-clip is what actually insets the thumb from the
+   track's edges (a visible gap on both sides, like a pill floating in a
+   channel) — a plain background-color alone would fill the full scrollbar
+   width edge-to-edge with square-looking sides even with border-radius
+   set, since there'd be no space for the rounding to actually show against. */
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background-color: #9a9a9a;
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  min-height: 40px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: #757575;
+}
+/* Up/down arrow buttons at each end of the track — WebKit's scrollbar
+   pseudo-elements DO support these (::-webkit-scrollbar-button), so the
+   native scrollbar can match the app's own hand-drawn PageScrollbar
+   widget's track+thumb+arrows look without needing that widget's own
+   (unreliable inside this specific overlay window — see
+   DownloadsPopoverContent.tsx's comment) JS-driven version at all. */
+.custom-scrollbar::-webkit-scrollbar-button {
+  display: block;
+  height: 14px;
+  background-color: transparent;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 9px 9px;
+}
+.custom-scrollbar::-webkit-scrollbar-button:vertical:decrement {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239a9a9a' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='18 15 12 9 6 15'/%3E%3C/svg%3E");
+}
+.custom-scrollbar::-webkit-scrollbar-button:vertical:increment {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239a9a9a' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+}
+
 /* Toast ring-drain — 1:1 from QueckSilver AI's index.css. */
 @keyframes toast-ring-drain {
   from { stroke-dashoffset: 0; }

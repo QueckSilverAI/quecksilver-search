@@ -61,7 +61,55 @@ export function useHeaderFavorites() {
 
   const remove = useCallback(
     (id: string) => {
-      setFavorites((prev) => prev.filter((f) => f.id !== id));
+      setFavorites((prev) => {
+        const target = prev.find((f) => f.id === id);
+        // Deleting a folder un-parents its contents back to top-level
+        // instead of deleting them too — losing the folder grouping is a
+        // much smaller surprise than losing every bookmark inside it.
+        if (target?.isFolder) {
+          return prev.filter((f) => f.id !== id).map((f) => (f.parentId === id ? { ...f, parentId: null } : f));
+        }
+        return prev.filter((f) => f.id !== id);
+      });
+    },
+    [setFavorites],
+  );
+
+  // "New folder" from the favorites context menu — creates an empty,
+  // named folder. Populating it happens separately, by plain-dragging
+  // other favorites onto it (see addToFolder below) — matches how the
+  // reference (Edge) actually works: create the folder first, then drag
+  // things into it, rather than a drag gesture that creates a folder
+  // out of thin air by merging two favorites together (that used to be
+  // shift+drop here; removed — a person found it too easy to trigger by
+  // accident and wanted folder creation to be a deliberate, named step
+  // instead).
+  const createFolder = useCallback(
+    (label: string) => {
+      const folder: HeaderFavorite = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, label, url: "", isFolder: true };
+      setFavorites((prev) => [...prev, folder]);
+    },
+    [setFavorites],
+  );
+
+  // Plain drag (no modifier key) of a favorite directly onto a FOLDER
+  // moves it inside — the only way left to populate a folder, now that
+  // folder CREATION is its own explicit "New folder" step (createFolder
+  // above) rather than something a drag could also trigger. Dropping
+  // onto anything that ISN'T a folder is just an ordinary reorder,
+  // handled by reorder() below instead.
+  const addToFolder = useCallback(
+    (draggedId: string, folderId: string) => {
+      setFavorites((prev) => (draggedId === folderId ? prev : prev.map((f) => (f.id === draggedId ? { ...f, parentId: folderId } : f))));
+    },
+    [setFavorites],
+  );
+
+  // "Remove from folder" in the favorites context menu — puts a favorite
+  // back at the top level without deleting it.
+  const removeFromFolder = useCallback(
+    (id: string) => {
+      setFavorites((prev) => prev.map((f) => (f.id === id ? { ...f, parentId: null } : f)));
     },
     [setFavorites],
   );
@@ -83,5 +131,5 @@ export function useHeaderFavorites() {
     [setFavorites],
   );
 
-  return { favorites, add, addMany, update, remove, reorder };
+  return { favorites, add, addMany, update, remove, reorder, createFolder, addToFolder, removeFromFolder };
 }
