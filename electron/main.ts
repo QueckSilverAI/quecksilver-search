@@ -58,6 +58,8 @@ import { startTor, stopTor, onTorStatusChange, getTorStatus, getSocksProxyRule, 
 import { listSitePermissions, setSitePermission, removeSitePermission, type PermissionKind, type PermissionState } from "./site-permissions-store";
 import { loadStoredExtensions, addExtension, listExtensions, removeExtension, setExtensionEnabled } from "./extensions-store";
 import { existsSync, rmSync, promises as fsPromises } from "node:fs";
+import { OverlayWindowManager, registerOverlayIpc } from "./overlay-window";
+import type { OverlayAction } from "./overlay-types";
 
 app.name = "QueckSilver Search";
 // No File/Edit/View/Window/Help bar — this app is deliberately chrome-free
@@ -76,7 +78,21 @@ const isDev = process.env.NODE_ENV === "development";
 const CHROME_URL = process.env.ELECTRON_START_URL ?? "http://localhost:8080";
 const ICON_PATH = path.join(app.getAppPath(), "build", process.platform === "win32" ? "icon.ico" : "icon-256.png");
 
-type WindowEntry = { win: BrowserWindow; tabs: TabManager; contentSession?: Electron.Session };
+type WindowEntry = { win: BrowserWindow; tabs: TabManager; contentSession?: Electron.Session; overlay: OverlayWindowManager };
+
+// Shared across every window's OverlayWindowManager — see
+// overlay-window.ts's registerOverlayIpc for why this has to be a single
+// Map handed to every instance rather than one per window.
+const overlayRegistry = new Map<number, OverlayWindowManager>();
+let overlayIpcRegistered = false;
+
+// Same URL story as CHROME_URL/ensureProductionServer above — the overlay
+// route is served by the exact same dev server or spawned production
+// server as the rest of the chrome UI (it's a TanStack Start route, not a
+// separate static file), so it needs the same base URL resolution.
+function getChromeBaseUrl(): Promise<string> {
+  return isDev ? Promise.resolve(CHROME_URL) : ensureProductionServer();
+}
 
 // Every open window, keyed by BrowserWindow.id. Each window has its OWN
 // TabManager (own tabs) and its OWN active profile identity (see
@@ -301,11 +317,33 @@ function createWindow(identity?: ActiveIdentity): BrowserWindow {
     win,
     isPrimary ? () => tabsRef && scheduleSnapshotWrite(tabsRef) : undefined,
     (url) => recordVisit(win.id, url),
-    (tabId, webContents, params, bounds) => void showContextMenu(win, tabId, webContents, params, bounds),
+    (tabId, webContents, params, bounds) => showContextMenu(win, tabId, webContents, params, bounds),
     contentSession,
   );
   tabsRef = tabs;
-  windows.set(win.id, { win, tabs, contentSession });
+
+  if (!overlayIpcRegistered) {
+    registerOverlayIpc(overlayRegistry);
+    overlayIpcRegistered = true;
+  }
+  // Forwards the chosen action to the SAME window's own chrome
+  // webContents, which is where ProfilePopupContent/ContextMenuContent's
+  // onAction handling actually lives (see routes/index.tsx, Phase 4) — the
+  // overlay window's webContents is a completely separate one.
+  const overlay = new OverlayWindowManager(
+    win,
+    getChromeBaseUrl,
+    (action: OverlayAction) => {
+      if (!win.isDestroyed()) win.webContents.send("overlay:action", action);
+    },
+    overlayRegistry,
+  );
+  windows.set(win.id, { win, tabs, contentSession, overlay });
+  // Kicks off the overlay window's one-time native show() (see
+  // OverlayWindowManager.warmUp()'s doc comment) well before the person
+  // could have opened a real popup yet, so their actual first popup is
+  // never the one paying for it.
+  overlay.warmUp();
 
   // Right-click on the chrome UI's OWN rendered content (the Start page,
   // Settings) — a separate listener from TabManager's per-tab one, since
@@ -315,7 +353,7 @@ function createWindow(identity?: ActiveIdentity): BrowserWindow {
   // label, ...) fired a context-menu event nothing was ever listening for.
   win.webContents.on("context-menu", (_event, params) => {
     const activeId = tabs.getActiveId();
-    if (activeId) void showContextMenu(win, activeId, win.webContents, params, { x: 0, y: 0, width: 0, height: 0 }, true);
+    if (activeId) showContextMenu(win, activeId, win.webContents, params, { x: 0, y: 0, width: 0, height: 0 }, true);
   });
 
   // "Continue where you left off" is silent — restore right away, no
@@ -575,6 +613,18 @@ function openLinkInNewWindow(win: BrowserWindow, url: string) {
   const activeId = newCtx?.tabs.getActiveId();
   if (newCtx && activeId) void newCtx.tabs.navigate(activeId, url);
 }
+// "Open in InPrivate window" — the favorites bar's own right-click menu
+// (src/overlay/FavoriteContextMenuContent.tsx), matching Edge's exact
+// wording. Same pattern as openLinkInNewWindow above, just via
+// createIncognitoWindow() instead of createWindow() — no profile/guest-
+// mode inheritance from the CURRENT window makes sense here, since an
+// incognito window is deliberately its own disposable, unlinked session.
+function openLinkInIncognitoWindow(url: string) {
+  const newWin = createIncognitoWindow();
+  const newCtx = windows.get(newWin.id);
+  const activeId = newCtx?.tabs.getActiveId();
+  if (newCtx && activeId) void newCtx.tabs.navigate(activeId, url);
+}
 // "Open link" — in the CURRENT tab, same as clicking the link normally
 // would (used for the menu's "open" action, distinct from "open in new
 // tab/window" above).
@@ -590,85 +640,57 @@ function saveLinkAs(win: BrowserWindow, url: string) {
   win.webContents.downloadURL(url);
 }
 // --- Right-click menu (image / link / selected text) -----------------------
-// A real React popup (full design control) rather than Electron's native
-// Menu — the native one, tried first, turned out to look like whatever the
-// OS's own menu widget looks like (Win32 on Windows) with zero styling
-// control: no custom spacing, no icons beyond a single small one, no
-// control over hover treatment. Getting the actual requested design back
-// meant going back to a DOM-rendered menu — which reintroduces the exact
-// problem native was solving (the tab's own native view always draws
-// ABOVE this app's chrome UI, so a DOM popup can only ever appear on top
-// of it by hiding that view first, which blanks the page to the chrome
-// UI's own background color while it's hidden). The fix here: capture a
-// screenshot of the page at the exact moment of the right-click and hand
-// it to the renderer along with everything else — the renderer shows
-// that as a frozen backdrop, sized/positioned to exactly cover where the
-// live page was, so hiding the real view no longer reads as "the page
-// vanished", just as "the page paused" while the menu is open.
-async function showContextMenu(
+// Rendered in the native overlay window (see electron/overlay-window.ts) as
+// a genuinely separate native window the OS itself layers above the tab's
+// live native view — nothing hidden, nothing to freeze/restore around a
+// right-click. The bookmark editor, new-group, and tab-search dialogs got
+// the same treatment (see src/overlay/{Bookmark,GroupDialog,TabSearch}
+// Content.tsx) — nothing in the app hides the native view for a dialog
+// anymore, and the screenshot-cache machinery that used to back all of that
+// is gone entirely (see tab-manager.ts, preload.ts).
+function showContextMenu(
   win: BrowserWindow,
   tabId: string,
-  webContents: Electron.WebContents,
+  _webContents: Electron.WebContents,
   params: Electron.ContextMenuParams,
   bounds: ContentBounds,
   isChromeUI = false,
 ) {
   if (params.mediaType !== "image" && !params.linkURL && !params.selectionText) return; // nothing this menu is for
-  let screenshot: string | null = null;
-  // Nothing to freeze for a click that happened on the chrome UI's own
-  // rendered content (the Start page, Settings) — that's already plain
-  // DOM in the same layer as the menu itself, no separate native surface
-  // sitting in front of it that needs hiding (and no need to skip
-  // straight over the render call anywhere else — the person right-
-  // clicking Settings' own logo/text should get exactly this same menu).
-  if (!isChromeUI) {
-    // Pulled from the rolling cache (tab-manager.ts's restartScreenshotCache),
-    // not captured fresh here — that cache is refreshed roughly every
-    // second (and right after every real navigation) specifically so this
-    // moment never has to wait on a capture at all. A fresh capture as a
-    // fallback only for the rare case nothing's cached yet (e.g. the very
-    // first right-click right after a tab was created, before the
-    // cache's first tick has run).
-    screenshot = windows.get(win.id)?.tabs.getCachedScreenshot(tabId) ?? null;
-    if (!screenshot) {
-      try {
-        const image = await webContents.capturePage();
-        screenshot = image.toDataURL(); // full resolution — see the same note in tab-manager.ts's restartScreenshotCache
-      } catch {
-        screenshot = null; // still show the menu even if the capture failed for some reason
-      }
-    }
-    // Hidden HERE, synchronously in the main process, right after the
-    // capture and before the renderer even knows a menu is coming —
-    // not via the renderer's own anyDialogOpen effect (which only reacts
-    // AFTER React has already rendered the screenshot backdrop, then
-    // makes its own separate IPC round trip back to this same process to
-    // actually hide the view). That ordering left a real gap where the
-    // backdrop was already painted but the live native view hadn't been
-    // removed yet, which is exactly the visible cut/flash this was
-    // about. Doing it here means the view is already gone by the time
-    // the renderer receives anything to paint at all — nothing left to
-    // race. The renderer-side effect still runs too when contextMenu
-    // state updates, but by then this has already made it a no-op.
-    windows.get(win.id)?.tabs.setContentVisible(false);
-  }
-  win.webContents.send("tabs:contextMenuRequest", {
-    tabId,
-    x: params.x + bounds.x,
-    y: params.y + bounds.y,
-    boundsX: bounds.x,
-    boundsY: bounds.y,
-    boundsWidth: bounds.width,
-    boundsHeight: bounds.height,
-    srcURL: params.mediaType === "image" ? params.srcURL || null : null,
-    linkURL: params.linkURL || null,
-    selectionText: params.selectionText || null,
-    screenshot,
-    isChromeUI,
-  });
+  const x = params.x + bounds.x;
+  const y = params.y + bounds.y;
+  windows.get(win.id)?.overlay.open(
+    "contextmenu",
+    {
+      tabId,
+      srcURL: params.mediaType === "image" ? params.srcURL || null : null,
+      linkURL: params.linkURL || null,
+      selectionText: params.selectionText || null,
+      isChromeUI,
+    },
+    { top: y, left: x, right: x, bottom: y, placement: "atPoint" },
+  );
 }
 
 function registerIpc() {
+  // --- Overlay windows (Phase 1/2/3 of the native-overlay plan) -----------
+  // Opened FROM the chrome UI's own webContents (ProfilePopup's button
+  // click, the renderer half of the context menu) — contextFor(event)
+  // resolves back to this same window's WindowEntry, same as every other
+  // handler here.
+  ipcMain.handle("overlay:open", (event, kind: OverlayAction["kind"], payload: unknown, anchor: { top: number; left: number; right: number; bottom: number }) => {
+    if (kind === "downloads") console.log(`[downloads] overlay:open received in main process, forwarding to OverlayWindowManager — payload=`, payload);
+    const ctx = contextFor(event);
+    if (kind === "downloads" && !ctx) console.log(`[downloads] contextFor(event) returned null/undefined — the click reached main.ts but the window context lookup failed, so open() never gets called at all`);
+    ctx?.overlay.open(kind, payload, anchor);
+  });
+  ipcMain.handle("overlay:close", (event) => {
+    contextFor(event)?.overlay.close();
+  });
+  ipcMain.handle("overlay:update", (event, kind: OverlayAction["kind"], payload: unknown) => {
+    contextFor(event)?.overlay.update(kind, payload);
+  });
+
   // Pushes to Supabase only when the currently active profile (for this
   // window) is QueckSilver-linked AND has a live session — simple profiles
   // and guest mode never call this at all. Centralized here so every local
@@ -725,20 +747,6 @@ function registerIpc() {
   ipcMain.handle("tabs:reload", (e, id: string, ignoreCache?: boolean) => contextFor(e)?.tabs.reload(id, ignoreCache));
   ipcMain.handle("tabs:setBounds", (e, bounds: ContentBounds) => contextFor(e)?.tabs.setContentBounds(bounds));
   ipcMain.handle("tabs:setVisible", (e, visible: boolean) => contextFor(e)?.tabs.setContentVisible(visible));
-  // Simulates a real right-click at a specific point on a tab's own page —
-  // used when the person right-clicks the frozen screenshot backdrop of an
-  // ALREADY-OPEN context menu, wanting a NEW menu right there instead of
-  // having to close this one first and right-click again separately. The
-  // backdrop is a static picture, not the real page, so there's no way to
-  // know what's actually under that point (an image? a link? nothing?)
-  // without asking the real page — which means restoring it and firing an
-  // honest-to-goodness synthetic click at those coordinates, letting
-  // Chromium's own context-menu detection do the same real work it always
-  // does, rather than trying to guess/fake a menu from the frozen image.
-  ipcMain.handle("tabs:simulateRightClickAt", (e, tabId: string, x: number, y: number) => {
-    const ctx = contextFor(e);
-    ctx?.tabs.simulateRightClickAt(tabId, x, y);
-  });
   ipcMain.handle("tabs:setDefaultZoom", (e, factor: number) => contextFor(e)?.tabs.setDefaultZoom(factor));
   ipcMain.handle("tabs:enterSplit", (e, id: string) => contextFor(e)?.tabs.enterSplit(id));
   ipcMain.handle("tabs:exitSplit", (e) => contextFor(e)?.tabs.exitSplit());
@@ -824,6 +832,7 @@ function registerIpc() {
     const ctx = contextFor(e);
     if (ctx) openLinkInNewWindow(ctx.win, url);
   });
+  ipcMain.handle("links:openInIncognitoWindow", (_e, url: string) => openLinkInIncognitoWindow(url));
   ipcMain.handle("links:openHere", (e, tabId: string, url: string) => {
     const ctx = contextFor(e);
     if (ctx) openLinkHere(ctx.win, tabId, url);
@@ -847,7 +856,16 @@ function registerIpc() {
     if (!ctx || !isPrimaryWindow(ctx.win.id) || !snap || getRestoreOnStart() || !crashedLastRun) {
       return { available: false, tabCount: 0, crashed: false };
     }
-    return { available: true, tabCount: snap.tabs.length, crashed: true };
+    // A snapshot made up entirely of blank Start-page tabs (someone closed
+    // down to just a fresh new tab, then the app happened to crash/quit
+    // from there) has nothing worth offering to restore — every one of
+    // those tabs reopens to the exact same empty page a normal launch
+    // already shows, so the prompt would just be nagging over nothing.
+    const realTabs = snap.tabs.filter((t) => t.url !== HOME_URL);
+    if (realTabs.length === 0) {
+      return { available: false, tabCount: 0, crashed: false };
+    }
+    return { available: true, tabCount: realTabs.length, crashed: true };
   });
   ipcMain.handle("session:restoreAccepted", (e) => {
     const ctx = contextFor(e);
@@ -861,6 +879,17 @@ function registerIpc() {
   ipcMain.handle("frequentSites:list", (e, prefix: string) => {
     const ctx = contextFor(e);
     return ctx ? listFrequentSites(ctx.win.id, prefix) : [];
+  });
+  // Same data as "frequentSites:list" above, just reached from the overlay
+  // window's own separate preload/webContents (see overlay-preload.ts's
+  // frequentSites and src/overlay/types.ts's BookmarkOverlayPayload
+  // comment) — contextFor doesn't work here since the overlay
+  // BrowserWindow's id was never added to the `windows` Map, so this
+  // resolves the OWNER window's id via the overlay registry instead.
+  ipcMain.handle("overlay:frequentSites", (e, prefix: string) => {
+    const bw = BrowserWindow.fromWebContents(e.sender);
+    const ownerId = bw ? overlayRegistry.get(bw.id)?.ownerWindowId : null;
+    return ownerId != null ? listFrequentSites(ownerId, prefix) : [];
   });
   ipcMain.handle("permissions:list", (e) => {
     const ctx = contextFor(e);
@@ -1180,6 +1209,11 @@ function registerIpc() {
   });
   ipcMain.handle("downloads:showInFolder", (_e, filePath: string) => shell.showItemInFolder(filePath));
   ipcMain.handle("downloads:getFolder", () => getDownloadsFolder());
+  // The downloads popup's own folder-icon button (see
+  // src/overlay/DownloadsPopoverContent.tsx) — opens the downloads
+  // folder itself in the OS file manager, distinct from showInFolder
+  // (which opens a folder with one specific FILE pre-selected).
+  ipcMain.handle("downloads:openFolder", () => shell.openPath(getDownloadsFolder()));
   ipcMain.handle("downloads:pickFolder", async (e) => {
     const ctx = contextFor(e);
     const result = ctx
