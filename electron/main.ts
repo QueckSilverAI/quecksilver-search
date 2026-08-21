@@ -1138,28 +1138,44 @@ function registerIpc() {
     const session = await startLoginFlow(win, (email) => {
       if (mode === "new-profile") createQuecksilverProfile(win, email);
     });
-    // A brand-new profile always starts completely empty locally — if this
-    // QueckSilver account already has data in the cloud (a returning user
-    // on a fresh install, or a second device), pull it down now instead of
-    // leaving favorites/bookmarks/passwords/settings empty until something
-    // happens to trigger a push. Safe to do unconditionally here since a
-    // just-created profile can't yet have any local data of its own to
-    // clobber.
+    // If this QueckSilver account already has data in the cloud (a
+    // returning user on a fresh install, a second device, or signing back
+    // in on this same device), pull it down now instead of leaving
+    // favorites/bookmarks/passwords empty until something happens to
+    // trigger a push.
+    //
+    // header_favorites/passwords go through the same merge used for every
+    // other sync (see supabase-sync.ts's mergeAndSync) rather than a raw
+    // overwrite — createQuecksilverProfile above now reuses an existing
+    // local profile for a returning email instead of always creating an
+    // empty one, so there CAN be local data here worth not clobbering
+    // (e.g. something added offline since the last sync). Bookmarks have
+    // no per-item merge (5 fixed positional slots, not a list of ids), so
+    // those still just take the cloud copy — but only when there's
+    // nothing local to lose.
     if (mode === "new-profile" && session?.accessToken && session.userId) {
-      const remote = await pullProfileData(session.accessToken, session.userId);
-      if (remote) {
-        if (Array.isArray(remote.header_favorites) && remote.header_favorites.length > 0) {
-          saveHeaderFavorites(win.id, remote.header_favorites as HeaderFavorite[]);
-          win.webContents.send("headerFavorites:changed", listHeaderFavorites(win.id));
+      try {
+        const remote = await pullProfileData(session.accessToken, session.userId);
+        if (remote) {
+          if (Array.isArray(remote.header_favorites)) {
+            const merged = await mergeAndSync(session.accessToken, session.userId, "header_favorites", listHeaderFavoritesForSync(win.id));
+            overwriteHeaderFavorites(win.id, merged);
+            win.webContents.send("headerFavorites:changed", listHeaderFavorites(win.id));
+          }
+          if (Array.isArray(remote.bookmarks) && remote.bookmarks.length > 0 && listBookmarks(win.id).length === 0) {
+            saveBookmarks(win.id, remote.bookmarks as Bookmark[]);
+            win.webContents.send("bookmarks:changed", listBookmarks(win.id));
+          }
+          if (Array.isArray(remote.passwords)) {
+            const merged = await mergeAndSync(session.accessToken, session.userId, "passwords", listStoredPasswordsForSync(win.id));
+            overwriteStoredPasswords(win.id, merged);
+            win.webContents.send("passwords:changed", listPasswords(win.id));
+          }
+        } else {
+          console.warn("[auth:login] pullProfileData returned nothing for this account — either it has no synced data yet, or the search_profile_data table/RLS policy isn't set up in Supabase (see supabase/search_profile_data.sql).");
         }
-        if (Array.isArray(remote.bookmarks) && remote.bookmarks.length > 0) {
-          saveBookmarks(win.id, remote.bookmarks as Bookmark[]);
-          win.webContents.send("bookmarks:changed", listBookmarks(win.id));
-        }
-        if (Array.isArray(remote.passwords) && remote.passwords.length > 0) {
-          importPasswords(win.id, remote.passwords as { url: string; username: string; password: string }[]);
-          win.webContents.send("passwords:changed", listPasswords(win.id));
-        }
+      } catch (err) {
+        console.error("[auth:login] pulling cloud data after login failed:", err);
       }
     }
     return session;

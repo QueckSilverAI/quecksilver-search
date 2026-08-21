@@ -95,7 +95,7 @@ const LOGO_SWITCH_WIDTH = 52; // below this, favicons give way to the plain app 
 const NEW_TAB_BTN_SPACE = 32; // reserved out of the container so the "+" button
 // (which lives inside the same flex row, not clamped/shrunk like tabs) always
 // has room without stealing from the tabWidth math.
-const TAB_HEIGHT = "h-10"; // same for active and inactive — only the white
+const TAB_HEIGHT = "h-9"; // same for active and inactive — only the white
 // background + notch corners signal "active", not a height change, so
 // switching tabs never looks like anything is growing/shrinking.
 
@@ -325,7 +325,7 @@ export function TabStrip({
   }
 
   return (
-    <div className="relative flex h-12 shrink-0 items-center gap-0 rounded-t-[10px] pl-2.5 pr-3 [-webkit-app-region:drag]" style={{ background: "var(--chrome-strip)" }}>
+    <div className="relative flex h-11 shrink-0 items-center gap-0 rounded-t-[10px] pl-2.5 pr-3 [-webkit-app-region:drag]" style={{ background: "var(--chrome-strip)" }}>
       <button
         onClick={onLogoClick}
         aria-label="QueckSilver, quecksilver.ch"

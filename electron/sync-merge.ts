@@ -29,8 +29,41 @@ export function mergeById<T extends Syncable>(local: T[], remote: T[]): T[] {
     const existing = merged.get(item.id);
     if (!existing || stampOf(item) >= stampOf(existing)) merged.set(item.id, item);
   }
+
+  // Content is merged above (newest per-id wins), but ARRAY ORDER still
+  // needs deciding separately — a pure reorder (drag-and-drop) doesn't
+  // change any item's content, so no single id "wins" a fresher stamp from
+  // it, and building `merged` by iterating remote-then-local (as above)
+  // always ends up positioned in REMOTE's order regardless of what just
+  // got reordered locally. That's exactly why a drag-reorder used to snap
+  // back after the next sync. Instead: whichever side was touched more
+  // recently overall (see diffAndTombstone below, which stamps a pure
+  // reorder's items too) decides the order for ids both sides share;
+  // anything only on the other side is appended after, in its own order.
+  const maxStamp = (items: T[]) => items.reduce((m, item) => Math.max(m, stampOf(item)), 0);
+  const localIsNewer = maxStamp(local) >= maxStamp(remote);
+  const orderBase = localIsNewer ? local : remote;
+  const other = localIsNewer ? remote : local;
+
+  const ordered: T[] = [];
+  const placed = new Set<string>();
+  for (const item of orderBase) {
+    const val = merged.get(item.id);
+    if (val && !placed.has(item.id)) {
+      ordered.push(val);
+      placed.add(item.id);
+    }
+  }
+  for (const item of other) {
+    const val = merged.get(item.id);
+    if (val && !placed.has(item.id)) {
+      ordered.push(val);
+      placed.add(item.id);
+    }
+  }
+
   const now = Date.now();
-  return [...merged.values()].filter((item) => !item.deletedAt || now - item.deletedAt < TOMBSTONE_RETENTION_MS);
+  return ordered.filter((item) => !item.deletedAt || now - item.deletedAt < TOMBSTONE_RETENTION_MS);
 }
 
 // Called right before writing a "replace the whole list" save (header
@@ -46,10 +79,19 @@ export function diffAndTombstone<T extends Syncable>(previous: T[], next: T[]): 
   const now = Date.now();
   const prevById = new Map(previous.map((item) => [item.id, item]));
   const nextIds = new Set(next.map((item) => item.id));
+  // A pure reorder (same set of ids, nobody's content actually changed)
+  // gives no individual item a content diff below — which meant the
+  // reorder itself left no trace for mergeById to notice, and the drag
+  // silently reverted to remote's stale order on the next sync. Detecting
+  // "same ids, different sequence" here and refreshing every item's
+  // updatedAt makes this side's overall recency reflect the reorder, which
+  // is what mergeById (sync-merge.ts) now uses to decide whose ORDER wins.
+  const sameIds = previous.length === next.length && previous.every((p) => nextIds.has(p.id));
+  const orderChanged = sameIds && previous.some((p, i) => p.id !== next[i]?.id);
   const result: T[] = next.map((item) => {
     const prev = prevById.get(item.id);
-    const changed = !prev || JSON.stringify({ ...prev, updatedAt: undefined }) !== JSON.stringify({ ...item, updatedAt: undefined });
-    return changed ? { ...item, updatedAt: now } : item;
+    const contentChanged = !prev || JSON.stringify({ ...prev, updatedAt: undefined }) !== JSON.stringify({ ...item, updatedAt: undefined });
+    return contentChanged || orderChanged ? { ...item, updatedAt: now } : item;
   });
   for (const prev of previous) {
     if (!nextIds.has(prev.id) && !prev.deletedAt) {

@@ -94,7 +94,18 @@ export async function pullProfileData(accessToken: string, userId: string): Prom
     const res = await fetch(`${SUPABASE_URL}/rest/v1/search_profile_data?user_id=eq.${encodeURIComponent(userId)}&select=*`, {
       headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${accessToken}` },
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      // A non-2xx here silently used to just mean "no cloud data" to every
+      // caller — which is indistinguishable from "there genuinely isn't
+      // any yet" unless it's logged. The common causes: 404/42P01 (the
+      // search_profile_data table was never created — see
+      // supabase/search_profile_data.sql, it's a one-time manual migration,
+      // not something this app runs itself) and 401 (the short-lived
+      // access token has expired — this flow has no refresh token, see
+      // auth.ts).
+      console.error(`[supabase-sync] pull failed: ${res.status} ${await res.text().catch(() => "")}`);
+      return null;
+    }
     const rows = (await res.json()) as ProfileDataRow[];
     return rows[0] ?? null;
   } catch (err) {

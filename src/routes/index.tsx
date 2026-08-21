@@ -1226,7 +1226,7 @@ function Index() {
       {/* Toolbar — back/forward/reload, url bar, right-side icons + sign in.
           Hidden in fullscreen (F11) — only the page itself shows then. */}
       {!chromeHidden && (
-      <div className="relative flex shrink-0 items-center gap-2.5 bg-background px-3 py-2">
+      <div className="relative flex shrink-0 items-center gap-2.5 bg-background px-3 py-1.5">
         <button
           onClick={() => activeId && goBack(activeId)}
           disabled={!activeTab?.canGoBack}
@@ -1684,7 +1684,7 @@ function Index() {
           the favorites list itself — hiding the bar doesn't touch any
           saved favorite. */}
       {!chromeHidden && !isGuest && headerFavoritesBarVisible && headerFavorites.length > 0 && (
-        <div className="flex shrink-0 items-center bg-background px-3 pb-2 pt-0">
+        <div className="flex shrink-0 items-center bg-background px-3 py-0.5">
           <HeaderFavoritesBar
             favorites={headerFavorites}
             onOpen={openBookmark}

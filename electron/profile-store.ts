@@ -94,9 +94,24 @@ export function createSimpleProfile(win: BrowserWindow, name: string): Profile {
 // a session — registers the profile entry and makes it active. The
 // session itself is stored separately, per-profile (see
 // getProfileSessionStore in auth.ts), not here.
+//
+// Reuses an existing quecksilver profile for the same email instead of
+// minting a new one every time — this used to create a brand-new profile
+// (new random id, new empty local favorites/passwords/bookmarks folder)
+// on EVERY sign-in, including signing back into an account already set up
+// on this device. main.ts's pull-on-login only runs for mode
+// "new-profile", so re-signing-in kept landing in a fresh, genuinely empty
+// local profile even though the cloud row for that account had data —
+// which is exactly what looked like "favorites/passwords don't come down,
+// everything's empty" after logging in.
 export function createQuecksilverProfile(win: BrowserWindow, email: string | null): Profile {
-  const profile: Profile = { id: randomUUID(), kind: "quecksilver", name: email ?? "QueckSilver account", email, createdAt: Date.now() };
   const profiles = listProfiles();
+  const existing = email ? profiles.find((p) => p.kind === "quecksilver" && p.email === email) : undefined;
+  if (existing) {
+    setActiveProfile(win, existing.id);
+    return existing;
+  }
+  const profile: Profile = { id: randomUUID(), kind: "quecksilver", name: email ?? "QueckSilver account", email, createdAt: Date.now() };
   profiles.push(profile);
   profilesStore.write(profiles);
   setActiveProfile(win, profile.id);
