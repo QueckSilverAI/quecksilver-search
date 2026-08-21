@@ -243,7 +243,7 @@ export type FavoriteFolderOverlayAction =
 // (index.tsx already has the tab list in React state).
 export type TabsMenuOverlayPayload = {
   verticalTabsEnabled: boolean;
-  tabs: { id: string; title: string; url: string; isHome: boolean; isSettings: boolean; isActive: boolean }[];
+  tabs: { id: string; title: string; url: string; isHome: boolean; isSettings: boolean; isActive: boolean; openedAt: number }[];
 };
 
 export type TabsMenuOverlayAction = { type: "toggleVerticalTabs"; enabled: boolean } | { type: "switch"; id: string };

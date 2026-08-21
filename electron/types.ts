@@ -18,6 +18,10 @@ export type TabState = {
   nightMode: boolean;
   isAudible: boolean;
   isMuted: boolean;
+  // ms since epoch, set once when the tab is first created — used by the
+  // tabs-menu dropdown (TabsMenuContent.tsx) to show a relative "opened
+  // Xm ago" label under each tab's title.
+  openedAt: number;
 };
 
 export type TabGroup = { id: string; name: string; color: string; collapsed: boolean };

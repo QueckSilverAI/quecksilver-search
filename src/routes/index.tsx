@@ -51,7 +51,7 @@ import {
   SEARCH_ENGINES,
   type ToolbarIconId,
 } from "@/lib/settings-store";
-import { RAIL_WIDTH, VerticalTabsSidebar } from "@/components/VerticalTabsSidebar";
+import { RAIL_WIDTH, SIDEBAR_WIDTH, VerticalTabsSidebar } from "@/components/VerticalTabsSidebar";
 import { useToolbarStyle } from "@/lib/toolbar-style";
 import { ToolbarActionIcons, type ToolbarAction } from "@/components/ToolbarActionIcons";
 import { useAuth } from "@/hooks/use-auth";
@@ -160,6 +160,12 @@ function Index() {
   const { enabled: verticalTabsEnabled, setEnabled: setVerticalTabsEnabled } =
     useVerticalTabsEnabled();
   const { pinned: verticalTabsPinned, setPinned: setVerticalTabsPinned } = useVerticalTabsPinned();
+  // True while the UNPINNED vertical-tabs sidebar is hover-expanded to its
+  // full width — see VerticalTabsSidebar's onHoverExpandedChange. Used
+  // below to widen the real page's content-view inset so that native view
+  // (which always paints above this window's own DOM) doesn't cover the
+  // widened sidebar panel while it's open.
+  const [sidebarHoverExpanded, setSidebarHoverExpanded] = useState(false);
   const {
     items: downloadItems,
     open: openDownloadItem,
@@ -689,6 +695,7 @@ function Index() {
         isHome: t.isHome,
         isSettings: t.isSettings,
         isActive: t.id === activeId,
+        openedAt: t.openedAt,
       })),
     });
   }, [tabs, activeId, verticalTabsEnabled]);
@@ -999,7 +1006,23 @@ function Index() {
     if (!el) return;
     const report = () => {
       const rect = el.getBoundingClientRect();
-      const inset = chromeHidden ? { top: 0, right: 0, bottom: 0, left: 0 } : CONTENT_INSET;
+      const inset = chromeHidden ? { top: 0, right: 0, bottom: 0, left: 0 } : { ...CONTENT_INSET };
+      // The unpinned vertical-tabs rail already gets its RAIL_WIDTH
+      // reserved via the content column's own paddingLeft (see below), so
+      // contentRef's rect already starts past it — nothing extra needed
+      // there. But hovering to expand that rail out to the full
+      // SIDEBAR_WIDTH does NOT reflow that padding (deliberately, so the
+      // Start/Settings page underneath doesn't jump every time the mouse
+      // brushes the rail) — it just draws the wider panel on top of the
+      // DOM. Real browsed pages, though, render in a separate native view
+      // that always paints above this window's own DOM regardless of
+      // z-index, so without pushing this inset out to match, an open
+      // website would still cover the expanded panel. Widening the inset
+      // here (rather than the padding) shrinks/moves the native view
+      // instead, uncovering exactly the strip the sidebar is drawn over.
+      if (!chromeHidden && verticalTabsEnabled && !verticalTabsPinned && sidebarHoverExpanded) {
+        inset.left += SIDEBAR_WIDTH - RAIL_WIDTH;
+      }
       const nextBounds = {
         x: Math.round(rect.x + inset.left),
         y: Math.round(rect.y + inset.top),
@@ -1016,7 +1039,7 @@ function Index() {
       observer.disconnect();
       window.removeEventListener("resize", report);
     };
-  }, [setBounds, chromeHidden]);
+  }, [setBounds, chromeHidden, verticalTabsEnabled, verticalTabsPinned, sidebarHoverExpanded]);
 
   // Ctrl/Cmd+T — new tab.
   useEffect(() => {
@@ -1388,6 +1411,7 @@ function Index() {
                   isHome: t.isHome,
                   isSettings: t.isSettings,
                   isActive: t.id === activeId,
+                  openedAt: t.openedAt,
                 })),
               },
               rect,
@@ -1970,62 +1994,6 @@ function Index() {
         </div>
       )}
 
-      {/* Header favorites bar — separate from the 5 home-page slots.
-          Toggleable from Settings (next to "Add favorite") independent of
-          the favorites list itself — hiding the bar doesn't touch any
-          saved favorite. */}
-      {!chromeHidden && !isGuest && headerFavoritesBarVisible && headerFavorites.length > 0 && (
-        <div className="flex shrink-0 items-center bg-background px-3 pb-1.5 pt-0">
-          <HeaderFavoritesBar
-            favorites={headerFavorites}
-            onOpen={openBookmark}
-            onOpenFolder={(folder, e) => {
-              const r = e.currentTarget.getBoundingClientRect();
-              window.browserAPI?.overlay.open(
-                "favoriteFolder",
-                {
-                  folderId: folder.id,
-                  label: folder.label,
-                  items: headerFavorites
-                    .filter((f) => f.parentId === folder.id)
-                    .map((f) => ({
-                      id: f.id,
-                      label: f.label,
-                      url: f.url,
-                      iconOnly: Boolean(f.iconOnly),
-                    })),
-                },
-                { top: r.top, left: r.left, right: r.right, bottom: r.bottom },
-              );
-            }}
-            onReorder={reorderHeaderFavorites}
-            onAddToFolder={addHeaderFavoriteToFolder}
-            onRemoveFromFolder={removeHeaderFavoriteFromFolder}
-            onContextMenu={(f, e) => {
-              const r = e.currentTarget.getBoundingClientRect();
-              window.browserAPI?.overlay.open(
-                "favoriteContextMenu",
-                {
-                  id: f.id,
-                  label: f.label,
-                  url: f.url,
-                  iconOnly: Boolean(f.iconOnly),
-                  inFolder: Boolean(f.parentId),
-                },
-                { top: r.top, left: r.left, right: r.right, bottom: r.bottom },
-              );
-            }}
-            renderIcon={(f) =>
-              f.isFolder ? (
-                <Folder className="h-4 w-4 text-muted-foreground" />
-              ) : (
-                <FavIcon url={f.url} label={f.label} size="h-4 w-4" />
-              )
-            }
-          />
-        </div>
-      )}
-
       {/* Row below the header: the vertical-tabs sidebar (if enabled) plus
           the page content, side by side. Kept `relative` so the unpinned
           sidebar (an `absolute` overlay — see VerticalTabsSidebar) is
@@ -2045,6 +2013,7 @@ function Index() {
             onNewTab={() => newTab()}
             pinned={verticalTabsPinned}
             onTogglePinned={() => setVerticalTabsPinned(!verticalTabsPinned)}
+            onHoverExpandedChange={setSidebarHoverExpanded}
             onOpenTabsMenu={(rect) =>
               window.browserAPI?.overlay.open(
                 "tabsMenu",
@@ -2057,6 +2026,7 @@ function Index() {
                     isHome: t.isHome,
                     isSettings: t.isSettings,
                     isActive: t.id === activeId,
+                    openedAt: t.openedAt,
                   })),
                 },
                 rect,
@@ -2077,6 +2047,68 @@ function Index() {
               : undefined
           }
         >
+          {/* Header favorites bar — separate from the 5 home-page slots.
+              Toggleable from Settings (next to "Add favorite") independent
+              of the favorites list itself — hiding the bar doesn't touch
+              any saved favorite. Lives INSIDE the content column (not as
+              a full-width row above the sidebar+content split) on
+              purpose: with vertical tabs on, this row needs to sit
+              beside the sidebar the same way the page content does, so
+              the sidebar (pinned, or unpinned-and-hover-expanded) blocks
+              it exactly like it blocks the page instead of floating
+              above it across the sidebar's own column too. */}
+          {!chromeHidden && !isGuest && headerFavoritesBarVisible && headerFavorites.length > 0 && (
+            <div className="flex shrink-0 items-center bg-background px-3 pb-1.5 pt-0">
+              <HeaderFavoritesBar
+                favorites={headerFavorites}
+                onOpen={openBookmark}
+                onOpenFolder={(folder, e) => {
+                  const r = e.currentTarget.getBoundingClientRect();
+                  window.browserAPI?.overlay.open(
+                    "favoriteFolder",
+                    {
+                      folderId: folder.id,
+                      label: folder.label,
+                      items: headerFavorites
+                        .filter((f) => f.parentId === folder.id)
+                        .map((f) => ({
+                          id: f.id,
+                          label: f.label,
+                          url: f.url,
+                          iconOnly: Boolean(f.iconOnly),
+                        })),
+                    },
+                    { top: r.top, left: r.left, right: r.right, bottom: r.bottom },
+                  );
+                }}
+                onReorder={reorderHeaderFavorites}
+                onAddToFolder={addHeaderFavoriteToFolder}
+                onRemoveFromFolder={removeHeaderFavoriteFromFolder}
+                onContextMenu={(f, e) => {
+                  const r = e.currentTarget.getBoundingClientRect();
+                  window.browserAPI?.overlay.open(
+                    "favoriteContextMenu",
+                    {
+                      id: f.id,
+                      label: f.label,
+                      url: f.url,
+                      iconOnly: Boolean(f.iconOnly),
+                      inFolder: Boolean(f.parentId),
+                    },
+                    { top: r.top, left: r.left, right: r.right, bottom: r.bottom },
+                  );
+                }}
+                renderIcon={(f) =>
+                  f.isFolder ? (
+                    <Folder className="h-4 w-4 text-muted-foreground" />
+                  ) : (
+                    <FavIcon url={f.url} label={f.label} size="h-4 w-4" />
+                  )
+                }
+              />
+            </div>
+          )}
+
           {/* Content — flush with the real window edges (no gap) so Windows'
           automatic DWM corner-rounding on this frameless window actually
           applies to it, same as Edge/Chrome do. A gap here would put native

@@ -353,9 +353,15 @@ export function TabStrip({
         onOpenTabsMenu({ top: r.top, left: r.left, right: r.right, bottom: r.bottom });
       }}
       aria-label="Tabs menu"
-      className="my-2.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-black/[0.05] text-foreground transition-colors hover:bg-black/[0.1] [-webkit-app-region:no-drag]"
+      // Bigger hit/hover target than the visual chip itself (which stays
+      // 24x24 via the inner span) — a 32x32 button is much easier to land
+      // on top-left without shrinking the little rounded tint that used
+      // to be both the hover surface AND the click target at once.
+      className="my-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-foreground transition-colors hover:bg-black/[0.1] [-webkit-app-region:no-drag]"
     >
-      <ChevronDown className="h-[18px] w-[18px]" />
+      <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-black/[0.05]">
+        <ChevronDown className="h-[18px] w-[18px]" />
+      </span>
     </button>
   );
 

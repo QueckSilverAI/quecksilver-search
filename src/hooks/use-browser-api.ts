@@ -16,6 +16,7 @@ export type TabState = {
   nightMode: boolean;
   isAudible: boolean;
   isMuted: boolean;
+  openedAt: number;
 };
 export type TabGroup = { id: string; name: string; color: string; collapsed: boolean };
 
@@ -298,6 +299,7 @@ const FALLBACK_SNAPSHOT: TabsSnapshot = {
       nightMode: false,
       isAudible: false,
       isMuted: false,
+      openedAt: Date.now(),
     },
   ],
 };

@@ -92,6 +92,8 @@ export class TabManager {
   private nightModeTabs = new Map<string, string>();
   private mutedTabs = new Set<string>();
   private audibleTabs = new Set<string>();
+  // id -> creation timestamp (ms since epoch) — see TabState.openedAt.
+  private openedAt = new Map<string, number>();
   // id -> url to skip the Safe Browsing check for, once. Set right before
   // showing the warning page for that url, from EITHER navigate() (typed
   // URL/bookmark/favorite) or the will-navigate handler (in-page link
@@ -423,6 +425,7 @@ export class TabManager {
 
   createTab(url: string = HOME_URL): string {
     const id = randomUUID();
+    this.openedAt.set(id, Date.now());
     const view = new WebContentsView({
       webPreferences: {
         contextIsolation: true,
@@ -719,6 +722,7 @@ export class TabManager {
     this.nightModeTabs.delete(id);
     this.mutedTabs.delete(id);
     this.audibleTabs.delete(id);
+    this.openedAt.delete(id);
     this.tabGroupOf.delete(id);
     this.order = this.order.filter((tabId) => tabId !== id);
     this.pruneEmptyGroups();
@@ -1101,6 +1105,7 @@ export class TabManager {
       nightMode: this.nightModeTabs.has(id),
       isAudible: this.audibleTabs.has(id),
       isMuted: this.mutedTabs.has(id),
+      openedAt: this.openedAt.get(id) ?? Date.now(),
     };
   }
 
