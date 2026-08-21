@@ -19,7 +19,7 @@ import { useBrowserApi, HOME_URL, SETTINGS_URL } from "@/hooks/use-browser-api";
 import { useBookmarks } from "@/hooks/use-bookmarks";
 import { useHeaderFavorites } from "@/hooks/use-header-favorites";
 import { useDownloads } from "@/hooks/use-downloads";
-import { useToolbarIconOrder, useZoomLevel, useHeaderFavoritesBarVisible, useVerticalTabsEnabled, useSearchEngine, SEARCH_ENGINES, type ToolbarIconId } from "@/lib/settings-store";
+import { useToolbarIconOrder, useZoomLevel, useHeaderFavoritesBarVisible, useVerticalTabsEnabled, useVerticalTabsPinned, useSearchEngine, SEARCH_ENGINES, type ToolbarIconId } from "@/lib/settings-store";
 import { VerticalTabsSidebar } from "@/components/VerticalTabsSidebar";
 import { useToolbarStyle } from "@/lib/toolbar-style";
 import { ToolbarActionIcons, type ToolbarAction } from "@/components/ToolbarActionIcons";
@@ -115,6 +115,7 @@ function Index() {
   } = useHeaderFavorites();
   const { visible: headerFavoritesBarVisible } = useHeaderFavoritesBarVisible();
   const { enabled: verticalTabsEnabled, setEnabled: setVerticalTabsEnabled } = useVerticalTabsEnabled();
+  const { pinned: verticalTabsPinned, setPinned: setVerticalTabsPinned } = useVerticalTabsPinned();
   const { items: downloadItems, open: openDownloadItem, showInFolder: showDownloadInFolder, remove: removeDownloadItem, openFolder: openDownloadsFolder } = useDownloads();
   const activeDownloadCount = downloadItems.filter((d) => d.state === "progressing").length;
   const { order: toolbarIconOrder, moveIcon: moveToolbarIcon } = useToolbarIconOrder();
@@ -1210,6 +1211,15 @@ function Index() {
           onSelect={(id) => switchTab(id)}
           onClose={(id) => closeTab(id)}
           onNewTab={() => newTab()}
+          pinned={verticalTabsPinned}
+          onTogglePinned={() => setVerticalTabsPinned(!verticalTabsPinned)}
+          onOpenTabsMenu={(rect) =>
+            window.browserAPI?.overlay.open(
+              "tabsMenu",
+              { verticalTabsEnabled, tabs: tabs.map((t) => ({ id: t.id, title: t.title, url: t.url, isHome: t.isHome, isSettings: t.isSettings, isActive: t.id === activeId })) },
+              rect,
+            )
+          }
         />
       )}
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
@@ -1262,7 +1272,7 @@ function Index() {
       {/* Toolbar — back/forward/reload, url bar, right-side icons + sign in.
           Hidden in fullscreen (F11) — only the page itself shows then. */}
       {!chromeHidden && (
-      <div className="relative flex shrink-0 items-center gap-2.5 bg-background px-3 py-1.5">
+      <div className={`relative flex shrink-0 items-center gap-2.5 bg-background py-1.5 ${verticalTabsEnabled ? "pl-1.5 pr-3" : "px-3"}`}>
         <button
           onClick={() => activeId && goBack(activeId)}
           disabled={!activeTab?.canGoBack}

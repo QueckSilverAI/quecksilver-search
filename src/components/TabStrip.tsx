@@ -338,7 +338,14 @@ export function TabStrip({
   // The chevron button that replaced the old logo — same square footprint
   // and hover treatment either mode, just what it opens (and what sits
   // next to it) differs. Its own rect anchors the tabsMenu dropdown, same
-  // as every other belowRight overlay trigger in this app.
+  // as every other belowRight overlay trigger in this app. 10px on every
+  // side — top/bottom via my-2.5, left via the row's own pl-2.5, right
+  // via the tabs row's own pl-2.5 (which has to stay >= NOTCH so the
+  // active tab's cutout corner never clips against the scroll
+  // container's edge) — so the visible gap reads as even in every
+  // direction instead of the tab-side gap being noticeably wider. Always
+  // shows a faint tint (not just on hover), and the arrow is bigger and
+  // plain black instead of brand-blue.
   const menuButton = (
     <button
       onClick={(e) => {
@@ -346,21 +353,42 @@ export function TabStrip({
         onOpenTabsMenu({ top: r.top, left: r.left, right: r.right, bottom: r.bottom });
       }}
       aria-label="Tabs menu"
-      className="group relative flex h-7 w-7 shrink-0 items-center justify-center self-center [-webkit-app-region:no-drag]"
+      className="my-2.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-black/[0.05] text-foreground transition-colors hover:bg-black/[0.1] [-webkit-app-region:no-drag]"
     >
-      <span className="pointer-events-none absolute -inset-1 rounded-lg transition-colors group-hover:bg-black/[0.06]" />
-      <ChevronDown className="relative h-4 w-4" style={{ color: "var(--brand)" }} />
+      <ChevronDown className="h-[18px] w-[18px]" />
     </button>
   );
 
   if (verticalMode) {
-    // Individual tabs + the "+" button now live in VerticalTabsSidebar —
-    // this strip is just the drag region, the menu button, and (if this
-    // window draws its own frame) the window controls, all on one row.
+    // Individual tabs, the "+" button, and the menu-chevron button now all
+    // live in VerticalTabsSidebar — this strip is just the drag region,
+    // the current tab's name (favicon + title, centered — using up the
+    // space the menu button used to take), and (if this window draws its
+    // own frame) the window controls, all on one row.
+    const activeTab = tabs.find((t) => t.id === activeId);
+    const activeFavicon = activeTab && !activeTab.isHome && !activeTab.isSettings ? faviconUrl(activeTab.url) : null;
+    const activeLabel = activeTab ? (activeTab.isHome ? "New Tab" : activeTab.isSettings ? "Settings" : activeTab.title || activeTab.url) : "";
     return (
-      <div className="relative flex h-11 shrink-0 items-center gap-0 rounded-t-[10px] pl-2.5 pr-3 [-webkit-app-region:drag]" style={{ background: "var(--chrome-strip)" }}>
-        {menuButton}
+      <div className="relative flex h-11 shrink-0 items-center rounded-t-[10px] pl-3 pr-3 [-webkit-app-region:drag]" style={{ background: "var(--chrome-strip)" }}>
         <div className="min-w-0 flex-1 [-webkit-app-region:drag]" />
+        {activeTab && (
+          <div className="pointer-events-none absolute left-1/2 top-1/2 flex max-w-[55%] -translate-x-1/2 -translate-y-1/2 items-center gap-2 [-webkit-app-region:drag]">
+            {activeFavicon ? (
+              <img
+                src={activeFavicon}
+                alt=""
+                draggable={false}
+                className="h-5 w-5 shrink-0 rounded-[4px]"
+                onError={(e) => {
+                  e.currentTarget.style.display = "none";
+                }}
+              />
+            ) : (
+              <TabIcon tab={activeTab} loading={loadingTabIds.has(activeTab.id)} useAppLogo={false} />
+            )}
+            <span className="truncate text-[13px] font-medium text-foreground">{activeLabel}</span>
+          </div>
+        )}
         {!hasNativeControls && (
           <div className="-mr-3 flex h-full shrink-0 items-stretch [-webkit-app-region:no-drag]">
             <button onClick={onMinimize} aria-label="Minimize" className="flex w-[46px] items-center justify-center text-black transition-colors hover:bg-black/[0.06]">

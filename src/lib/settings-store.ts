@@ -217,3 +217,35 @@ export function useVerticalTabsEnabled() {
 
   return { enabled, setEnabled };
 }
+
+// Whether the vertical tabs sidebar is pinned open (pushes page content
+// over, same as before) or unpinned (rests collapsed as a slim rail and
+// only expands as a hover-over overlay that does NOT push content — it
+// layers on top instead, so nothing shifts until the person pins it
+// again). Defaults to pinned so existing behavior doesn't change for
+// anyone who already had vertical tabs on before this setting existed.
+const VERTICAL_TABS_PINNED_KEY = "qs-vertical-tabs-pinned";
+const VERTICAL_TABS_PINNED_EVENT = "qs-vertical-tabs-pinned-changed";
+
+function readVerticalTabsPinned(): boolean {
+  if (typeof window === "undefined") return true;
+  const raw = window.localStorage.getItem(VERTICAL_TABS_PINNED_KEY);
+  return raw === null ? true : raw === "1";
+}
+
+export function useVerticalTabsPinned() {
+  const [pinned, setPinnedState] = useState<boolean>(readVerticalTabsPinned);
+
+  useEffect(() => {
+    const onChange = () => setPinnedState(readVerticalTabsPinned());
+    window.addEventListener(VERTICAL_TABS_PINNED_EVENT, onChange);
+    return () => window.removeEventListener(VERTICAL_TABS_PINNED_EVENT, onChange);
+  }, []);
+
+  const setPinned = useCallback((next: boolean) => {
+    window.localStorage.setItem(VERTICAL_TABS_PINNED_KEY, next ? "1" : "0");
+    window.dispatchEvent(new Event(VERTICAL_TABS_PINNED_EVENT));
+  }, []);
+
+  return { pinned, setPinned };
+}
