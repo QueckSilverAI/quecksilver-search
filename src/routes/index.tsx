@@ -19,13 +19,14 @@ import { useBrowserApi, HOME_URL, SETTINGS_URL } from "@/hooks/use-browser-api";
 import { useBookmarks } from "@/hooks/use-bookmarks";
 import { useHeaderFavorites } from "@/hooks/use-header-favorites";
 import { useDownloads } from "@/hooks/use-downloads";
-import { useToolbarIconOrder, useZoomLevel, useHeaderFavoritesBarVisible, useSearchEngine, SEARCH_ENGINES, type ToolbarIconId } from "@/lib/settings-store";
+import { useToolbarIconOrder, useZoomLevel, useHeaderFavoritesBarVisible, useVerticalTabsEnabled, useSearchEngine, SEARCH_ENGINES, type ToolbarIconId } from "@/lib/settings-store";
+import { VerticalTabsSidebar } from "@/components/VerticalTabsSidebar";
 import { useToolbarStyle } from "@/lib/toolbar-style";
 import { ToolbarActionIcons, type ToolbarAction } from "@/components/ToolbarActionIcons";
 import { useAuth } from "@/hooks/use-auth";
 import { useProfiles } from "@/hooks/use-profiles";
 import { useTorStatus } from "@/hooks/use-tor-status";
-import type { BookmarkOverlayAction, ContextMenuOverlayAction, DownloadsOverlayAction, FavoriteContextMenuOverlayAction, FavoriteEditOverlayAction, FavoriteFolderOverlayAction, GroupDialogOverlayAction, NewFavoriteFolderOverlayAction, ProfileOverlayAction, TabSearchOverlayAction } from "@/overlay/types";
+import type { BookmarkOverlayAction, ContextMenuOverlayAction, DownloadsOverlayAction, FavoriteContextMenuOverlayAction, FavoriteEditOverlayAction, FavoriteFolderOverlayAction, GroupDialogOverlayAction, NewFavoriteFolderOverlayAction, ProfileOverlayAction, TabSearchOverlayAction, TabsMenuOverlayAction } from "@/overlay/types";
 import { TAB_GROUP_COLORS } from "@/overlay/types";
 import { useWindowControls } from "@/hooks/use-window-controls";
 import { parseUrlBarInput, isLikelyDirectUrl } from "@/lib/url-bar";
@@ -113,6 +114,7 @@ function Index() {
     removeFromFolder: removeHeaderFavoriteFromFolder,
   } = useHeaderFavorites();
   const { visible: headerFavoritesBarVisible } = useHeaderFavoritesBarVisible();
+  const { enabled: verticalTabsEnabled, setEnabled: setVerticalTabsEnabled } = useVerticalTabsEnabled();
   const { items: downloadItems, open: openDownloadItem, showInFolder: showDownloadInFolder, remove: removeDownloadItem, openFolder: openDownloadsFolder } = useDownloads();
   const activeDownloadCount = downloadItems.filter((d) => d.state === "progressing").length;
   const { order: toolbarIconOrder, moveIcon: moveToolbarIcon } = useToolbarIconOrder();
@@ -367,6 +369,12 @@ function Index() {
         if (action.type === "switch") switchTab(action.id);
         return;
       }
+      if (event.kind === "tabsMenu") {
+        const action = event.action as TabsMenuOverlayAction;
+        if (action.type === "toggleVerticalTabs") setVerticalTabsEnabled(action.enabled);
+        else if (action.type === "switch") switchTab(action.id);
+        return;
+      }
       if (event.kind === "downloads") {
         const action = event.action as DownloadsOverlayAction;
         switch (action.type) {
@@ -546,6 +554,16 @@ function Index() {
   useEffect(() => {
     window.browserAPI?.overlay.update("tabSearch", { tabs: tabs.map((t) => ({ id: t.id, title: t.title, url: t.url, isHome: t.isHome, isSettings: t.isSettings })) });
   }, [tabs]);
+  // Keeps the tabs-menu dropdown (TabsMenuContent) current while it's
+  // open — same idea as the tabSearch effect right above, just also
+  // carrying the vertical-tabs toggle's own current state along with the
+  // tab list.
+  useEffect(() => {
+    window.browserAPI?.overlay.update("tabsMenu", {
+      verticalTabsEnabled,
+      tabs: tabs.map((t) => ({ id: t.id, title: t.title, url: t.url, isHome: t.isHome, isSettings: t.isSettings, isActive: t.id === activeId })),
+    });
+  }, [tabs, activeId, verticalTabsEnabled]);
   // Right-click on an image/link/selection inside a tab now opens the
   // native overlay window directly from the main process — see
   // electron/main.ts's showContextMenu and src/overlay/ContextMenuContent
@@ -1183,7 +1201,18 @@ function Index() {
   };
 
   return (
-    <div className={`flex h-screen w-screen flex-col overflow-hidden bg-background font-sans ${chromeHidden ? "" : "rounded-[10px]"}`}>
+    <div className={`flex h-screen w-screen ${!chromeHidden && verticalTabsEnabled ? "flex-row" : "flex-col"} overflow-hidden bg-background font-sans ${chromeHidden ? "" : "rounded-[10px]"}`}>
+      {!chromeHidden && verticalTabsEnabled && (
+        <VerticalTabsSidebar
+          tabs={tabs}
+          activeId={activeId}
+          loadingTabIds={loadingHomeTabs}
+          onSelect={(id) => switchTab(id)}
+          onClose={(id) => closeTab(id)}
+          onNewTab={() => newTab()}
+        />
+      )}
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
       {!chromeHidden && (
         <TabStrip
           tabs={tabs}
@@ -1195,7 +1224,14 @@ function Index() {
           onToggleMute={(id) => window.browserAPI?.tabs.toggleMute(id)}
           onReorder={(newOrder) => reorderTabs(newOrder)}
           onNewTab={() => newTab()}
-          onLogoClick={openQuecksilverWebsite}
+          onOpenTabsMenu={(rect) =>
+            window.browserAPI?.overlay.open(
+              "tabsMenu",
+              { verticalTabsEnabled, tabs: tabs.map((t) => ({ id: t.id, title: t.title, url: t.url, isHome: t.isHome, isSettings: t.isSettings, isActive: t.id === activeId })) },
+              rect,
+            )
+          }
+          verticalMode={verticalTabsEnabled}
           onToggleGroupCollapse={(groupId) => {
             const group = groups.find((g) => g.id === groupId);
             if (group) setGroupCollapsed(groupId, !group.collapsed);
@@ -1684,7 +1720,7 @@ function Index() {
           the favorites list itself — hiding the bar doesn't touch any
           saved favorite. */}
       {!chromeHidden && !isGuest && headerFavoritesBarVisible && headerFavorites.length > 0 && (
-        <div className="flex shrink-0 items-center bg-background px-3 py-0.5">
+        <div className="flex shrink-0 items-center bg-background px-3 pb-1.5 pt-0">
           <HeaderFavoritesBar
             favorites={headerFavorites}
             onOpen={openBookmark}
@@ -1713,7 +1749,7 @@ function Index() {
                 { top: r.top, left: r.left, right: r.right, bottom: r.bottom },
               );
             }}
-            renderIcon={(f) => (f.isFolder ? <Folder className="h-5 w-5 text-muted-foreground" /> : <FavIcon url={f.url} label={f.label} size="h-5 w-5" />)}
+            renderIcon={(f) => (f.isFolder ? <Folder className="h-4 w-4 text-muted-foreground" /> : <FavIcon url={f.url} label={f.label} size="h-4 w-4" />)}
           />
         </div>
       )}
@@ -1812,6 +1848,7 @@ function Index() {
             )}
           </div>
         </div>
+      </div>
       </div>
 
       {/* Tor connecting screen — blocks everything (no tabs, no address

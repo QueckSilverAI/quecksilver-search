@@ -48,6 +48,7 @@ const INITIAL_SIZE_FOR: Partial<Record<OverlayKind, { width: number; height: num
   contextmenu: { width: 256, height: 260 },
   favoriteContextMenu: { width: 256, height: 300 },
   downloads: { width: 380, height: 200 },
+  tabsMenu: { width: 260, height: 320 },
 };
 
 // How far the panel's top edge sits below the anchor's bottom edge

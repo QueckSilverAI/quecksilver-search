@@ -185,3 +185,35 @@ export function useHeaderFavoritesBarVisible() {
 
   return { visible, setVisible };
 }
+
+// Whether tabs render as a vertical list in a left-hand sidebar (pushing
+// page content over) instead of the classic horizontal strip along the
+// top. Toggled from the tabs-menu dropdown (TabsMenuContent, opened via
+// the chevron button that replaced the old logo button in TabStrip) —
+// same cross-instance-sync reasoning as useHeaderFavoritesBarVisible
+// above, since the main window and any overlay content reading this
+// value are separate React trees.
+const VERTICAL_TABS_ENABLED_KEY = "qs-vertical-tabs-enabled";
+const VERTICAL_TABS_ENABLED_EVENT = "qs-vertical-tabs-enabled-changed";
+
+function readVerticalTabsEnabled(): boolean {
+  if (typeof window === "undefined") return false;
+  return window.localStorage.getItem(VERTICAL_TABS_ENABLED_KEY) === "1";
+}
+
+export function useVerticalTabsEnabled() {
+  const [enabled, setEnabledState] = useState<boolean>(readVerticalTabsEnabled);
+
+  useEffect(() => {
+    const onChange = () => setEnabledState(readVerticalTabsEnabled());
+    window.addEventListener(VERTICAL_TABS_ENABLED_EVENT, onChange);
+    return () => window.removeEventListener(VERTICAL_TABS_ENABLED_EVENT, onChange);
+  }, []);
+
+  const setEnabled = useCallback((next: boolean) => {
+    window.localStorage.setItem(VERTICAL_TABS_ENABLED_KEY, next ? "1" : "0");
+    window.dispatchEvent(new Event(VERTICAL_TABS_ENABLED_EVENT));
+  }, []);
+
+  return { enabled, setEnabled };
+}

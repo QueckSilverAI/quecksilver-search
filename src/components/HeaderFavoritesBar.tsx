@@ -171,7 +171,7 @@ export function HeaderFavoritesBar({ favorites: allFavorites, onOpen, onOpenFold
               if (el) itemRefs.current.set(f.id, el);
               else itemRefs.current.delete(f.id);
             }}
-            className={`flex h-6 items-center gap-2 rounded-lg px-2.5 text-[13px] ${f.iconOnly ? "" : "max-w-[180px]"}`}
+            className={`flex h-[29px] items-center gap-2 rounded-lg px-2.5 text-[13px] ${f.iconOnly ? "" : "max-w-[180px]"}`}
           >
             {renderIcon(f)}
             {!f.iconOnly && <span className="truncate">{f.label}</span>}
@@ -201,14 +201,14 @@ export function HeaderFavoritesBar({ favorites: allFavorites, onOpen, onOpenFold
             }
           }}
           aria-label="Previous favorites"
-          className="flex h-5 w-5 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-foreground/5"
+          className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-foreground/5"
         >
           <ChevronLeft className="h-4 w-4" />
         </button>
       )}
 
       {visible.map((f) => (
-        <div key={f.id} className="relative flex h-6 shrink-0 items-center">
+        <div key={f.id} className="relative flex h-[29px] shrink-0 items-center">
           {dropTargetId === f.id && draggedId && draggedId !== f.id && !f.isFolder && (
             <span className="pointer-events-none absolute -left-[5px] top-0.5 bottom-0.5 w-[2px] rounded-full" style={{ background: "var(--brand)" }} />
           )}
@@ -287,7 +287,7 @@ export function HeaderFavoritesBar({ favorites: allFavorites, onOpen, onOpenFold
               onContextMenu(f, e);
             }}
             title={f.isFolder ? f.label : undefined}
-            className={`flex h-6 shrink-0 items-center gap-2 rounded-lg px-2.5 text-[13px] text-foreground transition-colors hover:bg-foreground/5 ${f.iconOnly ? "" : "max-w-[180px]"} ${
+            className={`flex h-[29px] shrink-0 items-center gap-2 rounded-lg px-2.5 text-[13px] text-foreground transition-colors hover:bg-foreground/5 ${f.iconOnly ? "" : "max-w-[180px]"} ${
               draggedId === f.id ? "opacity-40" : ""
             }`}
           >
@@ -310,7 +310,7 @@ export function HeaderFavoritesBar({ favorites: allFavorites, onOpen, onOpenFold
             }
           }}
           aria-label="More favorites"
-          className="ml-auto flex h-5 w-5 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-foreground/5"
+          className="ml-auto flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-foreground/5"
         >
           <ChevronRight className="h-4 w-4" />
         </button>

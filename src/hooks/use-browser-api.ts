@@ -261,13 +261,13 @@ type BrowserAPI = {
   // hang off (matches ProfilePopup.tsx's existing AnchorRect).
   overlay: {
     open: (
-      kind: "profile" | "contextmenu" | "bookmark" | "groupDialog" | "tabSearch" | "downloads" | "favoriteContextMenu" | "favoriteEditDialog" | "favoriteFolder" | "newFavoriteFolderDialog",
+      kind: "profile" | "contextmenu" | "bookmark" | "groupDialog" | "tabSearch" | "downloads" | "favoriteContextMenu" | "favoriteEditDialog" | "favoriteFolder" | "newFavoriteFolderDialog" | "tabsMenu",
       payload: unknown,
       anchor: { top: number; left: number; right: number; bottom: number; placement?: "belowRight" | "atPoint" | "cover" },
     ) => Promise<void>;
     close: () => Promise<void>;
-    update: (kind: "profile" | "contextmenu" | "bookmark" | "groupDialog" | "tabSearch" | "downloads" | "favoriteContextMenu" | "favoriteEditDialog" | "favoriteFolder" | "newFavoriteFolderDialog", payload: unknown) => Promise<void>;
-    onAction: (cb: (action: { kind: "profile" | "contextmenu" | "bookmark" | "groupDialog" | "tabSearch" | "downloads" | "favoriteContextMenu" | "favoriteEditDialog" | "favoriteFolder" | "newFavoriteFolderDialog"; action: unknown }) => void) => () => void;
+    update: (kind: "profile" | "contextmenu" | "bookmark" | "groupDialog" | "tabSearch" | "downloads" | "favoriteContextMenu" | "favoriteEditDialog" | "favoriteFolder" | "newFavoriteFolderDialog" | "tabsMenu", payload: unknown) => Promise<void>;
+    onAction: (cb: (action: { kind: "profile" | "contextmenu" | "bookmark" | "groupDialog" | "tabSearch" | "downloads" | "favoriteContextMenu" | "favoriteEditDialog" | "favoriteFolder" | "newFavoriteFolderDialog" | "tabsMenu"; action: unknown }) => void) => () => void;
   };
 };
 

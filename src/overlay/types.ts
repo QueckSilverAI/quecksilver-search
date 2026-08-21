@@ -232,3 +232,18 @@ export type FavoriteFolderOverlayAction =
   | { type: "copy"; url: string }
   | { type: "removeFromFolder"; id: string }
   | { type: "delete"; id: string };
+
+// --- Tabs menu (belowRight placement) ---------------------------------------
+// Opened from the chevron button that replaced the old QueckSilver logo
+// button at the top-left of TabStrip (see TabStrip.tsx's onOpenTabsMenu).
+// Deliberately minimal, unlike the full tabSearch dialog above: just the
+// one "Enable vertical tabs" toggle up top, then the plain list of
+// currently open tabs below it — no search field, no "recently closed"
+// section. Kept live via overlay.update the same way tabSearch already is
+// (index.tsx already has the tab list in React state).
+export type TabsMenuOverlayPayload = {
+  verticalTabsEnabled: boolean;
+  tabs: { id: string; title: string; url: string; isHome: boolean; isSettings: boolean; isActive: boolean }[];
+};
+
+export type TabsMenuOverlayAction = { type: "toggleVerticalTabs"; enabled: boolean } | { type: "switch"; id: string };

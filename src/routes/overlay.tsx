@@ -11,6 +11,7 @@ import { FavoriteContextMenuContent } from "@/overlay/FavoriteContextMenuContent
 import { FavoriteEditDialogContent } from "@/overlay/FavoriteEditDialogContent";
 import { FolderContentsContent } from "@/overlay/FolderContentsContent";
 import { NewFavoriteFolderDialogContent } from "@/overlay/NewFavoriteFolderDialogContent";
+import { TabsMenuContent } from "@/overlay/TabsMenuContent";
 import type {
   BookmarkOverlayPayload,
   ContextMenuOverlayPayload,
@@ -21,6 +22,7 @@ import type {
   GroupDialogOverlayPayload,
   ProfileOverlayPayload,
   TabSearchOverlayPayload,
+  TabsMenuOverlayPayload,
 } from "@/overlay/types";
 
 // The overlay window's entire renderer content. Deliberately NOT the full
@@ -78,6 +80,7 @@ function OverlayRoute() {
         {kind === "downloads" && <DownloadsPopoverContent payload={payload as DownloadsOverlayPayload} onAction={sendAction} onNotify={notifyAction} />}
         {kind === "favoriteContextMenu" && <FavoriteContextMenuContent payload={payload as FavoriteContextMenuOverlayPayload} onAction={sendAction} />}
         {kind === "favoriteFolder" && <FolderContentsContent payload={payload as FavoriteFolderOverlayPayload} onAction={sendAction} onNotify={notifyAction} />}
+        {kind === "tabsMenu" && <TabsMenuContent payload={payload as TabsMenuOverlayPayload} onAction={sendAction} />}
         {!kind && null /* nothing open yet — window sits hidden until overlay-window.ts's open() sends overlay:init */}
       </div>
       {kind === "bookmark" && (

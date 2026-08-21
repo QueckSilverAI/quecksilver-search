@@ -14,7 +14,11 @@ type Props = {
   onToggleMute: (id: string) => void;
   onReorder: (newOrder: string[]) => void;
   onNewTab: () => void;
-  onLogoClick: () => void;
+  // Opens the tabs-menu dropdown (vertical-tabs toggle + open-tabs list) —
+  // replaced the old plain "open quecksilver.ch" logo button entirely.
+  // Takes the trigger button's own rect so the caller (index.tsx) can
+  // anchor the overlay under it, same as every other belowRight overlay.
+  onOpenTabsMenu: (rect: { top: number; left: number; right: number; bottom: number }) => void;
   onToggleGroupCollapse: (groupId: string) => void;
   onCreateGroup: (tabId: string) => void;
   onAddToGroup: (tabId: string, groupId: string) => void;
@@ -26,6 +30,12 @@ type Props = {
   onMinimize: () => void;
   onToggleMaximize: () => void;
   onCloseWindow: () => void;
+  // True once vertical tabs are enabled (see settings-store's
+  // useVerticalTabsEnabled) — the individual tab pills + "+" button move
+  // into VerticalTabsSidebar.tsx then, so this strip shrinks down to just
+  // the drag region, the chevron menu button, and (if applicable) the
+  // window control buttons.
+  verticalMode?: boolean;
 };
 
 function faviconUrl(pageUrl: string): string | null {
@@ -40,7 +50,7 @@ function faviconUrl(pageUrl: string): string | null {
 // `useAppLogo` is true once a tab is so narrow there's no meaningful room to
 // tell favicons apart anyway — at that point we show the plain app mark
 // instead of fetching/rendering a per-tab favicon.
-function TabIcon({ tab, loading, useAppLogo }: { tab: TabState; loading: boolean; useAppLogo: boolean }) {
+export function TabIcon({ tab, loading, useAppLogo }: { tab: TabState; loading: boolean; useAppLogo: boolean }) {
   const [failed, setFailed] = useState(false);
   if (loading || tab.isLoading) {
     return <Loader2 className="h-4 w-4 shrink-0 animate-spin" style={{ color: "var(--brand)" }} />;
@@ -109,7 +119,7 @@ export function TabStrip({
   onToggleMute,
   onReorder,
   onNewTab,
-  onLogoClick,
+  onOpenTabsMenu,
   onToggleGroupCollapse,
   onCreateGroup,
   onAddToGroup,
@@ -118,6 +128,7 @@ export function TabStrip({
   onUngroup,
   hasNativeControls,
   isMaximized,
+  verticalMode,
   onMinimize,
   onToggleMaximize,
   onCloseWindow,
@@ -324,16 +335,63 @@ export function TabStrip({
     if (changed) onReorder([...orderRef.current]);
   }
 
+  // The chevron button that replaced the old logo — same square footprint
+  // and hover treatment either mode, just what it opens (and what sits
+  // next to it) differs. Its own rect anchors the tabsMenu dropdown, same
+  // as every other belowRight overlay trigger in this app.
+  const menuButton = (
+    <button
+      onClick={(e) => {
+        const r = e.currentTarget.getBoundingClientRect();
+        onOpenTabsMenu({ top: r.top, left: r.left, right: r.right, bottom: r.bottom });
+      }}
+      aria-label="Tabs menu"
+      className="group relative flex h-7 w-7 shrink-0 items-center justify-center self-center [-webkit-app-region:no-drag]"
+    >
+      <span className="pointer-events-none absolute -inset-1 rounded-lg transition-colors group-hover:bg-black/[0.06]" />
+      <ChevronDown className="relative h-4 w-4" style={{ color: "var(--brand)" }} />
+    </button>
+  );
+
+  if (verticalMode) {
+    // Individual tabs + the "+" button now live in VerticalTabsSidebar —
+    // this strip is just the drag region, the menu button, and (if this
+    // window draws its own frame) the window controls, all on one row.
+    return (
+      <div className="relative flex h-11 shrink-0 items-center gap-0 rounded-t-[10px] pl-2.5 pr-3 [-webkit-app-region:drag]" style={{ background: "var(--chrome-strip)" }}>
+        {menuButton}
+        <div className="min-w-0 flex-1 [-webkit-app-region:drag]" />
+        {!hasNativeControls && (
+          <div className="-mr-3 flex h-full shrink-0 items-stretch [-webkit-app-region:no-drag]">
+            <button onClick={onMinimize} aria-label="Minimize" className="flex w-[46px] items-center justify-center text-black transition-colors hover:bg-black/[0.06]">
+              <svg width="10" height="1" viewBox="0 0 10 1"><rect width="10" height="1" fill="currentColor" /></svg>
+            </button>
+            <button onClick={onToggleMaximize} aria-label={isMaximized ? "Restore" : "Maximize"} className="flex w-[46px] items-center justify-center text-black transition-colors hover:bg-black/[0.06]">
+              {isMaximized ? (
+                <svg width="10" height="10" viewBox="0 0 10 10">
+                  <rect x="0.5" y="2.5" width="7" height="7" fill="none" stroke="currentColor" strokeWidth="1" />
+                  <path d="M2.5 2.5V0.5H9.5V7.5H7.5" fill="none" stroke="currentColor" strokeWidth="1" />
+                </svg>
+              ) : (
+                <svg width="10" height="10" viewBox="0 0 10 10">
+                  <rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="1" />
+                </svg>
+              )}
+            </button>
+            <button onClick={onCloseWindow} aria-label="Close window" className="flex w-[46px] items-center justify-center rounded-tr-[10px] text-black transition-colors hover:bg-[#c42b1c] hover:text-white">
+              <svg width="10" height="10" viewBox="0 0 10 10">
+                <path d="M0.5 0.5L9.5 9.5M9.5 0.5L0.5 9.5" stroke="currentColor" strokeWidth="1" />
+              </svg>
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="relative flex h-11 shrink-0 items-center gap-0 rounded-t-[10px] pl-2.5 pr-3 [-webkit-app-region:drag]" style={{ background: "var(--chrome-strip)" }}>
-      <button
-        onClick={onLogoClick}
-        aria-label="QueckSilver, quecksilver.ch"
-        className="group relative flex h-7 w-7 shrink-0 items-center justify-center self-center [-webkit-app-region:no-drag]"
-      >
-        <span className="pointer-events-none absolute -inset-1 rounded-lg transition-colors group-hover:bg-black/[0.06]" />
-        <QueckSilverLogo className="relative h-5 w-auto" style={{ color: "var(--brand)" }} />
-      </button>
+      {menuButton}
 
       {/* flex-1 so this row always claims exactly the space left over after
           the logo and window-control buttons — that measured width feeds
@@ -537,6 +595,12 @@ export function TabStrip({
                         gap: showText ? 8 : showClose ? 4 : 0,
                         paddingLeft: showText ? 10 : 0,
                         paddingRight: showText ? 10 : 0,
+                        // Nudges the favicon/title/close row up slightly
+                        // within the tab's fixed height (items-center) so
+                        // it lines up with the "+" new-tab button, which
+                        // sits a bit lower than the tabs — see that
+                        // button's own comment below.
+                        paddingBottom: 2,
                         justifyContent: showText ? undefined : "center",
                         // Light tint of the group's color on top of the
                         // underline strip below — together with the label
@@ -671,7 +735,7 @@ export function TabStrip({
         <button
           onClick={onNewTab}
           aria-label="New tab"
-          className="ml-1.5 mb-1.5 flex h-7 w-7 shrink-0 items-center justify-center self-end rounded-lg text-black transition-colors hover:bg-black/10 [-webkit-app-region:no-drag]"
+          className="ml-1.5 mb-[5px] flex h-7 w-7 shrink-0 items-center justify-center self-end rounded-lg text-black transition-colors hover:bg-black/10 [-webkit-app-region:no-drag]"
         >
           <Plus className="h-4 w-4" />
         </button>
