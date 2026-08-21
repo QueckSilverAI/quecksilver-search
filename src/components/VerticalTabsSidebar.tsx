@@ -3,17 +3,17 @@
 // toggled from TabsMenuContent).
 //
 // Pinned: renders in-flow (as before), pushing page content over.
-// Unpinned ("closed"): renders as a single `fixed` element that is NOT
-// part of the flex layout at all — so it takes up zero layout width and
-// the toolbar/search bar behind it can reach the true left edge of the
-// window. It shows a slim icon-only strip (favicons + a "+" button) by
-// default, and widens on hover to the full labelled panel. Using ONE
-// element that changes width (rather than a separate rail + a separate
-// floating panel) is deliberate: with two siblings, moving the mouse
-// from one onto the other used to count as leaving the first, causing
-// the sidebar to slam shut the instant the cursor crossed the seam. A
-// single element with one set of mouse handlers can't have that bug.
-import { useState } from "react";
+// Unpinned ("closed"): renders as a single `absolute` element (positioned
+// against the row below the header — see routes/index.tsx) that is NOT
+// part of the flex layout at all, so it takes up zero layout width. It
+// shows a slim icon-only strip (favicons + a "+" button) by default, and
+// widens on hover to the full labelled panel. Using ONE element that
+// changes width (rather than a separate rail + a separate floating panel)
+// is deliberate: with two siblings, moving the mouse from one onto the
+// other used to count as leaving the first, causing the sidebar to slam
+// shut the instant the cursor crossed the seam. A single element with one
+// set of mouse handlers can't have that bug.
+import { useEffect, useRef, useState } from "react";
 import { ChevronDown, Pin, Plus, X } from "lucide-react";
 import type { TabState } from "@/hooks/use-browser-api";
 import { TabIcon } from "@/components/TabStrip";
@@ -30,12 +30,49 @@ type Props = {
   onOpenTabsMenu: (rect: { top: number; left: number; right: number; bottom: number }) => void;
 };
 
-const SIDEBAR_WIDTH = 240;
-const RAIL_WIDTH = 48; // wide enough to show a row of favicon buttons, not just a hover hairline
+export const SIDEBAR_WIDTH = 240;
+export const RAIL_WIDTH = 48; // wide enough to show a row of favicon buttons, not just a hover hairline
 
-export function VerticalTabsSidebar({ tabs, activeId, loadingTabIds, onSelect, onClose, onNewTab, pinned, onTogglePinned, onOpenTabsMenu }: Props) {
+// How long to wait, after the cursor actually leaves the sidebar, before
+// collapsing it. This isn't just debounce polish — the top row (menu
+// chevron + pin button) sits in a `-webkit-app-region: drag` strip, and
+// frameless-window drag regions are known to fire a spurious mouseleave
+// on the element the instant the cursor moves over them, even though the
+// cursor never actually left the sidebar's bounds. Without this grace
+// period that spurious leave collapsed the panel immediately; a quick
+// re-entry (the real mousemove landing a frame later) cancels the pending
+// close before it ever fires, so a genuine leave still closes promptly.
+const CLOSE_DELAY_MS = 150;
+
+export function VerticalTabsSidebar({
+  tabs,
+  activeId,
+  loadingTabIds,
+  onSelect,
+  onClose,
+  onNewTab,
+  pinned,
+  onTogglePinned,
+  onOpenTabsMenu,
+}: Props) {
   const [hovering, setHovering] = useState(false);
+  const closeTimerRef = useRef<number | null>(null);
   const expanded = pinned || hovering;
+
+  const cancelScheduledClose = () => {
+    if (closeTimerRef.current !== null) {
+      window.clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  };
+  const scheduleClose = () => {
+    cancelScheduledClose();
+    closeTimerRef.current = window.setTimeout(() => {
+      closeTimerRef.current = null;
+      setHovering(false);
+    }, CLOSE_DELAY_MS);
+  };
+  useEffect(() => cancelScheduledClose, []);
 
   const tabRow = (tab: TabState, compact: boolean) => {
     const active = tab.id === activeId;
@@ -62,7 +99,11 @@ export function VerticalTabsSidebar({ tabs, activeId, loadingTabIds, onSelect, o
         }`}
       >
         <TabIcon tab={tab} loading={loadingTabIds.has(tab.id)} useAppLogo={false} />
-        <span className={`min-w-0 flex-1 truncate text-[13px] ${active ? "text-foreground" : "text-muted-foreground"}`}>{label}</span>
+        <span
+          className={`min-w-0 flex-1 truncate text-[13px] ${active ? "text-foreground" : "text-muted-foreground"}`}
+        >
+          {label}
+        </span>
         <span
           role="button"
           onClick={(e) => {
@@ -98,7 +139,9 @@ export function VerticalTabsSidebar({ tabs, activeId, loadingTabIds, onSelect, o
           title={pinned ? "Unpin sidebar" : "Pin sidebar"}
           className="mx-1.5 flex h-8 w-8 shrink-0 items-center justify-center self-center rounded-lg text-muted-foreground transition-colors hover:bg-black/[0.06] [-webkit-app-region:no-drag]"
         >
-          <Pin className={`h-4 w-4 transition-transform ${pinned ? "text-foreground" : "-rotate-45"}`} />
+          <Pin
+            className={`h-4 w-4 transition-transform ${pinned ? "text-foreground" : "-rotate-45"}`}
+          />
         </button>
       </div>
 
@@ -136,7 +179,10 @@ export function VerticalTabsSidebar({ tabs, activeId, loadingTabIds, onSelect, o
 
   if (pinned) {
     return (
-      <div className="flex h-full shrink-0 flex-col overflow-hidden" style={{ width: SIDEBAR_WIDTH, background: "var(--chrome-strip)" }}>
+      <div
+        className="flex h-full shrink-0 flex-col overflow-hidden"
+        style={{ width: SIDEBAR_WIDTH, background: "var(--chrome-strip)" }}
+      >
         {content}
       </div>
     );
@@ -144,9 +190,12 @@ export function VerticalTabsSidebar({ tabs, activeId, loadingTabIds, onSelect, o
 
   return (
     <div
-      onMouseEnter={() => setHovering(true)}
-      onMouseLeave={() => setHovering(false)}
-      className="fixed left-0 top-0 z-40 flex h-screen shrink-0 flex-col overflow-hidden shadow-lg transition-[width] duration-150"
+      onMouseEnter={() => {
+        cancelScheduledClose();
+        setHovering(true);
+      }}
+      onMouseLeave={scheduleClose}
+      className="absolute left-0 top-0 z-40 flex h-full shrink-0 flex-col overflow-hidden shadow-lg transition-[width] duration-150"
       style={{ width: hovering ? SIDEBAR_WIDTH : RAIL_WIDTH, background: "var(--chrome-strip)" }}
     >
       {content}

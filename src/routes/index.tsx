@@ -1,6 +1,28 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, Check, ChevronDown, ChevronUp, Columns2, Copy, Download, Edit3, ExternalLink, EyeOff, Folder, Link2, PictureInPicture2, RotateCw, Search, Settings, SquareArrowOutUpRight, Star, User, X } from "lucide-react";
+import {
+  ArrowLeft,
+  ArrowRight,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Columns2,
+  Copy,
+  Download,
+  Edit3,
+  ExternalLink,
+  EyeOff,
+  Folder,
+  Link2,
+  PictureInPicture2,
+  RotateCw,
+  Search,
+  Settings,
+  SquareArrowOutUpRight,
+  Star,
+  User,
+  X,
+} from "lucide-react";
 import { TorOnionLogo } from "@/components/TorOnionLogo";
 import { QueckSilverLogo } from "@/components/QueckSilverLogo";
 import { TabStrip } from "@/components/TabStrip";
@@ -19,14 +41,35 @@ import { useBrowserApi, HOME_URL, SETTINGS_URL } from "@/hooks/use-browser-api";
 import { useBookmarks } from "@/hooks/use-bookmarks";
 import { useHeaderFavorites } from "@/hooks/use-header-favorites";
 import { useDownloads } from "@/hooks/use-downloads";
-import { useToolbarIconOrder, useZoomLevel, useHeaderFavoritesBarVisible, useVerticalTabsEnabled, useVerticalTabsPinned, useSearchEngine, SEARCH_ENGINES, type ToolbarIconId } from "@/lib/settings-store";
-import { VerticalTabsSidebar } from "@/components/VerticalTabsSidebar";
+import {
+  useToolbarIconOrder,
+  useZoomLevel,
+  useHeaderFavoritesBarVisible,
+  useVerticalTabsEnabled,
+  useVerticalTabsPinned,
+  useSearchEngine,
+  SEARCH_ENGINES,
+  type ToolbarIconId,
+} from "@/lib/settings-store";
+import { RAIL_WIDTH, VerticalTabsSidebar } from "@/components/VerticalTabsSidebar";
 import { useToolbarStyle } from "@/lib/toolbar-style";
 import { ToolbarActionIcons, type ToolbarAction } from "@/components/ToolbarActionIcons";
 import { useAuth } from "@/hooks/use-auth";
 import { useProfiles } from "@/hooks/use-profiles";
 import { useTorStatus } from "@/hooks/use-tor-status";
-import type { BookmarkOverlayAction, ContextMenuOverlayAction, DownloadsOverlayAction, FavoriteContextMenuOverlayAction, FavoriteEditOverlayAction, FavoriteFolderOverlayAction, GroupDialogOverlayAction, NewFavoriteFolderOverlayAction, ProfileOverlayAction, TabSearchOverlayAction, TabsMenuOverlayAction } from "@/overlay/types";
+import type {
+  BookmarkOverlayAction,
+  ContextMenuOverlayAction,
+  DownloadsOverlayAction,
+  FavoriteContextMenuOverlayAction,
+  FavoriteEditOverlayAction,
+  FavoriteFolderOverlayAction,
+  GroupDialogOverlayAction,
+  NewFavoriteFolderOverlayAction,
+  ProfileOverlayAction,
+  TabSearchOverlayAction,
+  TabsMenuOverlayAction,
+} from "@/overlay/types";
 import { TAB_GROUP_COLORS } from "@/overlay/types";
 import { useWindowControls } from "@/hooks/use-window-controls";
 import { parseUrlBarInput, isLikelyDirectUrl } from "@/lib/url-bar";
@@ -114,9 +157,16 @@ function Index() {
     removeFromFolder: removeHeaderFavoriteFromFolder,
   } = useHeaderFavorites();
   const { visible: headerFavoritesBarVisible } = useHeaderFavoritesBarVisible();
-  const { enabled: verticalTabsEnabled, setEnabled: setVerticalTabsEnabled } = useVerticalTabsEnabled();
+  const { enabled: verticalTabsEnabled, setEnabled: setVerticalTabsEnabled } =
+    useVerticalTabsEnabled();
   const { pinned: verticalTabsPinned, setPinned: setVerticalTabsPinned } = useVerticalTabsPinned();
-  const { items: downloadItems, open: openDownloadItem, showInFolder: showDownloadInFolder, remove: removeDownloadItem, openFolder: openDownloadsFolder } = useDownloads();
+  const {
+    items: downloadItems,
+    open: openDownloadItem,
+    showInFolder: showDownloadInFolder,
+    remove: removeDownloadItem,
+    openFolder: openDownloadsFolder,
+  } = useDownloads();
   const activeDownloadCount = downloadItems.filter((d) => d.state === "progressing").length;
   const { order: toolbarIconOrder, moveIcon: moveToolbarIcon } = useToolbarIconOrder();
   const { engine, setEngine } = useSearchEngine();
@@ -150,15 +200,49 @@ function Index() {
     prevDownloadStatesRef.current = new Map(downloadItems.map((d) => [d.id, d.state]));
   }, [downloadItems]);
   const { pending: authPending, login, cancelLogin } = useAuth();
-  const { profiles, active: activeIdentity, activeProfile, isGuest, createSimpleProfile, removeProfile, syncNow, openProfileInNewWindow, openGuestInNewWindow, openIncognitoInNewWindow, openTorInNewWindow } = useProfiles();
+  const {
+    profiles,
+    active: activeIdentity,
+    activeProfile,
+    isGuest,
+    createSimpleProfile,
+    removeProfile,
+    syncNow,
+    openProfileInNewWindow,
+    openGuestInNewWindow,
+    openIncognitoInNewWindow,
+    openTorInNewWindow,
+  } = useProfiles();
   const isTorWindow = activeIdentity.windowMode === "tor";
   // Drives the Start page's privacy explainer (see HomeContent) instead of
   // the usual 5 bookmark tiles - "guest" covers both plain guest mode and
   // incognito/tor (which are guest mode plus a windowMode), so this checks
   // windowMode first for the more specific label.
-  const homePrivacyMode: "incognito" | "tor" | "guest" | null = activeIdentity.windowMode === "tor" ? "tor" : activeIdentity.windowMode === "incognito" ? "incognito" : activeIdentity.guestMode ? "guest" : null;
+  const homePrivacyMode: "incognito" | "tor" | "guest" | null =
+    activeIdentity.windowMode === "tor"
+      ? "tor"
+      : activeIdentity.windowMode === "incognito"
+        ? "incognito"
+        : activeIdentity.guestMode
+          ? "guest"
+          : null;
   const { status: torStatus, newIdentity: torNewIdentity } = useTorStatus();
-  const { minimize, toggleMaximize, close: closeWindow, isMaximized, setFullScreen, getIsFullscreen, onShortcutF11, onShortcutEscape, onShortcutFocusUrlBar, onShortcutAddFavorite, onShortcutFindInPage, onShortcutTabSearch, onShortcutOpenPasswordSettings, onFullscreenChanged } = useWindowControls();
+  const {
+    minimize,
+    toggleMaximize,
+    close: closeWindow,
+    isMaximized,
+    setFullScreen,
+    getIsFullscreen,
+    onShortcutF11,
+    onShortcutEscape,
+    onShortcutFocusUrlBar,
+    onShortcutAddFavorite,
+    onShortcutFindInPage,
+    onShortcutTabSearch,
+    onShortcutOpenPasswordSettings,
+    onFullscreenChanged,
+  } = useWindowControls();
 
   const platform = typeof window !== "undefined" ? window.platformInfo?.platform : undefined;
   const hasNativeControls = platform === "darwin";
@@ -201,7 +285,12 @@ function Index() {
   // below flips profileSyncing) — see overlay-window.ts's update(), a
   // no-op if "profile" isn't the kind currently open.
   useEffect(() => {
-    window.browserAPI?.overlay.update("profile", { profiles, active: activeIdentity, loginPending: authPending, syncing: profileSyncing });
+    window.browserAPI?.overlay.update("profile", {
+      profiles,
+      active: activeIdentity,
+      loginPending: authPending,
+      syncing: profileSyncing,
+    });
   }, [profiles, activeIdentity, authPending, profileSyncing]);
   // Downloads flyout — opens the native overlay instead of navigating to
   // Settings → Downloads (see ToolbarActionIcons' widened onClick type for
@@ -224,7 +313,12 @@ function Index() {
     window.browserAPI?.overlay.open(
       "downloads",
       { items: downloadItems },
-      { top: r.top, left: r.left + DOWNLOADS_ANCHOR_NUDGE, right: r.right + DOWNLOADS_ANCHOR_NUDGE, bottom: r.bottom },
+      {
+        top: r.top,
+        left: r.left + DOWNLOADS_ANCHOR_NUDGE,
+        right: r.right + DOWNLOADS_ANCHOR_NUDGE,
+        bottom: r.bottom,
+      },
     );
   };
   useEffect(() => {
@@ -250,7 +344,12 @@ function Index() {
         window.browserAPI?.overlay.open(
           "downloads",
           { items: downloadItems },
-          { top: r.top, left: r.left + DOWNLOADS_ANCHOR_NUDGE, right: r.right + DOWNLOADS_ANCHOR_NUDGE, bottom: r.bottom },
+          {
+            top: r.top,
+            left: r.left + DOWNLOADS_ANCHOR_NUDGE,
+            right: r.right + DOWNLOADS_ANCHOR_NUDGE,
+            bottom: r.bottom,
+          },
         );
       }
     }
@@ -350,7 +449,9 @@ function Index() {
         const action = event.action as BookmarkOverlayAction;
         if (action.type === "save") {
           const url = normalizeBookmarkUrl(action.url);
-          setBookmarks((prev) => prev.map((b, i) => (i === action.slot ? { label: action.label, url } : b)));
+          setBookmarks((prev) =>
+            prev.map((b, i) => (i === action.slot ? { label: action.label, url } : b)),
+          );
           notifySuccess("Bookmark saved");
         }
         return;
@@ -442,7 +543,11 @@ function Index() {
             removeHeaderFavoriteFromFolder(action.id);
             break;
           case "newFolder":
-            window.browserAPI?.overlay.open("newFavoriteFolderDialog", {}, { top: 0, left: 0, right: 0, bottom: 0, placement: "cover" });
+            window.browserAPI?.overlay.open(
+              "newFavoriteFolderDialog",
+              {},
+              { top: 0, left: 0, right: 0, bottom: 0, placement: "cover" },
+            );
             break;
           case "delete":
             removeHeaderFavorite(action.id);
@@ -452,7 +557,8 @@ function Index() {
       }
       if (event.kind === "favoriteEditDialog") {
         const action = event.action as FavoriteEditOverlayAction;
-        if (action.type === "save") updateHeaderFavorite(action.id, { label: action.label, url: action.url });
+        if (action.type === "save")
+          updateHeaderFavorite(action.id, { label: action.label, url: action.url });
         return;
       }
       if (event.kind === "newFavoriteFolderDialog") {
@@ -534,7 +640,9 @@ function Index() {
   const [homeUrlDraft, setHomeUrlDraft] = useState("");
   const [secondaryHomeUrlDraft, setSecondaryHomeUrlDraft] = useState("");
   const [urlCopied, setUrlCopied] = useState(false);
-  const [autoSavedPill, setAutoSavedPill] = useState<{ url: string; username: string } | null>(null);
+  const [autoSavedPill, setAutoSavedPill] = useState<{ url: string; username: string } | null>(
+    null,
+  );
   // Offered once at startup (see session:getRecovery) — same capsule slot
   // as the password-saved pill, just with a Restore/Dismiss choice instead
   // of auto-dismissing. Takes priority over autoSavedPill since it's a
@@ -545,7 +653,11 @@ function Index() {
     return window.browserAPI?.appUpdate.onReady(() => setUpdateReady(true));
   }, []);
   // Ctrl+F — same toolbar slot again. null = closed.
-  const [findBar, setFindBar] = useState<{ query: string; matches: number; activeMatchOrdinal: number } | null>(null);
+  const [findBar, setFindBar] = useState<{
+    query: string;
+    matches: number;
+    activeMatchOrdinal: number;
+  } | null>(null);
   const findInputRef = useRef<HTMLInputElement | null>(null);
   // Ctrl+Shift+A — command-palette-style tab search. Now a native "cover"
   // overlay window (see src/overlay/TabSearchContent.tsx) instead of an
@@ -553,7 +665,15 @@ function Index() {
   // an already-open overlay's tab list current (mirrors the profile
   // popup's own overlay.update effect above).
   useEffect(() => {
-    window.browserAPI?.overlay.update("tabSearch", { tabs: tabs.map((t) => ({ id: t.id, title: t.title, url: t.url, isHome: t.isHome, isSettings: t.isSettings })) });
+    window.browserAPI?.overlay.update("tabSearch", {
+      tabs: tabs.map((t) => ({
+        id: t.id,
+        title: t.title,
+        url: t.url,
+        isHome: t.isHome,
+        isSettings: t.isSettings,
+      })),
+    });
   }, [tabs]);
   // Keeps the tabs-menu dropdown (TabsMenuContent) current while it's
   // open — same idea as the tabSearch effect right above, just also
@@ -562,7 +682,14 @@ function Index() {
   useEffect(() => {
     window.browserAPI?.overlay.update("tabsMenu", {
       verticalTabsEnabled,
-      tabs: tabs.map((t) => ({ id: t.id, title: t.title, url: t.url, isHome: t.isHome, isSettings: t.isSettings, isActive: t.id === activeId })),
+      tabs: tabs.map((t) => ({
+        id: t.id,
+        title: t.title,
+        url: t.url,
+        isHome: t.isHome,
+        isSettings: t.isSettings,
+        isActive: t.id === activeId,
+      })),
     });
   }, [tabs, activeId, verticalTabsEnabled]);
   // Right-click on an image/link/selection inside a tab now opens the
@@ -704,7 +831,9 @@ function Index() {
   // instead of waiting on a fresh IPC round trip, which is what was
   // closing most of the remaining flicker gap (see the effect body below
   // for the full explanation of where that gap comes from).
-  const cachedFrequentSitesRef = useRef<{ domain: string; visitCount: number; lastVisit: number }[]>([]);
+  const cachedFrequentSitesRef = useRef<
+    { domain: string; visitCount: number; lastVisit: number }[]
+  >([]);
   // Set (to a LENGTH, not the exact string) when Backspace/Delete removes
   // characters — see the onKeyDown Backspace branch for why length-based:
   // a single further keystroke always produces a "different string", which
@@ -719,10 +848,16 @@ function Index() {
   // already loaded), then whatever frequent-sites data is cached from the
   // last IPC response.
   const computeBestMatch = (typedValue: string): string | null => {
-    const favoriteMatch = favoriteDomains.find((d) => d.length > typedValue.length && d.toLowerCase().startsWith(typedValue.toLowerCase()));
+    const favoriteMatch = favoriteDomains.find(
+      (d) => d.length > typedValue.length && d.toLowerCase().startsWith(typedValue.toLowerCase()),
+    );
     if (favoriteMatch) return favoriteMatch;
     const cachedMatch = cachedFrequentSitesRef.current
-      .filter((s) => s.domain.length > typedValue.length && s.domain.toLowerCase().startsWith(typedValue.toLowerCase()))
+      .filter(
+        (s) =>
+          s.domain.length > typedValue.length &&
+          s.domain.toLowerCase().startsWith(typedValue.toLowerCase()),
+      )
       .sort((a, b) => b.visitCount - a.visitCount)[0];
     return cachedMatch?.domain ?? null;
   };
@@ -782,7 +917,12 @@ function Index() {
       if (cancelled) return;
       cachedFrequentSitesRef.current = results;
       const top = results[0];
-      if (!top || top.domain.length <= typedValue.length || !top.domain.toLowerCase().startsWith(typedValue.toLowerCase())) return;
+      if (
+        !top ||
+        top.domain.length <= typedValue.length ||
+        !top.domain.toLowerCase().startsWith(typedValue.toLowerCase())
+      )
+        return;
       applyCompletion(top.domain);
     });
     return () => {
@@ -942,7 +1082,11 @@ function Index() {
     if (!api) return;
     return api.onFoundInPage((result) => {
       if (result.tabId !== activeId) return;
-      setFindBar((prev) => (prev ? { ...prev, matches: result.matches, activeMatchOrdinal: result.activeMatchOrdinal } : prev));
+      setFindBar((prev) =>
+        prev
+          ? { ...prev, matches: result.matches, activeMatchOrdinal: result.activeMatchOrdinal }
+          : prev,
+      );
     });
   }, [activeId]);
 
@@ -1039,11 +1183,21 @@ function Index() {
     const unsubTabSearch = onShortcutTabSearch(() => {
       window.browserAPI?.overlay.open(
         "tabSearch",
-        { tabs: tabsRef.current.map((t) => ({ id: t.id, title: t.title, url: t.url, isHome: t.isHome, isSettings: t.isSettings })) },
+        {
+          tabs: tabsRef.current.map((t) => ({
+            id: t.id,
+            title: t.title,
+            url: t.url,
+            isHome: t.isHome,
+            isSettings: t.isSettings,
+          })),
+        },
         { top: 0, left: 0, right: 0, bottom: 0, placement: "cover" },
       );
     });
-    const unsubOpenPasswordSettings = onShortcutOpenPasswordSettings(() => goToSettings("passwords"));
+    const unsubOpenPasswordSettings = onShortcutOpenPasswordSettings(() =>
+      goToSettings("passwords"),
+    );
     return () => {
       unsubF11();
       unsubEsc();
@@ -1202,27 +1356,15 @@ function Index() {
   };
 
   return (
-    <div className={`flex h-screen w-screen ${!chromeHidden && verticalTabsEnabled ? "flex-row" : "flex-col"} overflow-hidden bg-background font-sans ${chromeHidden ? "" : "rounded-[10px]"}`}>
-      {!chromeHidden && verticalTabsEnabled && (
-        <VerticalTabsSidebar
-          tabs={tabs}
-          activeId={activeId}
-          loadingTabIds={loadingHomeTabs}
-          onSelect={(id) => switchTab(id)}
-          onClose={(id) => closeTab(id)}
-          onNewTab={() => newTab()}
-          pinned={verticalTabsPinned}
-          onTogglePinned={() => setVerticalTabsPinned(!verticalTabsPinned)}
-          onOpenTabsMenu={(rect) =>
-            window.browserAPI?.overlay.open(
-              "tabsMenu",
-              { verticalTabsEnabled, tabs: tabs.map((t) => ({ id: t.id, title: t.title, url: t.url, isHome: t.isHome, isSettings: t.isSettings, isActive: t.id === activeId })) },
-              rect,
-            )
-          }
-        />
-      )}
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+    <div
+      className={`flex h-screen w-screen flex-col overflow-hidden bg-background font-sans ${chromeHidden ? "" : "rounded-[10px]"}`}
+    >
+      {/* Header — tab strip + toolbar (+ favorites bar, if shown) — always
+          spans the full window width, edge to edge, and sits above the
+          vertical-tabs sidebar rather than beside it. That way the sidebar
+          (pinned or unpinned) never covers the back/forward buttons or the
+          search bar, and those never need to shift to make room for it —
+          only the row below (the sidebar + page content) does. */}
       {!chromeHidden && (
         <TabStrip
           tabs={tabs}
@@ -1237,7 +1379,17 @@ function Index() {
           onOpenTabsMenu={(rect) =>
             window.browserAPI?.overlay.open(
               "tabsMenu",
-              { verticalTabsEnabled, tabs: tabs.map((t) => ({ id: t.id, title: t.title, url: t.url, isHome: t.isHome, isSettings: t.isSettings, isActive: t.id === activeId })) },
+              {
+                verticalTabsEnabled,
+                tabs: tabs.map((t) => ({
+                  id: t.id,
+                  title: t.title,
+                  url: t.url,
+                  isHome: t.isHome,
+                  isSettings: t.isSettings,
+                  isActive: t.id === activeId,
+                })),
+              },
               rect,
             )
           }
@@ -1272,457 +1424,550 @@ function Index() {
       {/* Toolbar — back/forward/reload, url bar, right-side icons + sign in.
           Hidden in fullscreen (F11) — only the page itself shows then. */}
       {!chromeHidden && (
-      <div className={`relative flex shrink-0 items-center gap-2.5 bg-background py-1.5 ${verticalTabsEnabled ? "pl-1.5 pr-3" : "px-3"}`}>
-        <button
-          onClick={() => activeId && goBack(activeId)}
-          disabled={!activeTab?.canGoBack}
-          className="flex h-[30px] w-[30px] items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-foreground/5 disabled:opacity-30"
-        >
-          <ArrowLeft className="h-[17px] w-[17px]" />
-        </button>
-        <button
-          onClick={() => activeId && goForward(activeId)}
-          disabled={!activeTab?.canGoForward}
-          className="flex h-[30px] w-[30px] items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-foreground/5 disabled:opacity-30"
-        >
-          <ArrowRight className="h-[17px] w-[17px]" />
-        </button>
-        <button
-          onClick={() => activeId && reload(activeId)}
-          className="flex h-[30px] w-[30px] items-center justify-center rounded-lg text-foreground transition-colors hover:bg-foreground/5"
-        >
-          <RotateCw className="h-4 w-4" />
-        </button>
-
-        <div className="relative max-w-[900px] flex-1">
-          <div
-            className={`flex items-center gap-2.5 rounded-full py-[6px] pl-4 pr-2.5 transition-shadow ${editingUrl ? "ring-2 ring-[var(--brand)]" : ""}`}
-            style={{ background: "var(--chrome-field)" }}
-          >
-          {activeTab?.isHome ? (
-            // On the Start page there's no URL to copy, so this slot
-            // becomes a search-engine picker instead — the icon of
-            // whichever engine currently handles the Start page's search
-            // bar, with a dropdown to switch it right there instead of
-            // needing a trip to Settings.
-            <SearchEngineChooser engine={engine} onChange={setEngine} variant="inline" />
-          ) : null}
-          {!activeTab?.isHome ? (
-            <button onClick={copyUrl} aria-label="Copy URL" className={`shrink-0 ${urlCopied ? "text-green-600" : "text-muted-foreground"}`}>
-              {urlCopied ? (
-                <Check className="h-[14px] w-[14px]" strokeWidth={2.5} />
-              ) : (
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
-                  <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
-                </svg>
-              )}
-            </button>
-          ) : null}
-          <input
-            ref={urlBarRef}
-            value={urlDraft}
-            onFocus={() => setEditingUrl(true)}
-            onMouseDown={(e) => {
-              // Fighting the browser's native "click places the cursor at
-              // this point" behavior head-on (preventDefault on mouseup)
-              // turned out unreliable — the native cursor placement can
-              // still win the race depending on timing. Letting it run
-              // first, then overriding with select-all on the very next
-              // frame, consistently wins instead: by then the field is
-              // definitely focused and the native placement has already
-              // happened, so our selection is the last word.
-              if (document.activeElement !== e.currentTarget) {
-                const el = e.currentTarget;
-                requestAnimationFrame(() => el.select());
-              }
-            }}
-            onBlur={(e) => {
-              setEditingUrl(false);
-              // Deliberately does NOT revert unsubmitted typed text back
-              // to the real current URL anymore — clicking away used to
-              // discard whatever was typed, which was the actual
-              // complaint (people expect the draft to still be sitting
-              // there if they click back in, same as most other browsers'
-              // combined bars). The sync effect below (keyed off
-              // activeTab?.url / isHome, and itself gated on
-              // !editingUrlRef.current) still overwrites this draft the
-              // moment a REAL navigation actually lands, so a stale typed
-              // value never sticks around once the page it was describing
-              // has changed out from under it.
-              //
-              // select() on focus leaves the selection visually lingering
-              // (as a grey highlight) even after the input loses focus —
-              // collapsing it explicitly here is what actually clears it.
-              e.target.setSelectionRange(0, 0);
-            }}
-            onChange={(e) => {
-              // The DOM value here already reflects native browser
-              // behavior for a keystroke landing on a selected range (the
-              // highlighted suggestion tail gets replaced automatically),
-              // so raw below is always exactly what the person now
-              // intends — no need to reconstruct it by hand from
-              // selectionStart/key (an earlier version tried that in
-              // onKeyDown, with a preventDefault + manual rebuild, and got
-              // the very first character wrong somehow — reading it
-              // straight from the browser's own already-correct
-              // computation here avoids that class of bug entirely, by
-              // construction).
-              //
-              // The completion is also applied HERE, synchronously, in
-              // this same handler — rather than in the separate effect
-              // below reacting to a LATER render — specifically so
-              // "replace the selection with what was typed" and "extend
-              // it back out with a new completion" land in the exact same
-              // React render/paint instead of two consecutive ones. Two
-              // renders for one keystroke is what was still reading as
-              // flicker even once the lookup itself became instant; this
-              // is what actually collapses it to one.
-              const raw = e.target.value;
-              const dismissed = dismissedAtLengthRef.current;
-              const eligible = editingUrl && raw.trim().length >= 3 && (dismissed === null || raw.length >= dismissed + 2);
-              const match = eligible ? computeBestMatch(raw) : null;
-              if (match && match.length > raw.length) {
-                if (dismissed !== null) dismissedAtLengthRef.current = null;
-                pendingCompletionSelectionRef.current = { start: raw.length, end: match.length };
-                programmaticUrlChangeRef.current = true; // the effect below would otherwise redundantly redo this exact lookup on its next run
-                setUrlDraft(match);
-                return;
-              }
-              pendingCompletionSelectionRef.current = null;
-              programmaticUrlChangeRef.current = false;
-              setUrlDraft(raw);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") submitUrl(urlDraft);
-              else if (e.key === "Tab") {
-                // Without this, Tab did what Tab always does in a plain
-                // <input> — move focus to the NEXT focusable element
-                // entirely, which fires this same field's onBlur, which
-                // resets urlDraft back to the real current URL. That's
-                // exactly the "URL gets cleared and the bar loses focus"
-                // symptom — Tab was never actually being handled as an
-                // "accept the suggestion" key at all, it was just falling
-                // through to the browser's own unrelated default. This
-                // intercepts it: collapse the selection to the end
-                // (accepting the completed URL as plain typed text,
-                // cursor after it) and keep focus right where it is,
-                // same as a real address bar's Tab behavior.
-                e.preventDefault();
-                const el = e.currentTarget;
-                el.setSelectionRange(el.value.length, el.value.length);
-              } else if (e.key === "Backspace" || e.key === "Delete") {
-                const el = e.currentTarget;
-                // Remembered as a LENGTH, not the exact string — so typing
-                // past it later (2+ genuinely new characters) is what
-                // re-enables suggestions again, rather than just "any
-                // different string at all" (which a single further
-                // keystroke already always produces, defeating the point).
-                // Whatever's left right after this deletion — whether it
-                // came from eating an active suggestion selection in one
-                // press, or an ordinary single-character backspace with no
-                // selection — counts as the dismiss point.
-                const remainingLength = el.selectionStart !== el.selectionEnd ? (el.selectionStart ?? 0) : Math.max(0, el.value.length - 1);
-                dismissedAtLengthRef.current = remainingLength;
-              } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
-                // A single printable character typed while a suggestion is
-                // currently selected — handled entirely here, synchronously,
-                // in one step, instead of letting the browser replace the
-                // selection natively (one repaint) and then reacting to
-                // that change afterward in the effect below (a second,
-                // separate repaint). Two repaints for what's conceptually
-                // one keystroke is exactly what read as flicker.
-                const el = e.currentTarget;
-                if (el.selectionStart === null || el.selectionStart === el.selectionEnd) return; // no active suggestion — let normal typing happen
-                e.preventDefault();
-                const typedSoFar = el.value.slice(0, el.selectionStart) + e.key;
-                const match = computeBestMatch(typedSoFar);
-                const finalValue = match && match.length > typedSoFar.length ? match : typedSoFar;
-                if (finalValue === urlDraft) {
-                  // The typed character happened to be exactly the first
-                  // character of what was already highlighted — e.g.
-                  // typing "g" while "guessr.com" (which starts with "g")
-                  // is selected on top of "geo". The resulting completed
-                  // string is then IDENTICAL to what urlDraft already is,
-                  // so calling setUrlDraft with that same value is a no-op
-                  // React bails out of (same reference/value in, nothing
-                  // to re-render) — which meant the useLayoutEffect that
-                  // normally reapplies the selection never ran at all, and
-                  // the keystroke looked completely swallowed: exactly the
-                  // "can't type the suggestion's own first letter" bug.
-                  // Since the value genuinely isn't changing here, React's
-                  // controlled-input reconciliation has nothing to
-                  // "correct" on the next render either — so, uniquely in
-                  // this one case, it's actually safe to set the selection
-                  // directly, no pending/layout-effect handoff needed.
-                  el.setSelectionRange(typedSoFar.length, finalValue.length);
-                  return;
-                }
-                pendingCompletionSelectionRef.current = match && match.length > typedSoFar.length ? { start: typedSoFar.length, end: finalValue.length } : null;
-                programmaticUrlChangeRef.current = true;
-                setUrlDraft(finalValue);
-              }
-            }}
-            className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none"
-            placeholder="Search or enter web address"
-            // Chromium's own native field-autofill (remembers previously
-            // typed values for this exact input, independent of anything
-            // above) was competing with the custom completion logic here —
-            // its own suggestion behavior doesn't highlight only the
-            // completed portion or land the caret in the right spot, so
-            // depending on timing it could visibly override what this
-            // component was trying to do. This is a real browser-security-
-            // relevant field too (it's literally the address bar), so
-            // disabling the browser's own guess-based autofill for it is
-            // the right call regardless.
-            autoComplete="off"
-            autoCorrect="off"
-            spellCheck={false}
-          />
-          {activeTab?.isHome && isLikelyDirectUrl(urlDraft) ? (
-            // Once what's typed on the Start page's header bar reads as an
-            // actual address rather than a search term, show that site's
-            // favicon right after the typed text — a quick visual "yes,
-            // this is going to open a real page" confirmation before Enter
-            // is even pressed.
-            <FavIcon url={urlDraft.trim()} label={urlDraft.trim()} size="h-4 w-4" />
-          ) : null}
-          {isTorWindow && (
-            <button
-              onClick={requestNewTorIdentity}
-              aria-label="New Tor identity"
-              title={identityRequested ? "New identity requested" : torStatus.state === "ready" ? "New Identity, clears this window's session and gets fresh circuits" : "Connecting to Tor…"}
-              className={`grid h-7 w-7 shrink-0 place-items-center rounded-full transition-colors ${identityRequested ? "text-[#8a5fc4]" : "text-[#8a5fc4] hover:bg-[#8a5fc4]/10"}`}
-            >
-              {identityRequested ? <Check className="h-[16px] w-[16px]" strokeWidth={2} /> : <TorOnionLogo className="h-[21px] w-[21px]" strokeWidth={1.5} />}
-            </button>
-          )}
+        <div className="relative flex shrink-0 items-center gap-2.5 bg-background px-3 py-1.5">
           <button
-            onClick={starCurrentPage}
-            aria-label="Add to favorites"
-            className={`grid h-7 w-7 shrink-0 place-items-center rounded-full transition-colors hover:bg-foreground/10 ${starFlash ? "text-foreground" : "text-muted-foreground"}`}
+            onClick={() => activeId && goBack(activeId)}
+            disabled={!activeTab?.canGoBack}
+            className="flex h-[30px] w-[30px] items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-foreground/5 disabled:opacity-30"
           >
-            <Star className="h-[17px] w-[17px]" strokeWidth={1.5} fill={starFlash ? "currentColor" : "none"} />
+            <ArrowLeft className="h-[17px] w-[17px]" />
           </button>
-          </div>
-        </div>
+          <button
+            onClick={() => activeId && goForward(activeId)}
+            disabled={!activeTab?.canGoForward}
+            className="flex h-[30px] w-[30px] items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-foreground/5 disabled:opacity-30"
+          >
+            <ArrowRight className="h-[17px] w-[17px]" />
+          </button>
+          <button
+            onClick={() => activeId && reload(activeId)}
+            className="flex h-[30px] w-[30px] items-center justify-center rounded-lg text-foreground transition-colors hover:bg-foreground/5"
+          >
+            <RotateCw className="h-4 w-4" />
+          </button>
 
-        <div className="ml-1.5 flex items-center">
-          {/* Same slot as the auto-save confirmation below — replaces the
+          <div className="relative max-w-[900px] flex-1">
+            <div
+              className={`flex items-center gap-2.5 rounded-full py-[6px] pl-4 pr-2.5 transition-shadow ${editingUrl ? "ring-2 ring-[var(--brand)]" : ""}`}
+              style={{ background: "var(--chrome-field)" }}
+            >
+              {activeTab?.isHome ? (
+                // On the Start page there's no URL to copy, so this slot
+                // becomes a search-engine picker instead — the icon of
+                // whichever engine currently handles the Start page's search
+                // bar, with a dropdown to switch it right there instead of
+                // needing a trip to Settings.
+                <SearchEngineChooser engine={engine} onChange={setEngine} variant="inline" />
+              ) : null}
+              {!activeTab?.isHome ? (
+                <button
+                  onClick={copyUrl}
+                  aria-label="Copy URL"
+                  className={`shrink-0 ${urlCopied ? "text-green-600" : "text-muted-foreground"}`}
+                >
+                  {urlCopied ? (
+                    <Check className="h-[14px] w-[14px]" strokeWidth={2.5} />
+                  ) : (
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                      <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+                    </svg>
+                  )}
+                </button>
+              ) : null}
+              <input
+                ref={urlBarRef}
+                value={urlDraft}
+                onFocus={() => setEditingUrl(true)}
+                onMouseDown={(e) => {
+                  // Fighting the browser's native "click places the cursor at
+                  // this point" behavior head-on (preventDefault on mouseup)
+                  // turned out unreliable — the native cursor placement can
+                  // still win the race depending on timing. Letting it run
+                  // first, then overriding with select-all on the very next
+                  // frame, consistently wins instead: by then the field is
+                  // definitely focused and the native placement has already
+                  // happened, so our selection is the last word.
+                  if (document.activeElement !== e.currentTarget) {
+                    const el = e.currentTarget;
+                    requestAnimationFrame(() => el.select());
+                  }
+                }}
+                onBlur={(e) => {
+                  setEditingUrl(false);
+                  // Deliberately does NOT revert unsubmitted typed text back
+                  // to the real current URL anymore — clicking away used to
+                  // discard whatever was typed, which was the actual
+                  // complaint (people expect the draft to still be sitting
+                  // there if they click back in, same as most other browsers'
+                  // combined bars). The sync effect below (keyed off
+                  // activeTab?.url / isHome, and itself gated on
+                  // !editingUrlRef.current) still overwrites this draft the
+                  // moment a REAL navigation actually lands, so a stale typed
+                  // value never sticks around once the page it was describing
+                  // has changed out from under it.
+                  //
+                  // select() on focus leaves the selection visually lingering
+                  // (as a grey highlight) even after the input loses focus —
+                  // collapsing it explicitly here is what actually clears it.
+                  e.target.setSelectionRange(0, 0);
+                }}
+                onChange={(e) => {
+                  // The DOM value here already reflects native browser
+                  // behavior for a keystroke landing on a selected range (the
+                  // highlighted suggestion tail gets replaced automatically),
+                  // so raw below is always exactly what the person now
+                  // intends — no need to reconstruct it by hand from
+                  // selectionStart/key (an earlier version tried that in
+                  // onKeyDown, with a preventDefault + manual rebuild, and got
+                  // the very first character wrong somehow — reading it
+                  // straight from the browser's own already-correct
+                  // computation here avoids that class of bug entirely, by
+                  // construction).
+                  //
+                  // The completion is also applied HERE, synchronously, in
+                  // this same handler — rather than in the separate effect
+                  // below reacting to a LATER render — specifically so
+                  // "replace the selection with what was typed" and "extend
+                  // it back out with a new completion" land in the exact same
+                  // React render/paint instead of two consecutive ones. Two
+                  // renders for one keystroke is what was still reading as
+                  // flicker even once the lookup itself became instant; this
+                  // is what actually collapses it to one.
+                  const raw = e.target.value;
+                  const dismissed = dismissedAtLengthRef.current;
+                  const eligible =
+                    editingUrl &&
+                    raw.trim().length >= 3 &&
+                    (dismissed === null || raw.length >= dismissed + 2);
+                  const match = eligible ? computeBestMatch(raw) : null;
+                  if (match && match.length > raw.length) {
+                    if (dismissed !== null) dismissedAtLengthRef.current = null;
+                    pendingCompletionSelectionRef.current = {
+                      start: raw.length,
+                      end: match.length,
+                    };
+                    programmaticUrlChangeRef.current = true; // the effect below would otherwise redundantly redo this exact lookup on its next run
+                    setUrlDraft(match);
+                    return;
+                  }
+                  pendingCompletionSelectionRef.current = null;
+                  programmaticUrlChangeRef.current = false;
+                  setUrlDraft(raw);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") submitUrl(urlDraft);
+                  else if (e.key === "Tab") {
+                    // Without this, Tab did what Tab always does in a plain
+                    // <input> — move focus to the NEXT focusable element
+                    // entirely, which fires this same field's onBlur, which
+                    // resets urlDraft back to the real current URL. That's
+                    // exactly the "URL gets cleared and the bar loses focus"
+                    // symptom — Tab was never actually being handled as an
+                    // "accept the suggestion" key at all, it was just falling
+                    // through to the browser's own unrelated default. This
+                    // intercepts it: collapse the selection to the end
+                    // (accepting the completed URL as plain typed text,
+                    // cursor after it) and keep focus right where it is,
+                    // same as a real address bar's Tab behavior.
+                    e.preventDefault();
+                    const el = e.currentTarget;
+                    el.setSelectionRange(el.value.length, el.value.length);
+                  } else if (e.key === "Backspace" || e.key === "Delete") {
+                    const el = e.currentTarget;
+                    // Remembered as a LENGTH, not the exact string — so typing
+                    // past it later (2+ genuinely new characters) is what
+                    // re-enables suggestions again, rather than just "any
+                    // different string at all" (which a single further
+                    // keystroke already always produces, defeating the point).
+                    // Whatever's left right after this deletion — whether it
+                    // came from eating an active suggestion selection in one
+                    // press, or an ordinary single-character backspace with no
+                    // selection — counts as the dismiss point.
+                    const remainingLength =
+                      el.selectionStart !== el.selectionEnd
+                        ? (el.selectionStart ?? 0)
+                        : Math.max(0, el.value.length - 1);
+                    dismissedAtLengthRef.current = remainingLength;
+                  } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                    // A single printable character typed while a suggestion is
+                    // currently selected — handled entirely here, synchronously,
+                    // in one step, instead of letting the browser replace the
+                    // selection natively (one repaint) and then reacting to
+                    // that change afterward in the effect below (a second,
+                    // separate repaint). Two repaints for what's conceptually
+                    // one keystroke is exactly what read as flicker.
+                    const el = e.currentTarget;
+                    if (el.selectionStart === null || el.selectionStart === el.selectionEnd) return; // no active suggestion — let normal typing happen
+                    e.preventDefault();
+                    const typedSoFar = el.value.slice(0, el.selectionStart) + e.key;
+                    const match = computeBestMatch(typedSoFar);
+                    const finalValue =
+                      match && match.length > typedSoFar.length ? match : typedSoFar;
+                    if (finalValue === urlDraft) {
+                      // The typed character happened to be exactly the first
+                      // character of what was already highlighted — e.g.
+                      // typing "g" while "guessr.com" (which starts with "g")
+                      // is selected on top of "geo". The resulting completed
+                      // string is then IDENTICAL to what urlDraft already is,
+                      // so calling setUrlDraft with that same value is a no-op
+                      // React bails out of (same reference/value in, nothing
+                      // to re-render) — which meant the useLayoutEffect that
+                      // normally reapplies the selection never ran at all, and
+                      // the keystroke looked completely swallowed: exactly the
+                      // "can't type the suggestion's own first letter" bug.
+                      // Since the value genuinely isn't changing here, React's
+                      // controlled-input reconciliation has nothing to
+                      // "correct" on the next render either — so, uniquely in
+                      // this one case, it's actually safe to set the selection
+                      // directly, no pending/layout-effect handoff needed.
+                      el.setSelectionRange(typedSoFar.length, finalValue.length);
+                      return;
+                    }
+                    pendingCompletionSelectionRef.current =
+                      match && match.length > typedSoFar.length
+                        ? { start: typedSoFar.length, end: finalValue.length }
+                        : null;
+                    programmaticUrlChangeRef.current = true;
+                    setUrlDraft(finalValue);
+                  }
+                }}
+                className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none"
+                placeholder="Search or enter web address"
+                // Chromium's own native field-autofill (remembers previously
+                // typed values for this exact input, independent of anything
+                // above) was competing with the custom completion logic here —
+                // its own suggestion behavior doesn't highlight only the
+                // completed portion or land the caret in the right spot, so
+                // depending on timing it could visibly override what this
+                // component was trying to do. This is a real browser-security-
+                // relevant field too (it's literally the address bar), so
+                // disabling the browser's own guess-based autofill for it is
+                // the right call regardless.
+                autoComplete="off"
+                autoCorrect="off"
+                spellCheck={false}
+              />
+              {activeTab?.isHome && isLikelyDirectUrl(urlDraft) ? (
+                // Once what's typed on the Start page's header bar reads as an
+                // actual address rather than a search term, show that site's
+                // favicon right after the typed text — a quick visual "yes,
+                // this is going to open a real page" confirmation before Enter
+                // is even pressed.
+                <FavIcon url={urlDraft.trim()} label={urlDraft.trim()} size="h-4 w-4" />
+              ) : null}
+              {isTorWindow && (
+                <button
+                  onClick={requestNewTorIdentity}
+                  aria-label="New Tor identity"
+                  title={
+                    identityRequested
+                      ? "New identity requested"
+                      : torStatus.state === "ready"
+                        ? "New Identity, clears this window's session and gets fresh circuits"
+                        : "Connecting to Tor…"
+                  }
+                  className={`grid h-7 w-7 shrink-0 place-items-center rounded-full transition-colors ${identityRequested ? "text-[#8a5fc4]" : "text-[#8a5fc4] hover:bg-[#8a5fc4]/10"}`}
+                >
+                  {identityRequested ? (
+                    <Check className="h-[16px] w-[16px]" strokeWidth={2} />
+                  ) : (
+                    <TorOnionLogo className="h-[21px] w-[21px]" strokeWidth={1.5} />
+                  )}
+                </button>
+              )}
+              <button
+                onClick={starCurrentPage}
+                aria-label="Add to favorites"
+                className={`grid h-7 w-7 shrink-0 place-items-center rounded-full transition-colors hover:bg-foreground/10 ${starFlash ? "text-foreground" : "text-muted-foreground"}`}
+              >
+                <Star
+                  className="h-[17px] w-[17px]"
+                  strokeWidth={1.5}
+                  fill={starFlash ? "currentColor" : "none"}
+                />
+              </button>
+            </div>
+          </div>
+
+          <div className="ml-1.5 flex items-center">
+            {/* Same slot as the auto-save confirmation below — replaces the
               icons + profile pill (not the whole toolbar, and never covers
               the search bar) while any of these is showing, then reverts
               back. Priority: find bar (an open interaction) > session
               restore offer (a decision) > password-saved (a passing
               status). */}
-          {findBar ? (
-            <div className="flex items-center gap-2 rounded-full border border-border bg-white px-3.5 py-1.5 text-[13px] text-foreground shadow-sm">
-              <input
-                ref={findInputRef}
-                value={findBar.query}
-                onChange={(e) => {
-                  const query = e.target.value;
-                  setFindBar((prev) => (prev ? { ...prev, query } : prev));
-                  window.browserAPI?.tabs.findInPage(query, true, false);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Escape") {
-                    closeFindBar();
-                  } else if (e.key === "Enter") {
-                    e.preventDefault();
-                    window.browserAPI?.tabs.findInPage(findBar.query, !e.shiftKey, true);
-                  }
-                }}
-                placeholder="Find on page"
-                className="w-40 bg-transparent text-[13px] outline-none placeholder:text-muted-foreground"
-              />
-              <span className="shrink-0 tabular-nums text-muted-foreground">
-                {findBar.matches > 0 ? `${findBar.activeMatchOrdinal}/${findBar.matches}` : findBar.query ? "0/0" : ""}
-              </span>
-              <button
-                onClick={() => {
-                  // Optimistic counter update — the real highlight/scroll
-                  // still comes from the IPC round trip to Electron's
-                  // native findInPage, which has an inherent bit of
-                  // latency; updating the visible count immediately at
-                  // least makes the click itself feel instant instead of
-                  // waiting on that round trip before anything changes.
-                  setFindBar((prev) => {
-                    if (!prev || prev.matches === 0) return prev;
-                    const next = prev.activeMatchOrdinal <= 1 ? prev.matches : prev.activeMatchOrdinal - 1;
-                    return { ...prev, activeMatchOrdinal: next };
-                  });
-                  window.browserAPI?.tabs.findInPage(findBar.query, false, true);
-                }}
-                aria-label="Previous match"
-                className="grid h-6 w-6 shrink-0 place-items-center rounded-full hover:bg-foreground/10"
-              >
-                <ChevronUp className="h-4 w-4" />
-              </button>
-              <button
-                onClick={() => {
-                  setFindBar((prev) => {
-                    if (!prev || prev.matches === 0) return prev;
-                    const next = prev.activeMatchOrdinal >= prev.matches ? 1 : prev.activeMatchOrdinal + 1;
-                    return { ...prev, activeMatchOrdinal: next };
-                  });
-                  window.browserAPI?.tabs.findInPage(findBar.query, true, true);
-                }}
-                aria-label="Next match"
-                className="grid h-6 w-6 shrink-0 place-items-center rounded-full hover:bg-foreground/10"
-              >
-                <ChevronDown className="h-4 w-4" />
-              </button>
-              <button onClick={closeFindBar} aria-label="Close find bar" className="grid h-5 w-5 shrink-0 place-items-center rounded-full hover:bg-foreground/10">
-                <X className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          ) : sessionRestore ? (
-            <div className="flex items-center gap-2 rounded-full bg-muted px-4 py-1.5 text-[13px] font-semibold text-foreground">
-              <span>
-                Restore {sessionRestore.tabCount} tab{sessionRestore.tabCount === 1 ? "" : "s"} from last session?
-              </span>
-              <button
-                onClick={() => {
-                  window.browserAPI?.session.restoreAccepted();
-                  setSessionRestore(null);
-                }}
-                className="rounded-full bg-foreground px-2.5 py-0.5 text-background transition-colors hover:opacity-80"
-              >
-                Restore
-              </button>
-              <button
-                onClick={() => {
-                  window.browserAPI?.session.restoreDismissed();
-                  setSessionRestore(null);
-                }}
-                className="rounded-full px-2 py-0.5 text-muted-foreground transition-colors hover:bg-foreground/10"
-              >
-                Dismiss
-              </button>
-            </div>
-          ) : updateReady ? (
-            <div className="flex items-center gap-2 rounded-full bg-muted px-4 py-1.5 text-[13px] font-semibold text-foreground">
-              <span>Update ready</span>
-              <button
-                onClick={() => window.browserAPI?.appUpdate.install()}
-                className="rounded-full bg-foreground px-2.5 py-0.5 text-background transition-colors hover:opacity-80"
-              >
-                Restart
-              </button>
-              <button onClick={() => setUpdateReady(false)} className="rounded-full px-2 py-0.5 text-muted-foreground transition-colors hover:bg-foreground/10">
-                Later
-              </button>
-            </div>
-          ) : autoSavedPill ? (
-            <button
-              onClick={() => {
-                setAutoSavedPill(null);
-                goToSettings("passwords");
-              }}
-              className="flex items-center gap-2 rounded-full bg-muted px-4 py-1.5 text-[13px] font-semibold text-foreground transition-colors hover:bg-muted/70"
-            >
-              <span className="grid h-4 w-4 place-items-center rounded-full bg-emerald-500 text-white">
-                <Check className="h-2.5 w-2.5" strokeWidth={3} />
-              </span>
-              Password for {autoSavedPill.url} saved
-            </button>
-          ) : (
-            <>
-              <ToolbarActionIcons
-                style={toolbarStyle}
-                onOpenDownloads={openDownloadsPopup}
-                actions={toolbarIconOrder.map((id) => {
-                  const defs: Record<ToolbarIconId, ToolbarAction> = {
-                    edit: { id: "edit", icon: Edit3, label: "Edit", onClick: () => goToSettings("favorites") },
-                    settings: { id: "settings", icon: Settings, label: "Settings", onClick: () => goToSettings() },
-                    download: {
-                      id: "download",
-                      icon: Download,
-                      label: "Downloads",
-                      onClick: openDownloadsPopup,
-                      busy: activeDownloadCount > 0,
-                      justDone: justCompletedDownload,
-                    },
-                    split: { id: "split", icon: Columns2, label: "Split", onClick: toggleSplit, active: Boolean(secondaryId) },
-                    pip: { id: "pip", icon: PictureInPicture2, label: "Picture-in-Picture", onClick: () => void togglePiP() },
-                  };
-                  return defs[id];
-                })}
-                draggedId={draggedIcon}
-                onDragStart={setDraggedIcon}
-                onDropOn={(id) => {
-                  if (draggedIcon) moveToolbarIcon(draggedIcon, id);
-                  setDraggedIcon(null);
-                }}
-                onDragEnd={() => setDraggedIcon(null)}
-              />
-              {authPending ? (
+            {findBar ? (
+              <div className="flex items-center gap-2 rounded-full border border-border bg-white px-3.5 py-1.5 text-[13px] text-foreground shadow-sm">
+                <input
+                  ref={findInputRef}
+                  value={findBar.query}
+                  onChange={(e) => {
+                    const query = e.target.value;
+                    setFindBar((prev) => (prev ? { ...prev, query } : prev));
+                    window.browserAPI?.tabs.findInPage(query, true, false);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") {
+                      closeFindBar();
+                    } else if (e.key === "Enter") {
+                      e.preventDefault();
+                      window.browserAPI?.tabs.findInPage(findBar.query, !e.shiftKey, true);
+                    }
+                  }}
+                  placeholder="Find on page"
+                  className="w-40 bg-transparent text-[13px] outline-none placeholder:text-muted-foreground"
+                />
+                <span className="shrink-0 tabular-nums text-muted-foreground">
+                  {findBar.matches > 0
+                    ? `${findBar.activeMatchOrdinal}/${findBar.matches}`
+                    : findBar.query
+                      ? "0/0"
+                      : ""}
+                </span>
                 <button
-                  onClick={() => cancelLogin()}
-                  aria-label="Cancel sign in"
-                  className="ml-2 grid h-8 w-8 shrink-0 place-items-center rounded-full border-4 border-white bg-card shadow-[0_1px_3px_rgba(0,0,0,0.15)]"
+                  onClick={() => {
+                    // Optimistic counter update — the real highlight/scroll
+                    // still comes from the IPC round trip to Electron's
+                    // native findInPage, which has an inherent bit of
+                    // latency; updating the visible count immediately at
+                    // least makes the click itself feel instant instead of
+                    // waiting on that round trip before anything changes.
+                    setFindBar((prev) => {
+                      if (!prev || prev.matches === 0) return prev;
+                      const next =
+                        prev.activeMatchOrdinal <= 1 ? prev.matches : prev.activeMatchOrdinal - 1;
+                      return { ...prev, activeMatchOrdinal: next };
+                    });
+                    window.browserAPI?.tabs.findInPage(findBar.query, false, true);
+                  }}
+                  aria-label="Previous match"
+                  className="grid h-6 w-6 shrink-0 place-items-center rounded-full hover:bg-foreground/10"
                 >
-                  <User className="h-3.5 w-3.5 text-muted-foreground" />
+                  <ChevronUp className="h-4 w-4" />
                 </button>
-              ) : isGuest ? (
                 <button
-                  onClick={openProfilePopup}
-                  aria-label={isTorWindow ? "Tor" : activeIdentity.windowMode === "incognito" ? "Incognito" : "Guest"}
-                  className="ml-2 grid h-8 w-8 shrink-0 place-items-center rounded-full border-4 border-white bg-card shadow-[0_1px_3px_rgba(0,0,0,0.15)]"
+                  onClick={() => {
+                    setFindBar((prev) => {
+                      if (!prev || prev.matches === 0) return prev;
+                      const next =
+                        prev.activeMatchOrdinal >= prev.matches ? 1 : prev.activeMatchOrdinal + 1;
+                      return { ...prev, activeMatchOrdinal: next };
+                    });
+                    window.browserAPI?.tabs.findInPage(findBar.query, true, true);
+                  }}
+                  aria-label="Next match"
+                  className="grid h-6 w-6 shrink-0 place-items-center rounded-full hover:bg-foreground/10"
                 >
-                  {isTorWindow ? (
-                    <TorOnionLogo className="h-3.5 w-3.5 text-muted-foreground" strokeWidth={2} />
-                  ) : activeIdentity.windowMode === "incognito" ? (
-                    <EyeOff className="h-3.5 w-3.5 text-muted-foreground" />
-                  ) : (
+                  <ChevronDown className="h-4 w-4" />
+                </button>
+                <button
+                  onClick={closeFindBar}
+                  aria-label="Close find bar"
+                  className="grid h-5 w-5 shrink-0 place-items-center rounded-full hover:bg-foreground/10"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ) : sessionRestore ? (
+              <div className="flex items-center gap-2 rounded-full bg-muted px-4 py-1.5 text-[13px] font-semibold text-foreground">
+                <span>
+                  Restore {sessionRestore.tabCount} tab{sessionRestore.tabCount === 1 ? "" : "s"}{" "}
+                  from last session?
+                </span>
+                <button
+                  onClick={() => {
+                    window.browserAPI?.session.restoreAccepted();
+                    setSessionRestore(null);
+                  }}
+                  className="rounded-full bg-foreground px-2.5 py-0.5 text-background transition-colors hover:opacity-80"
+                >
+                  Restore
+                </button>
+                <button
+                  onClick={() => {
+                    window.browserAPI?.session.restoreDismissed();
+                    setSessionRestore(null);
+                  }}
+                  className="rounded-full px-2 py-0.5 text-muted-foreground transition-colors hover:bg-foreground/10"
+                >
+                  Dismiss
+                </button>
+              </div>
+            ) : updateReady ? (
+              <div className="flex items-center gap-2 rounded-full bg-muted px-4 py-1.5 text-[13px] font-semibold text-foreground">
+                <span>Update ready</span>
+                <button
+                  onClick={() => window.browserAPI?.appUpdate.install()}
+                  className="rounded-full bg-foreground px-2.5 py-0.5 text-background transition-colors hover:opacity-80"
+                >
+                  Restart
+                </button>
+                <button
+                  onClick={() => setUpdateReady(false)}
+                  className="rounded-full px-2 py-0.5 text-muted-foreground transition-colors hover:bg-foreground/10"
+                >
+                  Later
+                </button>
+              </div>
+            ) : autoSavedPill ? (
+              <button
+                onClick={() => {
+                  setAutoSavedPill(null);
+                  goToSettings("passwords");
+                }}
+                className="flex items-center gap-2 rounded-full bg-muted px-4 py-1.5 text-[13px] font-semibold text-foreground transition-colors hover:bg-muted/70"
+              >
+                <span className="grid h-4 w-4 place-items-center rounded-full bg-emerald-500 text-white">
+                  <Check className="h-2.5 w-2.5" strokeWidth={3} />
+                </span>
+                Password for {autoSavedPill.url} saved
+              </button>
+            ) : (
+              <>
+                <ToolbarActionIcons
+                  style={toolbarStyle}
+                  onOpenDownloads={openDownloadsPopup}
+                  actions={toolbarIconOrder.map((id) => {
+                    const defs: Record<ToolbarIconId, ToolbarAction> = {
+                      edit: {
+                        id: "edit",
+                        icon: Edit3,
+                        label: "Edit",
+                        onClick: () => goToSettings("favorites"),
+                      },
+                      settings: {
+                        id: "settings",
+                        icon: Settings,
+                        label: "Settings",
+                        onClick: () => goToSettings(),
+                      },
+                      download: {
+                        id: "download",
+                        icon: Download,
+                        label: "Downloads",
+                        onClick: openDownloadsPopup,
+                        busy: activeDownloadCount > 0,
+                        justDone: justCompletedDownload,
+                      },
+                      split: {
+                        id: "split",
+                        icon: Columns2,
+                        label: "Split",
+                        onClick: toggleSplit,
+                        active: Boolean(secondaryId),
+                      },
+                      pip: {
+                        id: "pip",
+                        icon: PictureInPicture2,
+                        label: "Picture-in-Picture",
+                        onClick: () => void togglePiP(),
+                      },
+                    };
+                    return defs[id];
+                  })}
+                  draggedId={draggedIcon}
+                  onDragStart={setDraggedIcon}
+                  onDropOn={(id) => {
+                    if (draggedIcon) moveToolbarIcon(draggedIcon, id);
+                    setDraggedIcon(null);
+                  }}
+                  onDragEnd={() => setDraggedIcon(null)}
+                />
+                {authPending ? (
+                  <button
+                    onClick={() => cancelLogin()}
+                    aria-label="Cancel sign in"
+                    className="ml-2 grid h-8 w-8 shrink-0 place-items-center rounded-full border-4 border-white bg-card shadow-[0_1px_3px_rgba(0,0,0,0.15)]"
+                  >
                     <User className="h-3.5 w-3.5 text-muted-foreground" />
-                  )}
-                </button>
-              ) : activeProfile ? (
-                <button
-                  onClick={openProfilePopup}
-                  aria-label={activeProfile.kind === "quecksilver" && activeProfile.email ? nameFromEmail(activeProfile.email) : activeProfile.name}
-                  className="ml-2 grid h-8 w-8 shrink-0 place-items-center rounded-full border-4 border-white text-[11px] font-semibold text-white shadow-[0_1px_3px_rgba(0,0,0,0.15)]"
-                  style={{ background: activeProfile.kind === "quecksilver" ? "var(--brand)" : "hsl(240 4% 46%)" }}
-                >
-                  {(activeProfile.kind === "quecksilver" ? activeProfile.email : activeProfile.name)?.charAt(0).toUpperCase() ?? "?"}
-                </button>
-              ) : (
-                <button
-                  onClick={openProfilePopup}
-                  disabled={!isElectron}
-                  aria-label="Sign in"
-                  className="ml-2 grid h-8 w-8 shrink-0 place-items-center rounded-full border-4 border-white bg-card shadow-[0_1px_3px_rgba(0,0,0,0.15)] disabled:opacity-50"
-                >
-                  <User className="h-3.5 w-3.5 text-muted-foreground" />
-                </button>
-              )}
-              {/* Chat pill — same pill design as the profile button (bg-card,
+                  </button>
+                ) : isGuest ? (
+                  <button
+                    onClick={openProfilePopup}
+                    aria-label={
+                      isTorWindow
+                        ? "Tor"
+                        : activeIdentity.windowMode === "incognito"
+                          ? "Incognito"
+                          : "Guest"
+                    }
+                    className="ml-2 grid h-8 w-8 shrink-0 place-items-center rounded-full border-4 border-white bg-card shadow-[0_1px_3px_rgba(0,0,0,0.15)]"
+                  >
+                    {isTorWindow ? (
+                      <TorOnionLogo className="h-3.5 w-3.5 text-muted-foreground" strokeWidth={2} />
+                    ) : activeIdentity.windowMode === "incognito" ? (
+                      <EyeOff className="h-3.5 w-3.5 text-muted-foreground" />
+                    ) : (
+                      <User className="h-3.5 w-3.5 text-muted-foreground" />
+                    )}
+                  </button>
+                ) : activeProfile ? (
+                  <button
+                    onClick={openProfilePopup}
+                    aria-label={
+                      activeProfile.kind === "quecksilver" && activeProfile.email
+                        ? nameFromEmail(activeProfile.email)
+                        : activeProfile.name
+                    }
+                    className="ml-2 grid h-8 w-8 shrink-0 place-items-center rounded-full border-4 border-white text-[11px] font-semibold text-white shadow-[0_1px_3px_rgba(0,0,0,0.15)]"
+                    style={{
+                      background:
+                        activeProfile.kind === "quecksilver" ? "var(--brand)" : "hsl(240 4% 46%)",
+                    }}
+                  >
+                    {(activeProfile.kind === "quecksilver"
+                      ? activeProfile.email
+                      : activeProfile.name
+                    )
+                      ?.charAt(0)
+                      .toUpperCase() ?? "?"}
+                  </button>
+                ) : (
+                  <button
+                    onClick={openProfilePopup}
+                    disabled={!isElectron}
+                    aria-label="Sign in"
+                    className="ml-2 grid h-8 w-8 shrink-0 place-items-center rounded-full border-4 border-white bg-card shadow-[0_1px_3px_rgba(0,0,0,0.15)] disabled:opacity-50"
+                  >
+                    <User className="h-3.5 w-3.5 text-muted-foreground" />
+                  </button>
+                )}
+                {/* Chat pill — same pill design as the profile button (bg-card,
                   h-8, matching shadow). Product isn't live yet, so the click
                   is just a brief "Coming soon" flip instead of navigating
                   anywhere — chatComingSoon reverts on its own timer, same
                   pattern as autoSavedPill above. */}
-              <button
-                onClick={() => {
-                  setChatComingSoon(true);
-                  if (chatComingSoonTimer.current) clearTimeout(chatComingSoonTimer.current);
-                  chatComingSoonTimer.current = setTimeout(() => setChatComingSoon(false), 1400);
-                }}
-                className="ml-2 flex h-8 items-center gap-1.5 rounded-full bg-card pl-2 pr-3.5 text-[13px] font-semibold text-foreground shadow-[0_1px_3px_rgba(0,0,0,0.15)]"
-              >
-                {chatComingSoon ? (
-                  <span className="px-0.5">Coming soon</span>
-                ) : (
-                  <>
-                    <QueckSilverLogo className="h-4 w-4" style={{ color: "var(--brand)" }} />
-                    Chat
-                  </>
-                )}
-              </button>
-            </>
-          )}
+                <button
+                  onClick={() => {
+                    setChatComingSoon(true);
+                    if (chatComingSoonTimer.current) clearTimeout(chatComingSoonTimer.current);
+                    chatComingSoonTimer.current = setTimeout(() => setChatComingSoon(false), 1400);
+                  }}
+                  className="ml-2 flex h-8 items-center gap-1.5 rounded-full bg-card pl-2 pr-3.5 text-[13px] font-semibold text-foreground shadow-[0_1px_3px_rgba(0,0,0,0.15)]"
+                >
+                  {chatComingSoon ? (
+                    <span className="px-0.5">Coming soon</span>
+                  ) : (
+                    <>
+                      <QueckSilverLogo className="h-4 w-4" style={{ color: "var(--brand)" }} />
+                      Chat
+                    </>
+                  )}
+                </button>
+              </>
+            )}
+          </div>
         </div>
-      </div>
       )}
 
       {/* Header favorites bar — separate from the 5 home-page slots.
@@ -1743,7 +1988,12 @@ function Index() {
                   label: folder.label,
                   items: headerFavorites
                     .filter((f) => f.parentId === folder.id)
-                    .map((f) => ({ id: f.id, label: f.label, url: f.url, iconOnly: Boolean(f.iconOnly) })),
+                    .map((f) => ({
+                      id: f.id,
+                      label: f.label,
+                      url: f.url,
+                      iconOnly: Boolean(f.iconOnly),
+                    })),
                 },
                 { top: r.top, left: r.left, right: r.right, bottom: r.bottom },
               );
@@ -1755,16 +2005,79 @@ function Index() {
               const r = e.currentTarget.getBoundingClientRect();
               window.browserAPI?.overlay.open(
                 "favoriteContextMenu",
-                { id: f.id, label: f.label, url: f.url, iconOnly: Boolean(f.iconOnly), inFolder: Boolean(f.parentId) },
+                {
+                  id: f.id,
+                  label: f.label,
+                  url: f.url,
+                  iconOnly: Boolean(f.iconOnly),
+                  inFolder: Boolean(f.parentId),
+                },
                 { top: r.top, left: r.left, right: r.right, bottom: r.bottom },
               );
             }}
-            renderIcon={(f) => (f.isFolder ? <Folder className="h-4 w-4 text-muted-foreground" /> : <FavIcon url={f.url} label={f.label} size="h-4 w-4" />)}
+            renderIcon={(f) =>
+              f.isFolder ? (
+                <Folder className="h-4 w-4 text-muted-foreground" />
+              ) : (
+                <FavIcon url={f.url} label={f.label} size="h-4 w-4" />
+              )
+            }
           />
         </div>
       )}
 
-      {/* Content — flush with the real window edges (no gap) so Windows'
+      {/* Row below the header: the vertical-tabs sidebar (if enabled) plus
+          the page content, side by side. Kept `relative` so the unpinned
+          sidebar (an `absolute` overlay — see VerticalTabsSidebar) is
+          positioned against THIS box, i.e. starting right below the
+          header and reaching down to the window's bottom edge, rather
+          than the whole viewport. */}
+      <div
+        className={`relative flex min-h-0 flex-1 ${!chromeHidden && verticalTabsEnabled ? "flex-row" : "flex-col"} overflow-hidden`}
+      >
+        {!chromeHidden && verticalTabsEnabled && (
+          <VerticalTabsSidebar
+            tabs={tabs}
+            activeId={activeId}
+            loadingTabIds={loadingHomeTabs}
+            onSelect={(id) => switchTab(id)}
+            onClose={(id) => closeTab(id)}
+            onNewTab={() => newTab()}
+            pinned={verticalTabsPinned}
+            onTogglePinned={() => setVerticalTabsPinned(!verticalTabsPinned)}
+            onOpenTabsMenu={(rect) =>
+              window.browserAPI?.overlay.open(
+                "tabsMenu",
+                {
+                  verticalTabsEnabled,
+                  tabs: tabs.map((t) => ({
+                    id: t.id,
+                    title: t.title,
+                    url: t.url,
+                    isHome: t.isHome,
+                    isSettings: t.isSettings,
+                    isActive: t.id === activeId,
+                  })),
+                },
+                rect,
+              )
+            }
+          />
+        )}
+        <div
+          className="flex min-w-0 flex-1 flex-col overflow-hidden"
+          // Unpinned sidebar is an overlay with zero layout width (see
+          // VerticalTabsSidebar) — without this, its collapsed rail sits
+          // directly on top of the page content's left edge instead of
+          // beside it. Pinned sidebar already claims real flex space, so no
+          // extra padding is needed there.
+          style={
+            !chromeHidden && verticalTabsEnabled && !verticalTabsPinned
+              ? { paddingLeft: RAIL_WIDTH }
+              : undefined
+          }
+        >
+          {/* Content — flush with the real window edges (no gap) so Windows'
           automatic DWM corner-rounding on this frameless window actually
           applies to it, same as Edge/Chrome do. A gap here would put native
           page content away from the true window boundary and the OS
@@ -1776,18 +2089,24 @@ function Index() {
           white as the toolbar above it, so without a hairline the two
           would visually merge into one blank area — same reasoning as
           --chrome-border everywhere else in the toolbar. */}
-      <div
-        ref={pageScrollRef}
-        className="relative flex-1 overflow-y-auto bg-white"
-        style={isHome && !secondaryId ? { borderTop: "1px solid var(--chrome-border)" } : undefined}
-      >
-        <PageScrollbar scrollRef={pageScrollRef} />
-        <div className="flex h-full flex-col bg-white">
-          <div ref={contentRef} className="relative flex h-full w-full flex-1 overflow-hidden">
-            {secondaryId ? (
-              <ResizablePanelGroup orientation="horizontal">
-                <ResizablePanel defaultSize={50} minSize={15} onResize={(size) => setSplitRatio(size.asPercentage / 100)}>
-                  {/* key={activeId} — Ctrl+wheel/pinch zoom (usePageZoom,
+          <div
+            ref={pageScrollRef}
+            className="relative flex-1 overflow-y-auto bg-white"
+            style={
+              isHome && !secondaryId ? { borderTop: "1px solid var(--chrome-border)" } : undefined
+            }
+          >
+            <PageScrollbar scrollRef={pageScrollRef} />
+            <div className="flex h-full flex-col bg-white">
+              <div ref={contentRef} className="relative flex h-full w-full flex-1 overflow-hidden">
+                {secondaryId ? (
+                  <ResizablePanelGroup orientation="horizontal">
+                    <ResizablePanel
+                      defaultSize={50}
+                      minSize={15}
+                      onResize={(size) => setSplitRatio(size.asPercentage / 100)}
+                    >
+                      {/* key={activeId} — Ctrl+wheel/pinch zoom (usePageZoom,
                       inside ZoomedContent) is meant to be transient and
                       per-tab, same as a real browsed tab's own independent
                       zoom (see ZoomedContent's own comment). Without a key
@@ -1798,7 +2117,60 @@ function Index() {
                       persisted "Default page zoom" setting even though it
                       was never actually written there. Remounting on
                       activeId change is what actually resets it per tab. */}
-                  <ZoomedContent key={activeId} className="relative flex h-full flex-col overflow-hidden">
+                      <ZoomedContent
+                        key={activeId}
+                        className="relative flex h-full flex-col overflow-hidden"
+                      >
+                        {isHome && !isHomeLoading && (
+                          <HomeContent
+                            urlDraft={homeUrlDraft}
+                            onUrlDraftChange={setHomeUrlDraft}
+                            onSubmit={submitUrl}
+                            bookmarks={bookmarks}
+                            onOpenBookmark={(url) => openBookmark(url)}
+                            onOpenSlot={openSlot}
+                            onRemoveSlot={remove}
+                            privacyMode={homePrivacyMode}
+                          />
+                        )}
+                        {isSettings && <SettingsView nightModeTabId={lastBrowsedTabRef.current} />}
+                      </ZoomedContent>
+                    </ResizablePanel>
+                    <ResizableHandle withHandle className="[-webkit-app-region:no-drag]" />
+                    <ResizablePanel defaultSize={50} minSize={15}>
+                      <ZoomedContent
+                        key={secondaryId}
+                        className="relative flex h-full flex-col overflow-hidden bg-background"
+                      >
+                        {secondaryTab?.isSettings && (
+                          <SettingsView nightModeTabId={lastBrowsedTabRef.current} />
+                        )}
+                        {secondaryTab?.isHome && (
+                          <HomeContent
+                            urlDraft={secondaryHomeUrlDraft}
+                            onUrlDraftChange={setSecondaryHomeUrlDraft}
+                            onSubmit={(raw) => {
+                              const target = parseUrlBarInput(raw);
+                              if (target && secondaryId) navigate(secondaryId, target);
+                            }}
+                            bookmarks={bookmarks}
+                            onOpenBookmark={(url) => openBookmark(url, secondaryId)}
+                            onOpenSlot={openSlot}
+                            onRemoveSlot={remove}
+                            privacyMode={homePrivacyMode}
+                          />
+                        )}
+                        {/* Neither home nor settings — a real page, shown by the
+                        native view the backend positions into this exact
+                        half (see applySplitLayout in tab-manager.ts). */}
+                      </ZoomedContent>
+                    </ResizablePanel>
+                  </ResizablePanelGroup>
+                ) : (
+                  <ZoomedContent
+                    key={activeId}
+                    className="relative flex h-full w-full flex-1 flex-col overflow-hidden"
+                  >
                     {isHome && !isHomeLoading && (
                       <HomeContent
                         urlDraft={homeUrlDraft}
@@ -1813,52 +2185,11 @@ function Index() {
                     )}
                     {isSettings && <SettingsView nightModeTabId={lastBrowsedTabRef.current} />}
                   </ZoomedContent>
-                </ResizablePanel>
-                <ResizableHandle withHandle className="[-webkit-app-region:no-drag]" />
-                <ResizablePanel defaultSize={50} minSize={15}>
-                  <ZoomedContent key={secondaryId} className="relative flex h-full flex-col overflow-hidden bg-background">
-                    {secondaryTab?.isSettings && <SettingsView nightModeTabId={lastBrowsedTabRef.current} />}
-                    {secondaryTab?.isHome && (
-                      <HomeContent
-                        urlDraft={secondaryHomeUrlDraft}
-                        onUrlDraftChange={setSecondaryHomeUrlDraft}
-                        onSubmit={(raw) => {
-                          const target = parseUrlBarInput(raw);
-                          if (target && secondaryId) navigate(secondaryId, target);
-                        }}
-                        bookmarks={bookmarks}
-                        onOpenBookmark={(url) => openBookmark(url, secondaryId)}
-                        onOpenSlot={openSlot}
-                        onRemoveSlot={remove}
-                        privacyMode={homePrivacyMode}
-                      />
-                    )}
-                    {/* Neither home nor settings — a real page, shown by the
-                        native view the backend positions into this exact
-                        half (see applySplitLayout in tab-manager.ts). */}
-                  </ZoomedContent>
-                </ResizablePanel>
-              </ResizablePanelGroup>
-            ) : (
-              <ZoomedContent key={activeId} className="relative flex h-full w-full flex-1 flex-col overflow-hidden">
-                {isHome && !isHomeLoading && (
-                  <HomeContent
-                    urlDraft={homeUrlDraft}
-                    onUrlDraftChange={setHomeUrlDraft}
-                    onSubmit={submitUrl}
-                    bookmarks={bookmarks}
-                    onOpenBookmark={(url) => openBookmark(url)}
-                    onOpenSlot={openSlot}
-                    onRemoveSlot={remove}
-                    privacyMode={homePrivacyMode}
-                  />
                 )}
-                {isSettings && <SettingsView nightModeTabId={lastBrowsedTabRef.current} />}
-              </ZoomedContent>
-            )}
+              </div>
+            </div>
           </div>
         </div>
-      </div>
       </div>
 
       {/* Tor connecting screen — blocks everything (no tabs, no address
@@ -1872,9 +2203,12 @@ function Index() {
           <TorOnionLogo className="h-12 w-12 text-[#8a5fc4]" strokeWidth={1.5} />
           {torStatus.state === "error" ? (
             <>
-              <p className="max-w-sm text-center text-[14px] leading-relaxed text-white/90">{torStatus.message}</p>
+              <p className="max-w-sm text-center text-[14px] leading-relaxed text-white/90">
+                {torStatus.message}
+              </p>
               <p className="max-w-sm text-center text-[12px] leading-relaxed text-white/50">
-                Get the official Tor binary from torproject.org, then set its path in Settings → Privacy → Tor.
+                Get the official Tor binary from torproject.org, then set its path in Settings →
+                Privacy → Tor.
               </p>
             </>
           ) : (
@@ -1883,10 +2217,14 @@ function Index() {
               <div className="h-1 w-64 overflow-hidden rounded-full bg-white/10">
                 <div
                   className="h-full rounded-full bg-[#8a5fc4] transition-all duration-300"
-                  style={{ width: `${torStatus.state === "starting" ? torStatus.bootstrapPercent : 0}%` }}
+                  style={{
+                    width: `${torStatus.state === "starting" ? torStatus.bootstrapPercent : 0}%`,
+                  }}
                 />
               </div>
-              <p className="text-[12px] text-white/50">{torStatus.state === "starting" ? torStatus.message : "Starting Tor…"}</p>
+              <p className="text-[12px] text-white/50">
+                {torStatus.state === "starting" ? torStatus.message : "Starting Tor…"}
+              </p>
             </>
           )}
         </div>
