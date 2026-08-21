@@ -86,10 +86,10 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "QueckSilver Search" },
+      { title: "QueckSilver Arch" },
       { name: "description", content: "A calm, minimal desktop browser with Zora built in." },
       { name: "author", content: "QueckSilver" },
-      { property: "og:title", content: "QueckSilver Search" },
+      { property: "og:title", content: "QueckSilver Arch" },
       { property: "og:description", content: "A calm, minimal desktop browser with Zora built in." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },

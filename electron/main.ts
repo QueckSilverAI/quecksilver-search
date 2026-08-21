@@ -61,7 +61,7 @@ import { existsSync, rmSync, promises as fsPromises } from "node:fs";
 import { OverlayWindowManager, registerOverlayIpc } from "./overlay-window";
 import type { OverlayAction } from "./overlay-types";
 
-app.name = "QueckSilver Search";
+app.name = "QueckSilver Arch";
 // No File/Edit/View/Window/Help bar — this app is deliberately chrome-free
 // beyond its own UI (see the master plan: no settings, no menu clutter).
 Menu.setApplicationMenu(null);
@@ -225,7 +225,7 @@ function createWindow(identity?: ActiveIdentity): BrowserWindow {
     minWidth: 880,
     minHeight: 560,
     show: false,
-    title: identity?.windowMode === "tor" ? "QueckSilver Search - Tor" : identity?.windowMode === "incognito" ? "QueckSilver Search - Incognito" : "QueckSilver Search",
+    title: identity?.windowMode === "tor" ? "QueckSilver Arch - Tor" : identity?.windowMode === "incognito" ? "QueckSilver Arch - Incognito" : "QueckSilver Arch",
     icon: ICON_PATH,
     backgroundColor: identity?.windowMode === "tor" ? "#1a1330" : identity?.windowMode === "incognito" ? "#1f1f24" : "#ffffff",
     // Explicit, though it's the default: Windows 11's DWM automatically
@@ -1186,15 +1186,15 @@ function registerIpc() {
   });
   // Types Electron/Chromium can render inline (plugins:true on every tab's
   // WebContentsView enables the built-in PDF viewer — see tab-manager.ts)
-  // open in a fresh QueckSilver Search tab instead of shell.openPath()'s
+  // open in a fresh QueckSilver Arch tab instead of shell.openPath()'s
   // normal behavior. shell.openPath() hands the file to whatever Windows
   // has registered as the DEFAULT APP FOR THAT FILE EXTENSION — a
   // completely separate registration from "default browser" (which only
   // covers the http/https protocol, not local file associations), so even
-  // an already-default-browser QueckSilver Search would still lose these
+  // an already-default-browser QueckSilver Arch would still lose these
   // to Edge/whatever else owns .html/.pdf/.svg on the machine. This is
   // the actual cause of "opens in another browser" for downloaded PDFs/
-  // HTML/SVG files clicked from QueckSilver Search's own downloads list.
+  // HTML/SVG files clicked from QueckSilver Arch's own downloads list.
   const INLINE_VIEWABLE_EXTENSIONS = new Set([".pdf", ".html", ".htm", ".svg"]);
   ipcMain.handle("downloads:open", (e, filePath: string) => {
     const ext = path.extname(filePath).toLowerCase();

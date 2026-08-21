@@ -27,7 +27,7 @@ export function logout(windowId: number) {
 }
 
 const CALLBACK_HTML = (message: string) => `<!doctype html>
-<html><head><meta charset="utf-8"><title>QueckSilver Search</title>
+<html><head><meta charset="utf-8"><title>QueckSilver Arch</title>
 <style>
   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
          display: flex; align-items: center; justify-content: center; height: 100vh;
@@ -102,7 +102,7 @@ export async function startLoginFlow(win: BrowserWindow, onEmailKnown: (email: s
       const session: AuthSession = { accessToken: token, userId, email, obtainedAt: Date.now() };
       sessionStore.write(windowId, session);
 
-      res.writeHead(200, { "Content-Type": "text/html" }).end(CALLBACK_HTML("Signed in to QueckSilver Search."));
+      res.writeHead(200, { "Content-Type": "text/html" }).end(CALLBACK_HTML("Signed in to QueckSilver Arch."));
       server.close();
       pending.delete(windowId);
       win.webContents.send("auth:changed", session);

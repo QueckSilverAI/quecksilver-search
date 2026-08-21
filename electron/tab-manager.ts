@@ -1173,7 +1173,7 @@ function httpsOnlyBlockedPage(originalHttpUrl: string): string {
     <rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>
   </svg>
   <h1>This connection is not secure</h1>
-  <p class="hint">HTTPS-Only mode is on, and this site couldn't be reached securely. QueckSilver Search didn't try the unencrypted version automatically.</p>
+  <p class="hint">HTTPS-Only mode is on, and this site couldn't be reached securely. QueckSilver Arch didn't try the unencrypted version automatically.</p>
   <p class="url">${safeUrl}</p>
   <div class="buttons">
     <button class="safe" id="back">Back to safety</button>
@@ -1216,7 +1216,7 @@ function phishingWarningPage(attemptedUrl: string, threatType: string): string {
     <path d="M12 8v5M12 16h.01" stroke-linecap="round"/>
   </svg>
   <h1>Deceptive site ahead</h1>
-  <p class="hint">${label}. QueckSilver Search recommends against continuing to this site.</p>
+  <p class="hint">${label}. QueckSilver Arch recommends against continuing to this site.</p>
   <p class="url">${safeUrl}</p>
   <div class="buttons">
     <button class="safe" id="back">Back to safety</button>

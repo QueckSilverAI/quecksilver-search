@@ -33,9 +33,9 @@ import { parseUrlBarInput, isLikelyDirectUrl } from "@/lib/url-bar";
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "QueckSilver Search" },
+      { title: "QueckSilver Arch" },
       { name: "description", content: "A calm, minimal desktop browser." },
-      { property: "og:title", content: "QueckSilver Search" },
+      { property: "og:title", content: "QueckSilver Arch" },
       { property: "og:description", content: "A calm, minimal desktop browser." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
@@ -1723,10 +1723,20 @@ function Index() {
           applies to it, same as Edge/Chrome do. A gap here would put native
           page content away from the true window boundary and the OS
           rounding would have nothing to clip. In fullscreen this is the
-          ONLY thing visible — chrome above is hidden entirely. */}
-      <div ref={pageScrollRef} className="relative flex-1 overflow-y-auto bg-background">
+          ONLY thing visible — chrome above is hidden entirely.
+          The thin top border is Start-page-only: real browsed pages and
+          Settings sit flush against the toolbar with no seam (matching
+          Chrome/Edge), but the Start page's white background is the same
+          white as the toolbar above it, so without a hairline the two
+          would visually merge into one blank area — same reasoning as
+          --chrome-border everywhere else in the toolbar. */}
+      <div
+        ref={pageScrollRef}
+        className="relative flex-1 overflow-y-auto bg-white"
+        style={isHome && !secondaryId ? { borderTop: "1px solid var(--chrome-border)" } : undefined}
+      >
         <PageScrollbar scrollRef={pageScrollRef} />
-        <div className="flex h-full flex-col bg-background">
+        <div className="flex h-full flex-col bg-white">
           <div ref={contentRef} className="relative flex h-full w-full flex-1 overflow-hidden">
             {secondaryId ? (
               <ResizablePanelGroup orientation="horizontal">

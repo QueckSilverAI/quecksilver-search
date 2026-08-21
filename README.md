@@ -1,9 +1,9 @@
-# Remix of QueckSilver Search Portal
+# Remix of QueckSilver Arch Portal
 
 Baue mir folgendes:
 Ein Browser App, es muss nur design sein, also die button müssen nicht funktionieren. 
 
-Das design sollte so wie in den beiden fotos sein, ich habe auch das quecksilver logo uploaded. der browser wird QueckSilver Search heissen. auf der startseite des browser sollte folgendes sein:
+Das design sollte so wie in den beiden fotos sein, ich habe auch das quecksilver logo uploaded. der browser wird QueckSilver Arch heissen. auf der startseite des browser sollte folgendes sein:
 
 oben eine cleane, minimalistche tobpar, wo einfach links klein das quecksilver logo ist (QueckSilver.), dann mittig im header sollte so eine pill sein, wo man die webadresse eingeben kann oder nach etwas suchen kann, "Search or enter URL...", dann gibt es mittig eine search bar, untendran lesezeichen (per + adden), sonst gibt es nichts
 noch: das masktochen sollte irgendwo so runter baumelt, also an der chain (ist im html)

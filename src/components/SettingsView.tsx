@@ -389,7 +389,7 @@ export function SettingsView({ nightModeTabId }: { nightModeTabId?: string | nul
               <Row
                 icon={Globe}
                 label="Default browser"
-                description={defaultBrowserRequested ? "Finish this in the Windows settings window that opened" : "Open links from other apps in QueckSilver Search"}
+                description={defaultBrowserRequested ? "Finish this in the Windows settings window that opened" : "Open links from other apps in QueckSilver Arch"}
               >
                 <Button
                   size="sm"

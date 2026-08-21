@@ -329,12 +329,19 @@ export function ProfilePopupContent({
           overlay window's own small viewport. Radix's Dialog portals into
           `document.body` by default, which here is this overlay window's
           own document, not the main chrome window's — exactly what's
-          wanted, since this window has nothing else in it to portal over. */}
+          wanted, since this window has nothing else in it to portal over.
+          No dark backdrop here (overlayClassName clears it): this window
+          is small and already floats above the real browser chrome, so a
+          full-window black scrim just showed as an ugly square block —
+          the Profiles panel behind stays at full brightness instead, and
+          the dialog card (rounded, shadowed) is what visually separates
+          the two. Radix's outside-click-to-dismiss still works without a
+          visible overlay — it isn't what drives that behavior. */}
       <Dialog open={removeTarget !== null} onOpenChange={(next) => !next && setRemoveTarget(null)}>
-        <DialogContent>
+        <DialogContent overlayClassName="bg-transparent" className="max-w-[300px] gap-3 p-5">
           <DialogHeader>
-            <DialogTitle>{removeTarget?.kind === "quecksilver" ? "Sign out?" : "Remove this profile?"}</DialogTitle>
-            <DialogDescription>
+            <DialogTitle className="text-base">{removeTarget?.kind === "quecksilver" ? "Sign out?" : "Remove this profile?"}</DialogTitle>
+            <DialogDescription className="text-[13px]">
               {removeTarget?.kind === "quecksilver"
                 ? `You'll be signed out as ${removeTarget?.email}. Its favorites and passwords stay safe in the cloud, just removed from this device.`
                 : `"${removeTarget?.name}" and everything saved in it (favorites, passwords, settings) will be permanently removed from this device.`}

@@ -76,33 +76,53 @@ function hslToHex(h: number, s: number, l: number): string {
 }
 
 // Hex form of the tab-strip tint, for the native titleBarOverlay (Windows) —
-// that API needs a real hex color, not a CSS hsl() string.
+// that API needs a real hex color, not a CSS hsl() string. Mirrors
+// applyChromeTints' light-mode branch: neutral grey for the default accent,
+// hue-tinted for any other chosen accent.
 export function chromeStripHex(hex: string): string {
+  if (hex.toLowerCase() === DEFAULT_COLOR.toLowerCase()) {
+    return hslToHex(210, 15, 92);
+  }
   const [h, s] = hexToHsl(hex);
   return hslToHex(h, Math.min(s, 55), 92);
 }
 
-// Chrome background tints derived from the chosen accent — the tab strip,
-// toolbar/url-bar backgrounds and card border shift from neutral grey
-// toward the accent hue, at roughly the same lightness the greys used to
-// sit at (so contrast/legibility stays put, only the hue changes).
-// Dark-mode-aware: light mode tints stay near-white, dark mode tints stay
-// genuinely dark — this used to always compute light values regardless of
-// .dark being active, which is why the tab strip/address bar stayed light
-// even in dark mode while everything else correctly went dark.
+// Chrome background — the tab strip, toolbar/url-bar backgrounds and card
+// border. For the DEFAULT accent color this stays the fixed, neutral grey
+// from the QueckSilver Arch design reference (not a hue-tinted grey derived
+// from the blue brand color — that formula's saturation was still visibly
+// blue-ish even for the default). Picking any OTHER accent color in
+// Settings still tints these toward that color's hue, in both light and
+// dark mode — this function re-runs on every accent change and every
+// light/dark toggle (see useAccentColor/applyScheme below), so that
+// tinting (or the lack of it for the default) is always re-applied
+// correctly instead of only taking effect once.
 export function applyChromeTints(hex: string) {
+  const isDefault = hex.toLowerCase() === DEFAULT_COLOR.toLowerCase();
   const [h, s] = hexToHsl(hex);
-  const sat = Math.min(s, 55); // keep tints subtle even for very saturated accents
+  const sat = isDefault ? 0 : Math.min(s, 55); // keep tints subtle even for very saturated accents
   const isDark = document.documentElement.classList.contains("dark");
   const root = document.documentElement.style;
   if (isDark) {
-    root.setProperty("--chrome-strip", `hsl(${h} ${Math.min(sat, 25)}% 16%)`);
-    root.setProperty("--chrome-field", `hsl(${h} ${Math.min(sat, 20)}% 22%)`);
-    root.setProperty("--chrome-border", `hsl(${h} ${Math.min(sat, 20)}% 30%)`);
+    if (isDefault) {
+      root.setProperty("--chrome-strip", "hsl(220 8% 16%)");
+      root.setProperty("--chrome-field", "hsl(220 8% 22%)");
+      root.setProperty("--chrome-border", "hsl(220 8% 30%)");
+    } else {
+      root.setProperty("--chrome-strip", `hsl(${h} ${Math.min(sat, 25)}% 16%)`);
+      root.setProperty("--chrome-field", `hsl(${h} ${Math.min(sat, 20)}% 22%)`);
+      root.setProperty("--chrome-border", `hsl(${h} ${Math.min(sat, 20)}% 30%)`);
+    }
   } else {
-    root.setProperty("--chrome-strip", `hsl(${h} ${sat}% 92%)`);
-    root.setProperty("--chrome-field", `hsl(${h} ${Math.min(sat, 35)}% 95%)`);
-    root.setProperty("--chrome-border", `hsl(${h} ${Math.min(sat, 30)}% 88%)`);
+    if (isDefault) {
+      root.setProperty("--chrome-strip", "hsl(210 15% 92%)");
+      root.setProperty("--chrome-field", "hsl(210 15% 94%)");
+      root.setProperty("--chrome-border", "hsl(210 15% 88%)");
+    } else {
+      root.setProperty("--chrome-strip", `hsl(${h} ${sat}% 92%)`);
+      root.setProperty("--chrome-field", `hsl(${h} ${Math.min(sat, 35)}% 95%)`);
+      root.setProperty("--chrome-border", `hsl(${h} ${Math.min(sat, 30)}% 88%)`);
+    }
   }
 }
 

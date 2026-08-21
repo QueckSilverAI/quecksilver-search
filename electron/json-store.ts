@@ -3,7 +3,7 @@ import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from "
 import path from "node:path";
 
 // Small helper for reading/writing a single JSON file under Electron's
-// userData directory. Deliberately not a real database — QueckSilver Search
+// userData directory. Deliberately not a real database — QueckSilver Arch
 // only ever persists small things (bookmarks, favorites, passwords, one
 // auth session per profile), so a dependency like electron-store would be
 // overkill.

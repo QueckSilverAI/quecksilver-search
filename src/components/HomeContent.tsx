@@ -46,7 +46,7 @@ function PrivacyRow({ saved, children }: { saved: boolean; children: React.React
 // just a small placeholder there instead of the real thing.
 export function HomeContent({ urlDraft, onUrlDraftChange, onSubmit, bookmarks, onOpenBookmark, onOpenSlot, onRemoveSlot, inputRef, privacyMode = null }: Props) {
   return (
-    <div className="flex flex-1 flex-col items-center justify-center px-10 py-6 -translate-y-12">
+    <div className="flex flex-1 flex-col items-center justify-center px-10 py-6 -translate-y-12 bg-white">
       <div className="flex w-full max-w-[700px] flex-col items-center gap-6">
         <div className="flex items-center gap-2.5">
           <QueckSilverLogo className="h-auto w-[92px]" style={{ color: "var(--brand)" }} />

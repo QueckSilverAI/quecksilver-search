@@ -1,7 +1,7 @@
 {
-  "name": "quecksilver-search",
-  "version": "1.0.10",
-  "description": "QueckSilver Search — a minimal, Swiss-designed desktop browser with Zora built in.",
+  "name": "quecksilver-arch",
+  "version": "1.0.11",
+  "description": "QueckSilver Arch — a minimal, Swiss-designed desktop browser with Zora built in.",
   "author": {
     "name": "QueckSilver AI",
     "email": "team@quecksilver.ch"
@@ -109,8 +109,8 @@
     "wait-on": "^8.0.1"
   },
   "build": {
-    "appId": "ch.quecksilver.search",
-    "productName": "QueckSilver Search",
+    "appId": "ch.quecksilver.arch",
+    "productName": "QueckSilver Arch",
     "files": [
       "electron/dist/**/*"
     ],

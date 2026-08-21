@@ -26,7 +26,7 @@ import type { PasswordImportResult } from "./types";
 //      macOS:   the key comes from Keychain, item "<Browser> Safe
 //               Storage" — reading it prompts the person for their macOS
 //               login password (a normal, expected system dialog, not
-//               something QueckSilver Search can or should bypass).
+//               something QueckSilver Arch can or should bypass).
 //               PBKDF2(passphrase, "saltysalt", 1003 rounds) → AES-128-CBC
 //               key, fixed IV of 16 spaces, blobs prefixed "v10".
 //      Linux:   only the common "Basic" storage fallback is supported
@@ -187,7 +187,7 @@ function getMacKey(browser: "chrome" | "edge"): Buffer | null {
   try {
     const service = browser === "chrome" ? "Chrome Safe Storage" : "Microsoft Edge Safe Storage";
     // Prompts the person for their macOS account password the first time
-    // (a normal Keychain access dialog) — nothing QueckSilver Search
+    // (a normal Keychain access dialog) — nothing QueckSilver Arch
     // controls or can skip, same as Chrome itself does on first launch.
     const passphrase = execFileSync("security", ["find-generic-password", "-w", "-s", service], { encoding: "utf-8" }).trim();
     return crypto.pbkdf2Sync(passphrase, "saltysalt", 1003, 16, "sha1");

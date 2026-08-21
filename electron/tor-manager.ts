@@ -8,7 +8,7 @@ import { app } from "electron";
 // binary as a subprocess — it does not implement onion routing itself
 // (that's a serious, security-critical protocol implementation, not
 // something to hand-roll here). It expects that binary to already exist
-// on disk; QueckSilver Search does not download or bundle it automatically.
+// on disk; QueckSilver Arch does not download or bundle it automatically.
 // The official, signed binaries are published by the Tor Project at
 // https://www.torproject.org/download/tor/ — see resolveTorBinaryPath()
 // below for exactly where this looks for it and how to override that.
