@@ -48,6 +48,15 @@ export type ContextMenuOverlayPayload = {
   linkURL: string | null;
   selectionText: string | null;
   isChromeUI: boolean;
+  // True for a right-click on an otherwise "empty" spot (no image, link, or
+  // selection) — drives ContextMenuContent's separate Chrome-style menu
+  // (back/reload/save/print/QR/translate/screenshot/devtools). main.ts
+  // already suppresses this case entirely for text fields and chrome UI, so
+  // by the time it's true here the menu is always shown.
+  isEmptyPage: boolean;
+  // Current page URL, for the empty-page menu's QR code and translate
+  // actions — null when unavailable (e.g. about:blank).
+  pageUrl: string | null;
 };
 
 export type ContextMenuOverlayAction =
@@ -60,7 +69,15 @@ export type ContextMenuOverlayAction =
   | { type: "saveImage"; url: string }
   | { type: "saveImageAs"; url: string }
   | { type: "copySelection" }
-  | { type: "searchSelection"; text: string };
+  | { type: "searchSelection"; text: string }
+  // --- Empty-page menu ----------------------------------------------------
+  | { type: "goBack" }
+  | { type: "reload" }
+  | { type: "savePageAs" }
+  | { type: "print" }
+  | { type: "screenshot" }
+  | { type: "openDevTools" }
+  | { type: "translateToEnglish" };
 
 // --- Bookmark dialog (Phase "no more screenshots", cover mode) ------------
 // Opened from index.tsx's openSlot (home-page bookmark slots). Unlike the
@@ -275,11 +292,17 @@ export type ControlCenterActionType =
   | "print"
   | "unloadTab"
   | "unloadAllBackgroundTabs"
-  | "setNetworkThrottle";
+  | "setNetworkThrottle"
+  | "savePageAs"
+  | "translatePage";
 
 export type ControlCenterActionRequest =
-  | { type: Exclude<ControlCenterActionType, "setNetworkThrottle">; tabId?: string }
-  | { type: "setNetworkThrottle"; tabId?: string; preset: NetworkThrottlePreset };
+  | {
+      type: Exclude<ControlCenterActionType, "setNetworkThrottle" | "translatePage">;
+      tabId?: string;
+    }
+  | { type: "setNetworkThrottle"; tabId?: string; preset: NetworkThrottlePreset }
+  | { type: "translatePage"; tabId?: string; langCode: string };
 
 // --- Tabs menu (belowRight placement) ---------------------------------------
 // Opened from the Control center button at the top-left of TabStrip (see

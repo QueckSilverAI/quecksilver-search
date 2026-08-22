@@ -74,11 +74,17 @@ export type ControlCenterActionType =
   | "print"
   | "unloadTab"
   | "unloadAllBackgroundTabs"
-  | "setNetworkThrottle";
+  | "setNetworkThrottle"
+  | "savePageAs"
+  | "translatePage";
 
 export type ControlCenterActionRequest =
-  | { type: Exclude<ControlCenterActionType, "setNetworkThrottle">; tabId?: string }
-  | { type: "setNetworkThrottle"; tabId?: string; preset: NetworkThrottlePreset };
+  | {
+      type: Exclude<ControlCenterActionType, "setNetworkThrottle" | "translatePage">;
+      tabId?: string;
+    }
+  | { type: "setNetworkThrottle"; tabId?: string; preset: NetworkThrottlePreset }
+  | { type: "translatePage"; tabId?: string; langCode: string };
 
 const store = new JsonStore<ControlCenterSettings>("control-center-settings.json");
 
@@ -86,7 +92,9 @@ export function getControlCenterSettings(): ControlCenterSettings {
   return { ...CONTROL_CENTER_DEFAULTS, ...store.read(CONTROL_CENTER_DEFAULTS) };
 }
 
-export function setControlCenterSettings(patch: Partial<ControlCenterSettings>): ControlCenterSettings {
+export function setControlCenterSettings(
+  patch: Partial<ControlCenterSettings>,
+): ControlCenterSettings {
   const next = { ...getControlCenterSettings(), ...patch };
   store.write(next);
   return next;

@@ -1,4 +1,16 @@
-import { app, BrowserWindow, ipcMain, Menu, dialog, shell, clipboard, nativeImage, net as electronNet, globalShortcut, session as electronSession } from "electron";
+import {
+  app,
+  BrowserWindow,
+  ipcMain,
+  Menu,
+  dialog,
+  shell,
+  clipboard,
+  nativeImage,
+  net as electronNet,
+  globalShortcut,
+  session as electronSession,
+} from "electron";
 import path from "node:path";
 import { fork, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -21,12 +33,30 @@ process.on("uncaughtException", (err) => {
 process.on("unhandledRejection", (reason) => {
   console.error("[main] unhandled promise rejection (app kept running):", reason);
 });
-import { HOME_URL, SETTINGS_URL, type ActiveIdentity, type Bookmark, type ContentBounds, type HeaderFavorite } from "./types";
+import {
+  HOME_URL,
+  SETTINGS_URL,
+  type ActiveIdentity,
+  type Bookmark,
+  type ContentBounds,
+  type HeaderFavorite,
+} from "./types";
 import { listBookmarks, saveBookmarks } from "./bookmark-store";
-import { listHeaderFavorites, saveHeaderFavorites, listHeaderFavoritesForSync, overwriteHeaderFavorites } from "./favorites-store";
+import {
+  listHeaderFavorites,
+  saveHeaderFavorites,
+  listHeaderFavoritesForSync,
+  overwriteHeaderFavorites,
+} from "./favorites-store";
 import { getSession, logout, startLoginFlow, cancelLoginFlow } from "./auth";
 import { BROWSER_TOOL_NAMES, executeBrowserTool } from "./browser-tools";
-import { listDownloads, getDownloadsFolder, setDownloadsFolder, removeDownload, registerDownloadTracking } from "./downloads-store";
+import {
+  listDownloads,
+  getDownloadsFolder,
+  setDownloadsFolder,
+  removeDownload,
+  registerDownloadTracking,
+} from "./downloads-store";
 import { importChromiumBookmarks, listChromiumProfiles } from "./bookmark-import";
 import { importChromiumPasswords } from "./password-import";
 import {
@@ -47,11 +77,29 @@ import {
   isGuestMode,
 } from "./profile-store";
 import { ProfileScopedStore } from "./profile-scoped-store";
-import { listPasswords, addPassword, updatePassword, removePassword, importPasswords, findPasswordsForHost, autoSaveFromForm, listStoredPasswordsForSync, overwriteStoredPasswords } from "./passwords-store";
+import {
+  listPasswords,
+  addPassword,
+  updatePassword,
+  removePassword,
+  importPasswords,
+  findPasswordsForHost,
+  autoSaveFromForm,
+  listStoredPasswordsForSync,
+  overwriteStoredPasswords,
+} from "./passwords-store";
 import { pullProfileData, syncBookmarks, syncAllNow, mergeAndSync } from "./supabase-sync";
 import { applyPrivacyHardening, applyEarlyPrivacySwitches } from "./privacy";
 import { autoUpdater } from "electron-updater";
-import { readSnapshot, writeSnapshot, lastExitWasClean, markRunning, markCleanExit, getRestoreOnStart, setRestoreOnStart } from "./session-store";
+import {
+  readSnapshot,
+  writeSnapshot,
+  lastExitWasClean,
+  markRunning,
+  markCleanExit,
+  getRestoreOnStart,
+  setRestoreOnStart,
+} from "./session-store";
 import { recordVisit, listFrequentSites } from "./frequent-sites-store";
 import { getPrivacySettings, setPrivacySettings } from "./privacy-settings-store";
 import {
@@ -60,9 +108,28 @@ import {
   type ControlCenterSettings,
   type ControlCenterActionRequest,
 } from "./control-center-store";
-import { startTor, stopTor, onTorStatusChange, getTorStatus, getSocksProxyRule, requestNewIdentity } from "./tor-manager";
-import { listSitePermissions, setSitePermission, removeSitePermission, type PermissionKind, type PermissionState } from "./site-permissions-store";
-import { loadStoredExtensions, addExtension, listExtensions, removeExtension, setExtensionEnabled } from "./extensions-store";
+import {
+  startTor,
+  stopTor,
+  onTorStatusChange,
+  getTorStatus,
+  getSocksProxyRule,
+  requestNewIdentity,
+} from "./tor-manager";
+import {
+  listSitePermissions,
+  setSitePermission,
+  removeSitePermission,
+  type PermissionKind,
+  type PermissionState,
+} from "./site-permissions-store";
+import {
+  loadStoredExtensions,
+  addExtension,
+  listExtensions,
+  removeExtension,
+  setExtensionEnabled,
+} from "./extensions-store";
 import { existsSync, rmSync, promises as fsPromises } from "node:fs";
 import { OverlayWindowManager, registerOverlayIpc } from "./overlay-window";
 import type { OverlayAction } from "./overlay-types";
@@ -95,9 +162,18 @@ const isDev = process.env.NODE_ENV === "development";
 // The chrome UI (tab strip, header, bookmark grid) is just our own React app —
 // in dev it's served by `vite dev`, same as opening it in a normal browser.
 const CHROME_URL = process.env.ELECTRON_START_URL ?? "http://localhost:8080";
-const ICON_PATH = path.join(app.getAppPath(), "build", process.platform === "win32" ? "icon.ico" : "icon-256.png");
+const ICON_PATH = path.join(
+  app.getAppPath(),
+  "build",
+  process.platform === "win32" ? "icon.ico" : "icon-256.png",
+);
 
-type WindowEntry = { win: BrowserWindow; tabs: TabManager; contentSession?: Electron.Session; overlay: OverlayWindowManager };
+type WindowEntry = {
+  win: BrowserWindow;
+  tabs: TabManager;
+  contentSession?: Electron.Session;
+  overlay: OverlayWindowManager;
+};
 
 // Shared across every window's OverlayWindowManager — see
 // overlay-window.ts's registerOverlayIpc for why this has to be a single
@@ -175,7 +251,10 @@ function ensureProductionServer(): Promise<string> {
     child.stderr?.on("data", (chunk) => console.error(`[production-server] ${chunk}`));
 
     await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error("Production server didn't start in time")), 15000);
+      const timeout = setTimeout(
+        () => reject(new Error("Production server didn't start in time")),
+        15000,
+      );
       child.stdout?.on("data", (chunk: Buffer) => {
         if (chunk.toString().includes("Listening on")) {
           clearTimeout(timeout);
@@ -244,9 +323,19 @@ function createWindow(identity?: ActiveIdentity): BrowserWindow {
     minWidth: 880,
     minHeight: 560,
     show: false,
-    title: identity?.windowMode === "tor" ? "QueckSilver Arch - Tor" : identity?.windowMode === "incognito" ? "QueckSilver Arch - Incognito" : "QueckSilver Arch",
+    title:
+      identity?.windowMode === "tor"
+        ? "QueckSilver Arch - Tor"
+        : identity?.windowMode === "incognito"
+          ? "QueckSilver Arch - Incognito"
+          : "QueckSilver Arch",
     icon: ICON_PATH,
-    backgroundColor: identity?.windowMode === "tor" ? "#1a1330" : identity?.windowMode === "incognito" ? "#1f1f24" : "#ffffff",
+    backgroundColor:
+      identity?.windowMode === "tor"
+        ? "#1a1330"
+        : identity?.windowMode === "incognito"
+          ? "#1f1f24"
+          : "#ffffff",
     // Explicit, though it's the default: Windows 11's DWM automatically
     // rounds frameless (frame:false) window corners — that's what makes a
     // full-bleed website (no gap from the true window edge, see the content
@@ -327,7 +416,8 @@ function createWindow(identity?: ActiveIdentity): BrowserWindow {
   // createIncognitoWindow/createTorWindow — they never touch
   // setPrimaryWindow), since persisting so much as WHICH tabs were open
   // in one defeats a good chunk of the point.
-  const isPrimary = windows.size === 0 && identity?.windowMode !== "incognito" && identity?.windowMode !== "tor";
+  const isPrimary =
+    windows.size === 0 && identity?.windowMode !== "incognito" && identity?.windowMode !== "tor";
   if (isPrimary) setPrimaryWindow(win.id);
   initWindowIdentity(win.id, identity);
 
@@ -336,7 +426,8 @@ function createWindow(identity?: ActiveIdentity): BrowserWindow {
     win,
     isPrimary ? () => tabsRef && scheduleSnapshotWrite(tabsRef) : undefined,
     (url) => recordVisit(win.id, url),
-    (tabId, webContents, params, bounds) => showContextMenu(win, tabId, webContents, params, bounds),
+    (tabId, webContents, params, bounds) =>
+      showContextMenu(win, tabId, webContents, params, bounds),
     contentSession,
   );
   tabsRef = tabs;
@@ -372,7 +463,15 @@ function createWindow(identity?: ActiveIdentity): BrowserWindow {
   // label, ...) fired a context-menu event nothing was ever listening for.
   win.webContents.on("context-menu", (_event, params) => {
     const activeId = tabs.getActiveId();
-    if (activeId) showContextMenu(win, activeId, win.webContents, params, { x: 0, y: 0, width: 0, height: 0 }, true);
+    if (activeId)
+      showContextMenu(
+        win,
+        activeId,
+        win.webContents,
+        params,
+        { x: 0, y: 0, width: 0, height: 0 },
+        true,
+      );
   });
 
   // "Continue where you left off" is silent — restore right away, no
@@ -488,7 +587,9 @@ async function createTorWindow(): Promise<BrowserWindow> {
     // Only stop the shared Tor process once no Tor windows remain — two
     // Tor windows open at once should both keep working off the same
     // running Tor process rather than each managing their own.
-    const anyTorWindowsLeft = [...windows.values()].some((w) => getActiveIdentity(w.win.id).windowMode === "tor");
+    const anyTorWindowsLeft = [...windows.values()].some(
+      (w) => getActiveIdentity(w.win.id).windowMode === "tor",
+    );
     if (!anyTorWindowsLeft) stopTor();
   });
   return win;
@@ -525,6 +626,12 @@ function attachWindowListeners(win: BrowserWindow, tabs: TabManager) {
     if (input.key === "Escape") {
       event.preventDefault();
       win.webContents.send("shortcut:escape");
+      return;
+    }
+    if (input.key === "F12") {
+      event.preventDefault();
+      const id = tabs.getActiveId();
+      if (id) tabs.openDevTools(id);
       return;
     }
     const key = input.key.toLowerCase();
@@ -566,6 +673,18 @@ function attachWindowListeners(win: BrowserWindow, tabs: TabManager) {
     } else if (key === "a" && input.shift) {
       event.preventDefault();
       win.webContents.send("shortcut:tabSearch"); // tab-search overlay lives entirely in renderer state — all the data (titles/URLs) is already there
+    } else if (key === "s" && input.shift) {
+      event.preventDefault();
+      const id = tabs.getActiveId();
+      if (id) void tabs.captureScreenshot(id);
+    } else if (key === "s") {
+      event.preventDefault();
+      const id = tabs.getActiveId();
+      if (id) void tabs.savePageAs(id);
+    } else if (key === "p") {
+      event.preventDefault();
+      const id = tabs.getActiveId();
+      if (id) tabs.printPage(id);
     } else if (key === "tab") {
       event.preventDefault();
       tabs.cycleTab(input.shift ? "prev" : "next");
@@ -583,7 +702,9 @@ function attachWindowListeners(win: BrowserWindow, tabs: TabManager) {
 // window, since several can be open at once (see createWindowForProfile).
 // A tab's own WebContentsView resolves to its OWNING top-level window here
 // too, same as the chrome UI's own webContents does.
-function contextFor(event: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent): WindowEntry | null {
+function contextFor(
+  event: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent,
+): WindowEntry | null {
   const bw = BrowserWindow.fromWebContents(event.sender);
   if (!bw) return null;
   return windows.get(bw.id) ?? null;
@@ -627,7 +748,10 @@ function openLinkInNewTab(win: BrowserWindow, url: string) {
   windows.get(win.id)?.tabs.createTab(url);
 }
 function openLinkInNewWindow(win: BrowserWindow, url: string) {
-  const newWin = createWindow({ activeProfileId: getActiveProfileId(win.id) ?? null, guestMode: isGuestMode(win.id) });
+  const newWin = createWindow({
+    activeProfileId: getActiveProfileId(win.id) ?? null,
+    guestMode: isGuestMode(win.id),
+  });
   const newCtx = windows.get(newWin.id);
   const activeId = newCtx?.tabs.getActiveId();
   if (newCtx && activeId) void newCtx.tabs.navigate(activeId, url);
@@ -670,12 +794,17 @@ function saveLinkAs(win: BrowserWindow, url: string) {
 function showContextMenu(
   win: BrowserWindow,
   tabId: string,
-  _webContents: Electron.WebContents,
+  webContents: Electron.WebContents,
   params: Electron.ContextMenuParams,
   bounds: ContentBounds,
   isChromeUI = false,
 ) {
-  if (params.mediaType !== "image" && !params.linkURL && !params.selectionText) return; // nothing this menu is for
+  const isEmptyPage = params.mediaType !== "image" && !params.linkURL && !params.selectionText;
+  // Empty-page menu is suppressed inside a text field (its own edit menu
+  // would fit better there — not part of this request) and on the chrome
+  // UI's own surfaces (tab strip, Start/Settings chrome) rather than a
+  // real page. The image/link/selection menu is unaffected by either.
+  if (isEmptyPage && (params.isEditable || isChromeUI)) return;
   const x = params.x + bounds.x;
   const y = params.y + bounds.y;
   windows.get(win.id)?.overlay.open(
@@ -686,6 +815,8 @@ function showContextMenu(
       linkURL: params.linkURL || null,
       selectionText: params.selectionText || null,
       isChromeUI,
+      isEmptyPage,
+      pageUrl: webContents.getURL() || null,
     },
     { top: y, left: x, right: x, bottom: y, placement: "atPoint" },
   );
@@ -697,12 +828,27 @@ function registerIpc() {
   // click, the renderer half of the context menu) — contextFor(event)
   // resolves back to this same window's WindowEntry, same as every other
   // handler here.
-  ipcMain.handle("overlay:open", (event, kind: OverlayAction["kind"], payload: unknown, anchor: { top: number; left: number; right: number; bottom: number }) => {
-    if (kind === "downloads") console.log(`[downloads] overlay:open received in main process, forwarding to OverlayWindowManager — payload=`, payload);
-    const ctx = contextFor(event);
-    if (kind === "downloads" && !ctx) console.log(`[downloads] contextFor(event) returned null/undefined — the click reached main.ts but the window context lookup failed, so open() never gets called at all`);
-    ctx?.overlay.open(kind, payload, anchor);
-  });
+  ipcMain.handle(
+    "overlay:open",
+    (
+      event,
+      kind: OverlayAction["kind"],
+      payload: unknown,
+      anchor: { top: number; left: number; right: number; bottom: number },
+    ) => {
+      if (kind === "downloads")
+        console.log(
+          `[downloads] overlay:open received in main process, forwarding to OverlayWindowManager — payload=`,
+          payload,
+        );
+      const ctx = contextFor(event);
+      if (kind === "downloads" && !ctx)
+        console.log(
+          `[downloads] contextFor(event) returned null/undefined — the click reached main.ts but the window context lookup failed, so open() never gets called at all`,
+        );
+      ctx?.overlay.open(kind, payload, anchor);
+    },
+  );
   ipcMain.handle("overlay:close", (event) => {
     contextFor(event)?.overlay.close();
   });
@@ -715,7 +861,10 @@ function registerIpc() {
   // and guest mode never call this at all. Centralized here so every local
   // write (bookmarks, header favorites, passwords) triggers the matching
   // sync call the same way instead of duplicating the guard everywhere.
-  function syncActiveProfileToCloud(windowId: number, fn: (session: NonNullable<ReturnType<typeof getSession>>, userId: string) => void) {
+  function syncActiveProfileToCloud(
+    windowId: number,
+    fn: (session: NonNullable<ReturnType<typeof getSession>>, userId: string) => void,
+  ) {
     const activeId = getActiveProfileId(windowId);
     if (!activeId) return;
     const profile = getProfile(activeId);
@@ -734,7 +883,12 @@ function registerIpc() {
   function syncPasswordsMerged(windowId: number) {
     syncActiveProfileToCloud(windowId, async (session, userId) => {
       try {
-        const merged = await mergeAndSync(session.accessToken, userId, "passwords", listStoredPasswordsForSync(windowId));
+        const merged = await mergeAndSync(
+          session.accessToken,
+          userId,
+          "passwords",
+          listStoredPasswordsForSync(windowId),
+        );
         overwriteStoredPasswords(windowId, merged);
         windows.get(windowId)?.win.webContents.send("passwords:changed", listPasswords(windowId));
       } catch (err) {
@@ -746,9 +900,16 @@ function registerIpc() {
   function syncFavoritesMerged(windowId: number) {
     syncActiveProfileToCloud(windowId, async (session, userId) => {
       try {
-        const merged = await mergeAndSync(session.accessToken, userId, "header_favorites", listHeaderFavoritesForSync(windowId));
+        const merged = await mergeAndSync(
+          session.accessToken,
+          userId,
+          "header_favorites",
+          listHeaderFavoritesForSync(windowId),
+        );
         overwriteHeaderFavorites(windowId, merged);
-        windows.get(windowId)?.win.webContents.send("headerFavorites:changed", listHeaderFavorites(windowId));
+        windows
+          .get(windowId)
+          ?.win.webContents.send("headerFavorites:changed", listHeaderFavorites(windowId));
       } catch (err) {
         console.error("[sync] favorites merge failed:", err);
       }
@@ -759,17 +920,31 @@ function registerIpc() {
   ipcMain.handle("tabs:close", (e, id: string) => contextFor(e)?.tabs.closeTab(id));
   ipcMain.handle("tabs:switch", (e, id: string) => contextFor(e)?.tabs.switchTab(id));
   ipcMain.handle("tabs:list", (e) => contextFor(e)?.tabs.listTabs());
-  ipcMain.handle("tabs:reorder", (e, newOrder: string[]) => contextFor(e)?.tabs.reorderTabs(newOrder));
-  ipcMain.handle("tabs:navigate", (e, id: string, url: string) => contextFor(e)?.tabs.navigate(id, url));
+  ipcMain.handle("tabs:reorder", (e, newOrder: string[]) =>
+    contextFor(e)?.tabs.reorderTabs(newOrder),
+  );
+  ipcMain.handle("tabs:navigate", (e, id: string, url: string) =>
+    contextFor(e)?.tabs.navigate(id, url),
+  );
   ipcMain.handle("tabs:goBack", (e, id: string) => contextFor(e)?.tabs.goBack(id));
   ipcMain.handle("tabs:goForward", (e, id: string) => contextFor(e)?.tabs.goForward(id));
-  ipcMain.handle("tabs:reload", (e, id: string, ignoreCache?: boolean) => contextFor(e)?.tabs.reload(id, ignoreCache));
-  ipcMain.handle("tabs:setBounds", (e, bounds: ContentBounds) => contextFor(e)?.tabs.setContentBounds(bounds));
-  ipcMain.handle("tabs:setVisible", (e, visible: boolean) => contextFor(e)?.tabs.setContentVisible(visible));
-  ipcMain.handle("tabs:setDefaultZoom", (e, factor: number) => contextFor(e)?.tabs.setDefaultZoom(factor));
+  ipcMain.handle("tabs:reload", (e, id: string, ignoreCache?: boolean) =>
+    contextFor(e)?.tabs.reload(id, ignoreCache),
+  );
+  ipcMain.handle("tabs:setBounds", (e, bounds: ContentBounds) =>
+    contextFor(e)?.tabs.setContentBounds(bounds),
+  );
+  ipcMain.handle("tabs:setVisible", (e, visible: boolean) =>
+    contextFor(e)?.tabs.setContentVisible(visible),
+  );
+  ipcMain.handle("tabs:setDefaultZoom", (e, factor: number) =>
+    contextFor(e)?.tabs.setDefaultZoom(factor),
+  );
   ipcMain.handle("tabs:enterSplit", (e, id: string) => contextFor(e)?.tabs.enterSplit(id));
   ipcMain.handle("tabs:exitSplit", (e) => contextFor(e)?.tabs.exitSplit());
-  ipcMain.handle("tabs:setSplitRatio", (e, ratio: number) => contextFor(e)?.tabs.setSplitRatio(ratio));
+  ipcMain.handle("tabs:setSplitRatio", (e, ratio: number) =>
+    contextFor(e)?.tabs.setSplitRatio(ratio),
+  );
   // A tab's native WebContentsView can hold real OS-level keyboard focus
   // even while our own chrome UI is what's visually showing an <input>
   // (the find bar, the URL bar, ...) — a plain DOM .focus() call in the
@@ -782,12 +957,25 @@ function registerIpc() {
   ipcMain.handle("tabs:focusChrome", (e) => contextFor(e)?.win.webContents.focus());
 
   // --- Tab groups ------------------------------------------------------------
-  ipcMain.handle("tabs:createGroup", (e, name: string, color: string) => contextFor(e)?.tabs.createGroup(name, color) ?? null);
-  ipcMain.handle("tabs:setGroup", (e, tabId: string, groupId: string | null) => contextFor(e)?.tabs.setTabGroup(tabId, groupId));
-  ipcMain.handle("tabs:renameGroup", (e, groupId: string, name: string) => contextFor(e)?.tabs.renameGroup(groupId, name));
-  ipcMain.handle("tabs:setGroupColor", (e, groupId: string, color: string) => contextFor(e)?.tabs.setGroupColor(groupId, color));
-  ipcMain.handle("tabs:setGroupCollapsed", (e, groupId: string, collapsed: boolean) => contextFor(e)?.tabs.setGroupCollapsed(groupId, collapsed));
-  ipcMain.handle("tabs:removeGroup", (e, groupId: string) => contextFor(e)?.tabs.removeGroup(groupId));
+  ipcMain.handle(
+    "tabs:createGroup",
+    (e, name: string, color: string) => contextFor(e)?.tabs.createGroup(name, color) ?? null,
+  );
+  ipcMain.handle("tabs:setGroup", (e, tabId: string, groupId: string | null) =>
+    contextFor(e)?.tabs.setTabGroup(tabId, groupId),
+  );
+  ipcMain.handle("tabs:renameGroup", (e, groupId: string, name: string) =>
+    contextFor(e)?.tabs.renameGroup(groupId, name),
+  );
+  ipcMain.handle("tabs:setGroupColor", (e, groupId: string, color: string) =>
+    contextFor(e)?.tabs.setGroupColor(groupId, color),
+  );
+  ipcMain.handle("tabs:setGroupCollapsed", (e, groupId: string, collapsed: boolean) =>
+    contextFor(e)?.tabs.setGroupCollapsed(groupId, collapsed),
+  );
+  ipcMain.handle("tabs:removeGroup", (e, groupId: string) =>
+    contextFor(e)?.tabs.removeGroup(groupId),
+  );
 
   // --- Find-in-page ------------------------------------------------------------
   // Always targets whichever tab is currently active — the find bar in
@@ -851,7 +1039,9 @@ function registerIpc() {
     const ctx = contextFor(e);
     if (ctx) openLinkInNewWindow(ctx.win, url);
   });
-  ipcMain.handle("links:openInIncognitoWindow", (_e, url: string) => openLinkInIncognitoWindow(url));
+  ipcMain.handle("links:openInIncognitoWindow", (_e, url: string) =>
+    openLinkInIncognitoWindow(url),
+  );
   ipcMain.handle("links:openHere", (e, tabId: string, url: string) => {
     const ctx = contextFor(e);
     if (ctx) openLinkHere(ctx.win, tabId, url);
@@ -914,10 +1104,13 @@ function registerIpc() {
     const ctx = contextFor(e);
     return ctx ? listSitePermissions(ctx.win.id) : [];
   });
-  ipcMain.handle("permissions:set", (e, domain: string, kind: PermissionKind, state: PermissionState) => {
-    const ctx = contextFor(e);
-    if (ctx) setSitePermission(ctx.win.id, domain, kind, state);
-  });
+  ipcMain.handle(
+    "permissions:set",
+    (e, domain: string, kind: PermissionKind, state: PermissionState) => {
+      const ctx = contextFor(e);
+      if (ctx) setSitePermission(ctx.win.id, domain, kind, state);
+    },
+  );
   ipcMain.handle("permissions:remove", (e, domain: string) => {
     const ctx = contextFor(e);
     if (ctx) removeSitePermission(ctx.win.id, domain);
@@ -933,7 +1126,9 @@ function registerIpc() {
     }
   });
   ipcMain.handle("extensions:remove", (_e, id: string) => removeExtension(id));
-  ipcMain.handle("extensions:setEnabled", (_e, id: string, enabled: boolean) => setExtensionEnabled(id, enabled));
+  ipcMain.handle("extensions:setEnabled", (_e, id: string, enabled: boolean) =>
+    setExtensionEnabled(id, enabled),
+  );
   ipcMain.handle("privacy:get", () => getPrivacySettings());
   ipcMain.handle("privacy:set", (_e, patch: Partial<ReturnType<typeof getPrivacySettings>>) => {
     // panicShortcut goes through updatePanicShortcut (re-registers the
@@ -961,15 +1156,20 @@ function registerIpc() {
     // be read lazily on the next request/permission check.
     if (patch.masterMute !== undefined) ctx?.tabs.setMasterMute(patch.masterMute);
     if (patch.darkModeForced !== undefined) await ctx?.tabs.setGlobalDarkMode(patch.darkModeForced);
-    if (patch.javascriptDisabled !== undefined) await ctx?.tabs.setJavaScriptGloballyDisabled(patch.javascriptDisabled);
+    if (patch.javascriptDisabled !== undefined)
+      await ctx?.tabs.setJavaScriptGloballyDisabled(patch.javascriptDisabled);
     if (patch.globalZoomFactor !== undefined) ctx?.tabs.setDefaultZoom(patch.globalZoomFactor);
-    if (patch.backgroundTabsThrottled !== undefined) ctx?.tabs.setBackgroundTabsThrottled(patch.backgroundTabsThrottled);
+    if (patch.backgroundTabsThrottled !== undefined)
+      ctx?.tabs.setBackgroundTabsThrottled(patch.backgroundTabsThrottled);
 
     // VPN toggle is an alias for the existing Tor manager — this app has
     // no other anonymization layer, see the masterplan's open question
     // about a real VPN protocol vs. Tor.
     if (patch.vpnEnabled !== undefined) {
-      if (patch.vpnEnabled) await startTor().catch((err) => console.error("[control-center] VPN (Tor) start failed:", err));
+      if (patch.vpnEnabled)
+        await startTor().catch((err) =>
+          console.error("[control-center] VPN (Tor) start failed:", err),
+        );
       else stopTor();
     }
 
@@ -1003,6 +1203,22 @@ function registerIpc() {
       case "print":
         if (tabId) ctx.tabs.printPage(tabId);
         return null;
+      case "savePageAs":
+        return tabId ? await ctx.tabs.savePageAs(tabId) : null;
+      case "translatePage": {
+        // No native Chromium translate (that's a proprietary Chrome
+        // component) — proxy through Google Translate's URL-rewriting
+        // endpoint instead, same tab (per explicit request: URL bar then
+        // shows translate.google.com, original URL isn't preserved).
+        const currentUrl = tabId ? ctx.tabs.getWebContents(tabId)?.getURL() : null;
+        if (tabId && currentUrl) {
+          await ctx.tabs.navigate(
+            tabId,
+            `https://translate.google.com/translate?sl=auto&tl=${encodeURIComponent(action.langCode)}&u=${encodeURIComponent(currentUrl)}`,
+          );
+        }
+        return null;
+      }
       case "unloadTab":
         return tabId ? ctx.tabs.unloadTab(tabId) : false;
       case "unloadAllBackgroundTabs":
@@ -1014,7 +1230,10 @@ function registerIpc() {
         return null;
     }
   });
-  ipcMain.handle("controlCenter:consoleErrorTotal", (e) => contextFor(e)?.tabs.getTotalConsoleErrorCount() ?? 0);
+  ipcMain.handle(
+    "controlCenter:consoleErrorTotal",
+    (e) => contextFor(e)?.tabs.getTotalConsoleErrorCount() ?? 0,
+  );
 
   ipcMain.handle("bookmarks:list", (e) => listBookmarks(contextFor(e)?.win.id ?? -1));
   ipcMain.handle("bookmarks:save", (e, bookmarks: Bookmark[]) => {
@@ -1022,7 +1241,9 @@ function registerIpc() {
     if (!ctx) return;
     saveBookmarks(ctx.win.id, bookmarks);
     ctx.win.webContents.send("bookmarks:changed", bookmarks);
-    syncActiveProfileToCloud(ctx.win.id, (session, userId) => syncBookmarks(session.accessToken, userId, bookmarks));
+    syncActiveProfileToCloud(ctx.win.id, (session, userId) =>
+      syncBookmarks(session.accessToken, userId, bookmarks),
+    );
   });
 
   // Header bookmarks bar — separate list from the 5 home-page slots above.
@@ -1081,7 +1302,9 @@ function registerIpc() {
   ipcMain.handle("tor:newIdentity", async (e) => {
     const ctx = contextFor(e);
     if (!ctx) return;
-    await requestNewIdentity().catch((err) => console.error("[tor] new identity request failed:", err));
+    await requestNewIdentity().catch((err) =>
+      console.error("[tor] new identity request failed:", err),
+    );
     // A new circuit alone isn't a full reset — the old session partition
     // (cookies, storage, whatever a site set) would still be sitting
     // there, and every open tab would still be showing whatever page it
@@ -1125,7 +1348,8 @@ function registerIpc() {
     const activeId = getActiveProfileId(windowId);
     const profile = activeId ? getProfile(activeId) : null;
     const session = getSession(windowId);
-    if (!profile || profile.kind !== "quecksilver" || !session?.accessToken || !session.userId) return false;
+    if (!profile || profile.kind !== "quecksilver" || !session?.accessToken || !session.userId)
+      return false;
     return syncAllNow(session.accessToken, session.userId, {
       header_favorites: listHeaderFavorites(windowId),
       bookmarks: listBookmarks(windowId),
@@ -1143,14 +1367,17 @@ function registerIpc() {
     syncPasswordsMerged(ctx.win.id);
     return entry;
   });
-  ipcMain.handle("passwords:update", (e, id: string, url: string, username: string, password?: string) => {
-    const ctx = contextFor(e);
-    if (!ctx) return null;
-    const entry = updatePassword(ctx.win.id, id, url, username, password);
-    ctx.win.webContents.send("passwords:changed", listPasswords(ctx.win.id));
-    syncPasswordsMerged(ctx.win.id);
-    return entry;
-  });
+  ipcMain.handle(
+    "passwords:update",
+    (e, id: string, url: string, username: string, password?: string) => {
+      const ctx = contextFor(e);
+      if (!ctx) return null;
+      const entry = updatePassword(ctx.win.id, id, url, username, password);
+      ctx.win.webContents.send("passwords:changed", listPasswords(ctx.win.id));
+      syncPasswordsMerged(ctx.win.id);
+      return entry;
+    },
+  );
   ipcMain.handle("passwords:remove", (e, id: string) => {
     const ctx = contextFor(e);
     if (!ctx) return;
@@ -1193,27 +1420,40 @@ function registerIpc() {
   // This short-lived, in-memory cache (never written to disk, gone on
   // restart) remembers whatever was last typed into a username-looking
   // field per hostname, so the password step can still pair it up.
-  ipcMain.on("passwords:rememberUsername", (_e, { host, username }: { host: string; username: string }) => {
-    if (username) rememberedUsernames.set(host, username);
-  });
-  ipcMain.handle("passwords:getRememberedUsername", (_e, host: string) => rememberedUsernames.get(host) ?? null);
+  ipcMain.on(
+    "passwords:rememberUsername",
+    (_e, { host, username }: { host: string; username: string }) => {
+      if (username) rememberedUsernames.set(host, username);
+    },
+  );
+  ipcMain.handle(
+    "passwords:getRememberedUsername",
+    (_e, host: string) => rememberedUsernames.get(host) ?? null,
+  );
   // Called from tab-preload.ts's submit/click listener — saves silently
   // and, if it actually changed anything, tells the chrome UI to show the
   // brief "Password for X saved" pill (routes/index.tsx).
-  ipcMain.handle("passwords:autoSaveFromForm", (e, { url, username, password }: { url: string; username: string; password: string }) => {
-    const ctx = contextFor(e);
-    console.log(`[passwords] autoSaveFromForm(url=${url}, username=${username ? "<set>" : "<empty>"}, password=${password ? "<set>" : "<empty>"})`);
-    if (!ctx) return null;
-    const saved = autoSaveFromForm(ctx.win.id, url, username, password);
-    if (!saved) {
-      console.log("[passwords] autoSaveFromForm: nothing changed (identical to an already-saved entry, or no password)");
-      return null;
-    }
-    ctx.win.webContents.send("passwords:changed", listPasswords(ctx.win.id));
-    ctx.win.webContents.send("passwords:autoSaved", { url: saved.url, username: saved.username });
-    syncPasswordsMerged(ctx.win.id);
-    return saved;
-  });
+  ipcMain.handle(
+    "passwords:autoSaveFromForm",
+    (e, { url, username, password }: { url: string; username: string; password: string }) => {
+      const ctx = contextFor(e);
+      console.log(
+        `[passwords] autoSaveFromForm(url=${url}, username=${username ? "<set>" : "<empty>"}, password=${password ? "<set>" : "<empty>"})`,
+      );
+      if (!ctx) return null;
+      const saved = autoSaveFromForm(ctx.win.id, url, username, password);
+      if (!saved) {
+        console.log(
+          "[passwords] autoSaveFromForm: nothing changed (identical to an already-saved entry, or no password)",
+        );
+        return null;
+      }
+      ctx.win.webContents.send("passwords:changed", listPasswords(ctx.win.id));
+      ctx.win.webContents.send("passwords:autoSaved", { url: saved.url, username: saved.username });
+      syncPasswordsMerged(ctx.win.id);
+      return saved;
+    },
+  );
 
   ipcMain.handle("auth:getSession", (e) => getSession(contextFor(e)?.win.id ?? -1));
   // mode "new-profile" creates + activates a brand-new quecksilver profile
@@ -1247,21 +1487,37 @@ function registerIpc() {
         const remote = await pullProfileData(session.accessToken, session.userId);
         if (remote) {
           if (Array.isArray(remote.header_favorites)) {
-            const merged = await mergeAndSync(session.accessToken, session.userId, "header_favorites", listHeaderFavoritesForSync(win.id));
+            const merged = await mergeAndSync(
+              session.accessToken,
+              session.userId,
+              "header_favorites",
+              listHeaderFavoritesForSync(win.id),
+            );
             overwriteHeaderFavorites(win.id, merged);
             win.webContents.send("headerFavorites:changed", listHeaderFavorites(win.id));
           }
-          if (Array.isArray(remote.bookmarks) && remote.bookmarks.length > 0 && listBookmarks(win.id).length === 0) {
+          if (
+            Array.isArray(remote.bookmarks) &&
+            remote.bookmarks.length > 0 &&
+            listBookmarks(win.id).length === 0
+          ) {
             saveBookmarks(win.id, remote.bookmarks as Bookmark[]);
             win.webContents.send("bookmarks:changed", listBookmarks(win.id));
           }
           if (Array.isArray(remote.passwords)) {
-            const merged = await mergeAndSync(session.accessToken, session.userId, "passwords", listStoredPasswordsForSync(win.id));
+            const merged = await mergeAndSync(
+              session.accessToken,
+              session.userId,
+              "passwords",
+              listStoredPasswordsForSync(win.id),
+            );
             overwriteStoredPasswords(win.id, merged);
             win.webContents.send("passwords:changed", listPasswords(win.id));
           }
         } else {
-          console.warn("[auth:login] pullProfileData returned nothing for this account — either it has no synced data yet, or the search_profile_data table/RLS policy isn't set up in Supabase (see supabase/search_profile_data.sql).");
+          console.warn(
+            "[auth:login] pullProfileData returned nothing for this account — either it has no synced data yet, or the search_profile_data table/RLS policy isn't set up in Supabase (see supabase/search_profile_data.sql).",
+          );
         }
       } catch (err) {
         console.error("[auth:login] pulling cloud data after login failed:", err);
@@ -1282,12 +1538,14 @@ function registerIpc() {
   // tab), matching how real browsers show one shared downloads list
   // regardless of which window a file was downloaded from.
   registerDownloadTracking(() => {
-    for (const { win } of windows.values()) win.webContents.send("downloads:changed", listDownloads());
+    for (const { win } of windows.values())
+      win.webContents.send("downloads:changed", listDownloads());
   });
   ipcMain.handle("downloads:list", () => listDownloads());
   ipcMain.handle("downloads:remove", (_e, id: string) => {
     removeDownload(id);
-    for (const { win } of windows.values()) win.webContents.send("downloads:changed", listDownloads());
+    for (const { win } of windows.values())
+      win.webContents.send("downloads:changed", listDownloads());
   });
   // Types Electron/Chromium can render inline (plugins:true on every tab's
   // WebContentsView enables the built-in PDF viewer — see tab-manager.ts)
@@ -1312,7 +1570,9 @@ function registerIpc() {
     }
     return shell.openPath(filePath);
   });
-  ipcMain.handle("downloads:showInFolder", (_e, filePath: string) => shell.showItemInFolder(filePath));
+  ipcMain.handle("downloads:showInFolder", (_e, filePath: string) =>
+    shell.showItemInFolder(filePath),
+  );
   ipcMain.handle("downloads:getFolder", () => getDownloadsFolder());
   // The downloads popup's own folder-icon button (see
   // src/overlay/DownloadsPopoverContent.tsx) — opens the downloads
@@ -1322,8 +1582,14 @@ function registerIpc() {
   ipcMain.handle("downloads:pickFolder", async (e) => {
     const ctx = contextFor(e);
     const result = ctx
-      ? await dialog.showOpenDialog(ctx.win, { properties: ["openDirectory"], defaultPath: getDownloadsFolder() })
-      : await dialog.showOpenDialog({ properties: ["openDirectory"], defaultPath: getDownloadsFolder() });
+      ? await dialog.showOpenDialog(ctx.win, {
+          properties: ["openDirectory"],
+          defaultPath: getDownloadsFolder(),
+        })
+      : await dialog.showOpenDialog({
+          properties: ["openDirectory"],
+          defaultPath: getDownloadsFolder(),
+        });
     if (result.canceled || !result.filePaths[0]) return getDownloadsFolder();
     setDownloadsFolder(result.filePaths[0]);
     return result.filePaths[0];
@@ -1347,8 +1613,12 @@ function registerIpc() {
   // extra step not included here. Profiles are listed first so the person
   // can pick which one (people often have several) instead of always
   // grabbing "Default" silently.
-  ipcMain.handle("import:listProfiles", (_e, browser: "chrome" | "edge") => listChromiumProfiles(browser));
-  ipcMain.handle("import:bookmarks", (_e, browser: "chrome" | "edge", profileId: string) => importChromiumBookmarks(browser, profileId));
+  ipcMain.handle("import:listProfiles", (_e, browser: "chrome" | "edge") =>
+    listChromiumProfiles(browser),
+  );
+  ipcMain.handle("import:bookmarks", (_e, browser: "chrome" | "edge", profileId: string) =>
+    importChromiumBookmarks(browser, profileId),
+  );
 
   ipcMain.handle("tools:execute", (e, name: string, args: Record<string, unknown>) => {
     const ctx = contextFor(e);
@@ -1366,7 +1636,9 @@ function registerIpc() {
   });
   ipcMain.handle("window:close", (e) => contextFor(e)?.win.close());
   ipcMain.handle("window:isMaximized", (e) => contextFor(e)?.win.isMaximized() ?? false);
-  ipcMain.handle("window:setFullScreen", (e, value: boolean) => contextFor(e)?.win.setFullScreen(value));
+  ipcMain.handle("window:setFullScreen", (e, value: boolean) =>
+    contextFor(e)?.win.setFullScreen(value),
+  );
   // A direct getter alongside the enter/leave-full-screen events below —
   // the renderer uses this as a fallback (checked on window focus) in case
   // an event ever gets missed, so the tab strip can't stay stuck hidden.
@@ -1381,15 +1653,25 @@ function registerIpc() {
   // Diagnostic-only — reports exactly why the scrollbar widget did or
   // didn't render for a page (site already styles its own, or which
   // element it attached to), matching debugReport() in tab-preload.ts.
-  ipcMain.on("__qs_debug_scrollbar", (_event, report: { url: string; status: string; detail?: string }) => {
-    console.log(`[scrollbar] ${report.status}${report.detail ? ` — ${report.detail}` : ""} (${report.url})`);
-  });
+  ipcMain.on(
+    "__qs_debug_scrollbar",
+    (_event, report: { url: string; status: string; detail?: string }) => {
+      console.log(
+        `[scrollbar] ${report.status}${report.detail ? ` — ${report.detail}` : ""} (${report.url})`,
+      );
+    },
+  );
   // Diagnostic-only — matches pwDebug() in tab-preload.ts, traces autofill/
   // auto-save through each step (field found, IPC lookup result, capture
   // triggered, save result) instead of just "it doesn't work".
-  ipcMain.on("__qs_debug_passwords", (_event, report: { url: string; status: string; detail?: string }) => {
-    console.log(`[passwords] ${report.status}${report.detail ? ` — ${report.detail}` : ""} (${report.url})`);
-  });
+  ipcMain.on(
+    "__qs_debug_passwords",
+    (_event, report: { url: string; status: string; detail?: string }) => {
+      console.log(
+        `[passwords] ${report.status}${report.detail ? ` — ${report.detail}` : ""} (${report.url})`,
+      );
+    },
+  );
 }
 
 app.whenReady().then(async () => {
@@ -1431,7 +1713,10 @@ function setupPanicShortcut() {
     app.quit();
   });
   if (ok) currentPanicAccelerator = accelerator;
-  else console.error(`[panic-shortcut] failed to register "${accelerator}" — likely already claimed by another app`);
+  else
+    console.error(
+      `[panic-shortcut] failed to register "${accelerator}" — likely already claimed by another app`,
+    );
 }
 // Called from the IPC handler when the person changes the shortcut in
 // Settings — re-registers immediately rather than needing a restart.

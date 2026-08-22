@@ -2,10 +2,22 @@ import { app, BrowserWindow, dialog, WebContentsView } from "electron";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import fs from "node:fs/promises";
-import { HOME_URL, SETTINGS_URL, type ContentBounds, type SessionSnapshot, type TabGroup, type TabState, type TabsSnapshot } from "./types";
+import {
+  HOME_URL,
+  SETTINGS_URL,
+  type ContentBounds,
+  type SessionSnapshot,
+  type TabGroup,
+  type TabState,
+  type TabsSnapshot,
+} from "./types";
 import { stepZoom } from "./zoom";
 import { stripTrackingParams } from "./tracking-params";
-import { trackingParamsEnabled, httpsOnlyEnabled, phishingProtectionEnabled } from "./privacy-settings-store";
+import {
+  trackingParamsEnabled,
+  httpsOnlyEnabled,
+  phishingProtectionEnabled,
+} from "./privacy-settings-store";
 import { checkUrlSafety } from "./phishing-guard";
 import { getOriginalHttpUrl, allowHttpOnce } from "./https-upgrade-tracker";
 import { popupBlockEnabled } from "./control-center-store";
@@ -27,7 +39,11 @@ const TAB_PRELOAD_PATH = path.join(__dirname, "tab-preload.cjs");
 // misrepresented) is the standard fix every Electron-based browser needs.
 const CHROME_VERSION = process.versions.chrome ?? "128.0.0.0";
 const PLATFORM_UA_TOKEN =
-  process.platform === "win32" ? "Windows NT 10.0; Win64; x64" : process.platform === "darwin" ? "Macintosh; Intel Mac OS X 10_15_7" : "X11; Linux x86_64";
+  process.platform === "win32"
+    ? "Windows NT 10.0; Win64; x64"
+    : process.platform === "darwin"
+      ? "Macintosh; Intel Mac OS X 10_15_7"
+      : "X11; Linux x86_64";
 const TAB_USER_AGENT = `Mozilla/5.0 (${PLATFORM_UA_TOKEN}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${CHROME_VERSION} Safari/537.36`;
 
 // Hosts whose sign-in flow is built around a real popup window (Google
@@ -135,14 +151,26 @@ export class TabManager {
   // actions it needs to call already live in main.ts, right next to the
   // equivalent IPC handlers other UI uses for the same actions — no
   // reason to duplicate that logic here.
-  private onContextMenuRequest: ((tabId: string, webContents: Electron.WebContents, params: Electron.ContextMenuParams, bounds: ContentBounds) => void) | null = null;
+  private onContextMenuRequest:
+    | ((
+        tabId: string,
+        webContents: Electron.WebContents,
+        params: Electron.ContextMenuParams,
+        bounds: ContentBounds,
+      ) => void)
+    | null = null;
   private contentSession: Electron.Session | null = null;
 
   constructor(
     win: BrowserWindow,
     onStateChange?: () => void,
     onNavigate?: (url: string) => void,
-    onContextMenuRequest?: (tabId: string, webContents: Electron.WebContents, params: Electron.ContextMenuParams, bounds: ContentBounds) => void,
+    onContextMenuRequest?: (
+      tabId: string,
+      webContents: Electron.WebContents,
+      params: Electron.ContextMenuParams,
+      bounds: ContentBounds,
+    ) => void,
     // Every tab's WebContentsView uses this session instead of Electron's
     // implicit default one — undefined for a normal window (default
     // session, same as before this param existed). Incognito/Tor windows
@@ -394,10 +422,28 @@ export class TabManager {
   }
 
   // --- Control center: network-condition simulation (per active tab) -----
-  private readonly THROTTLE_PRESETS: Record<string, { offline: boolean; latency: number; downloadThroughput: number; uploadThroughput: number } | null> = {
+  private readonly THROTTLE_PRESETS: Record<
+    string,
+    {
+      offline: boolean;
+      latency: number;
+      downloadThroughput: number;
+      uploadThroughput: number;
+    } | null
+  > = {
     off: null,
-    slow3g: { offline: false, latency: 400, downloadThroughput: (500 * 1024) / 8, uploadThroughput: (500 * 1024) / 8 },
-    fast3g: { offline: false, latency: 150, downloadThroughput: (1.6 * 1024 * 1024) / 8, uploadThroughput: (750 * 1024) / 8 },
+    slow3g: {
+      offline: false,
+      latency: 400,
+      downloadThroughput: (500 * 1024) / 8,
+      uploadThroughput: (500 * 1024) / 8,
+    },
+    fast3g: {
+      offline: false,
+      latency: 150,
+      downloadThroughput: (1.6 * 1024 * 1024) / 8,
+      uploadThroughput: (750 * 1024) / 8,
+    },
     offline: { offline: true, latency: 0, downloadThroughput: 0, uploadThroughput: 0 },
   };
 
@@ -408,7 +454,10 @@ export class TabManager {
       if (!wc.debugger.isAttached()) wc.debugger.attach("1.3");
       await wc.debugger.sendCommand("Network.enable");
       const conditions = this.THROTTLE_PRESETS[preset];
-      await wc.debugger.sendCommand("Network.emulateNetworkConditions", conditions ?? { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+      await wc.debugger.sendCommand(
+        "Network.emulateNetworkConditions",
+        conditions ?? { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 },
+      );
     } catch {
       /* best-effort, see applyJsToggle */
     }
@@ -469,6 +518,19 @@ export class TabManager {
 
   printPage(id: string) {
     this.views.get(id)?.webContents.print({ silent: false });
+  }
+
+  async savePageAs(id: string): Promise<string | null> {
+    const wc = this.views.get(id)?.webContents;
+    if (!wc) return null;
+    const { filePath, canceled } = await dialog.showSaveDialog({
+      title: "Seite speichern unter",
+      defaultPath: path.join(app.getPath("downloads"), `seite-${Date.now()}.html`),
+      filters: [{ name: "Webseite, komplett", extensions: ["html"] }],
+    });
+    if (canceled || !filePath) return null;
+    await wc.savePage(filePath, "HTMLComplete");
+    return filePath;
   }
 
   openDevTools(id: string) {
@@ -573,7 +635,10 @@ export class TabManager {
 
   snapshot(): SessionSnapshot {
     return {
-      tabs: this.order.map((id) => ({ url: this.stateFor(id).url, groupId: this.tabGroupOf.get(id) ?? null })),
+      tabs: this.order.map((id) => ({
+        url: this.stateFor(id).url,
+        groupId: this.tabGroupOf.get(id) ?? null,
+      })),
       groups: [...this.groups.values()],
       activeIndex: this.activeId ? this.order.indexOf(this.activeId) : 0,
     };
@@ -712,9 +777,13 @@ export class TabManager {
       this.settingsTabs.add(id);
     } else {
       const initialUrl = this.normalizeUrl(url)!;
-      view.webContents.loadURL(trackingParamsEnabled() ? (stripTrackingParams(initialUrl) ?? initialUrl) : initialUrl).catch(() => {
-        /* surfaced to the renderer via did-fail-load below */
-      });
+      view.webContents
+        .loadURL(
+          trackingParamsEnabled() ? (stripTrackingParams(initialUrl) ?? initialUrl) : initialUrl,
+        )
+        .catch(() => {
+          /* surfaced to the renderer via did-fail-load below */
+        });
     }
 
     const emit = () => this.emitChange();
@@ -891,7 +960,8 @@ export class TabManager {
       // anywhere, which is exactly the "zoom works on Start/Settings but not
       // on real sites" symptom.
       view.webContents.setVisualZoomLevelLimits(1, 3).catch(() => {});
-      if (!this.homeTabs.has(id) && !this.settingsTabs.has(id)) this.onNavigate?.(view.webContents.getURL());
+      if (!this.homeTabs.has(id) && !this.settingsTabs.has(id))
+        this.onNavigate?.(view.webContents.getURL());
       emit();
     });
     view.webContents.on("did-navigate-in-page", emit);
@@ -929,7 +999,11 @@ export class TabManager {
     // filters by tabId itself.
     view.webContents.on("found-in-page", (_event, result) => {
       if (this.win.isDestroyed()) return;
-      this.win.webContents.send("tabs:foundInPage", { tabId: id, matches: result.matches, activeMatchOrdinal: result.activeMatchOrdinal });
+      this.win.webContents.send("tabs:foundInPage", {
+        tabId: id,
+        matches: result.matches,
+        activeMatchOrdinal: result.activeMatchOrdinal,
+      });
     });
 
     this.views.set(id, view);
@@ -1113,7 +1187,8 @@ export class TabManager {
     // Skip tracking-param stripping when the check above just replaced
     // target with a warning-page data: URL - stripTrackingParams would
     // mangle it, and there's nothing to strip from it anyway.
-    if (trackingParamsEnabled() && !target.startsWith("data:")) target = stripTrackingParams(target) ?? target;
+    if (trackingParamsEnabled() && !target.startsWith("data:"))
+      target = stripTrackingParams(target) ?? target;
     this.homeTabs.delete(id);
     this.settingsTabs.delete(id);
     if (this.secondaryId) this.applySplitLayout();
@@ -1158,7 +1233,12 @@ export class TabManager {
     const leftWidth = Math.floor((this.bounds.width - GAP) * this.splitRatio);
     return side === "left"
       ? { x: this.bounds.x, y: this.bounds.y, width: leftWidth, height: this.bounds.height }
-      : { x: this.bounds.x + leftWidth + GAP, y: this.bounds.y, width: this.bounds.width - leftWidth - GAP, height: this.bounds.height };
+      : {
+          x: this.bounds.x + leftWidth + GAP,
+          y: this.bounds.y,
+          width: this.bounds.width - leftWidth - GAP,
+          height: this.bounds.height,
+        };
   }
 
   // Called continuously while the person drags the divider — ratio is
@@ -1170,8 +1250,12 @@ export class TabManager {
 
   private applySplitLayout() {
     if (!this.contentVisible) return;
-    const leftInternal = this.activeId ? this.homeTabs.has(this.activeId) || this.settingsTabs.has(this.activeId) : true;
-    const rightInternal = this.secondaryId ? this.homeTabs.has(this.secondaryId) || this.settingsTabs.has(this.secondaryId) : true;
+    const leftInternal = this.activeId
+      ? this.homeTabs.has(this.activeId) || this.settingsTabs.has(this.activeId)
+      : true;
+    const rightInternal = this.secondaryId
+      ? this.homeTabs.has(this.secondaryId) || this.settingsTabs.has(this.secondaryId)
+      : true;
 
     const leftView = this.activeId ? this.views.get(this.activeId) : null;
     const rightView = this.secondaryId ? this.views.get(this.secondaryId) : null;
@@ -1182,17 +1266,20 @@ export class TabManager {
     // view lingering here would otherwise keep rendering at its last
     // bounds forever, invisible to any of this method's own bookkeeping.
     for (const [id, view] of this.views) {
-      const shouldShow = (id === this.activeId && !leftInternal) || (id === this.secondaryId && !rightInternal);
+      const shouldShow =
+        (id === this.activeId && !leftInternal) || (id === this.secondaryId && !rightInternal);
       const isAttached = this.win.contentView.children.includes(view);
       if (isAttached && !shouldShow) this.win.contentView.removeChildView(view);
     }
 
     if (leftView && !leftInternal) {
-      if (!this.win.contentView.children.includes(leftView)) this.win.contentView.addChildView(leftView);
+      if (!this.win.contentView.children.includes(leftView))
+        this.win.contentView.addChildView(leftView);
       leftView.setBounds(this.splitBoundsFor("left"));
     }
     if (rightView && !rightInternal) {
-      if (!this.win.contentView.children.includes(rightView)) this.win.contentView.addChildView(rightView);
+      if (!this.win.contentView.children.includes(rightView))
+        this.win.contentView.addChildView(rightView);
       rightView.setBounds(this.splitBoundsFor("right"));
     }
   }
@@ -1379,20 +1466,35 @@ export class TabManager {
 function describeNetError(errorCode: number): { title: string; hint: string } {
   switch (errorCode) {
     case -105: // ERR_NAME_NOT_RESOLVED
-      return { title: "Can't find this site", hint: "Check the address for typos, or the site may not exist." };
+      return {
+        title: "Can't find this site",
+        hint: "Check the address for typos, or the site may not exist.",
+      };
     case -106: // ERR_INTERNET_DISCONNECTED
-      return { title: "No internet connection", hint: "Check your Wi-Fi or network cable, then try again." };
+      return {
+        title: "No internet connection",
+        hint: "Check your Wi-Fi or network cable, then try again.",
+      };
     case -101: // ERR_CONNECTION_RESET
     case -102: // ERR_CONNECTION_REFUSED
-      return { title: "This site refused to connect", hint: "The site may be down, or blocking connections from here." };
+      return {
+        title: "This site refused to connect",
+        hint: "The site may be down, or blocking connections from here.",
+      };
     case -118: // ERR_CONNECTION_TIMED_OUT
     case -7: // ERR_TIMED_OUT
-      return { title: "This took too long to load", hint: "The site didn't respond in time, it may be slow or overloaded." };
+      return {
+        title: "This took too long to load",
+        hint: "The site didn't respond in time, it may be slow or overloaded.",
+      };
     case -200: // ERR_CERT_COMMON_NAME_INVALID (and nearby -2xx are all cert errors)
     case -201:
     case -202:
     case -203:
-      return { title: "Connection isn't private", hint: "This site's security certificate isn't valid, proceeding isn't safe." };
+      return {
+        title: "Connection isn't private",
+        hint: "This site's security certificate isn't valid, proceeding isn't safe.",
+      };
     default:
       return { title: "This page isn't available", hint: "The page couldn't be reached." };
   }
@@ -1408,7 +1510,10 @@ const THREAT_LABELS: Record<string, string> = {
 };
 
 function httpsOnlyBlockedPage(originalHttpUrl: string): string {
-  const safeUrl = originalHttpUrl.replace(/[<>&"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" })[c]!);
+  const safeUrl = originalHttpUrl.replace(
+    /[<>&"]/g,
+    (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" })[c]!,
+  );
   const html = `<!doctype html>
 <html><head><meta charset="utf-8"><title>This connection is not secure</title>
 <style>
@@ -1449,7 +1554,10 @@ function httpsOnlyBlockedPage(originalHttpUrl: string): string {
 }
 
 function phishingWarningPage(attemptedUrl: string, threatType: string): string {
-  const safeUrl = attemptedUrl.replace(/[<>&"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" })[c]!);
+  const safeUrl = attemptedUrl.replace(
+    /[<>&"]/g,
+    (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" })[c]!,
+  );
   const label = THREAT_LABELS[threatType] ?? "This site has been flagged as dangerous";
   const html = `<!doctype html>
 <html><head><meta charset="utf-8"><title>Deceptive site ahead</title>
@@ -1492,7 +1600,10 @@ function phishingWarningPage(attemptedUrl: string, threatType: string): string {
 }
 
 function notAvailablePage(attemptedUrl: string, errorCode = 0): string {
-  const safeUrl = attemptedUrl.replace(/[<>&"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" })[c]!);
+  const safeUrl = attemptedUrl.replace(
+    /[<>&"]/g,
+    (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" })[c]!,
+  );
   const { title, hint } = describeNetError(errorCode);
   const html = `<!doctype html>
 <html><head><meta charset="utf-8"><title>${title}</title>

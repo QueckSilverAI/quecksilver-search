@@ -146,8 +146,12 @@ function Index() {
     setTabGroup,
     togglePiP,
   } = useBrowserApi();
-  const { settings: controlCenterSettings, update: updateControlCenter, runAction: runControlCenterAction, getConsoleErrorTotal } =
-    useControlCenter();
+  const {
+    settings: controlCenterSettings,
+    update: updateControlCenter,
+    runAction: runControlCenterAction,
+    getConsoleErrorTotal,
+  } = useControlCenter();
   // Cheap in-memory read on the main process side, polled only while
   // something might be showing it (the Control center dropdown) — a
   // short interval is fine since it's just a Map lookup, no disk/IPC cost
@@ -474,6 +478,27 @@ function Index() {
           case "searchSelection":
             window.browserAPI?.tabs.new(currentEngine.buildUrl(action.text));
             break;
+          case "goBack":
+            if (activeId) void goBack(activeId);
+            break;
+          case "reload":
+            if (activeId) void reload(activeId);
+            break;
+          case "savePageAs":
+            void runControlCenterAction({ type: "savePageAs" });
+            break;
+          case "print":
+            void runControlCenterAction({ type: "print" });
+            break;
+          case "screenshot":
+            void runControlCenterAction({ type: "screenshot" });
+            break;
+          case "openDevTools":
+            void runControlCenterAction({ type: "openDevTools" });
+            break;
+          case "translateToEnglish":
+            void runControlCenterAction({ type: "translatePage", langCode: "en" });
+            break;
         }
         return;
       }
@@ -740,7 +765,14 @@ function Index() {
       controlCenter: controlCenterSettings,
       consoleErrorTotal,
     });
-  }, [tabs, activeId, verticalTabsEnabled, recentlyClosed, controlCenterSettings, consoleErrorTotal]);
+  }, [
+    tabs,
+    activeId,
+    verticalTabsEnabled,
+    recentlyClosed,
+    controlCenterSettings,
+    consoleErrorTotal,
+  ]);
   // Right-click on an image/link/selection inside a tab now opens the
   // native overlay window directly from the main process — see
   // electron/main.ts's showContextMenu and src/overlay/ContextMenuContent

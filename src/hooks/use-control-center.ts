@@ -35,11 +35,17 @@ export type ControlCenterActionType =
   | "print"
   | "unloadTab"
   | "unloadAllBackgroundTabs"
-  | "setNetworkThrottle";
+  | "setNetworkThrottle"
+  | "savePageAs"
+  | "translatePage";
 
 export type ControlCenterActionRequest =
-  | { type: Exclude<ControlCenterActionType, "setNetworkThrottle">; tabId?: string }
-  | { type: "setNetworkThrottle"; tabId?: string; preset: NetworkThrottlePreset };
+  | {
+      type: Exclude<ControlCenterActionType, "setNetworkThrottle" | "translatePage">;
+      tabId?: string;
+    }
+  | { type: "setNetworkThrottle"; tabId?: string; preset: NetworkThrottlePreset }
+  | { type: "translatePage"; tabId?: string; langCode: string };
 
 const DEFAULTS: ControlCenterSettings = {
   adBlockEnabled: true,
@@ -90,7 +96,10 @@ export function useControlCenter() {
     [api],
   );
 
-  const getConsoleErrorTotal = useCallback(() => api?.getConsoleErrorTotal() ?? Promise.resolve(0), [api]);
+  const getConsoleErrorTotal = useCallback(
+    () => api?.getConsoleErrorTotal() ?? Promise.resolve(0),
+    [api],
+  );
 
   return { settings, update, runAction, getConsoleErrorTotal };
 }
