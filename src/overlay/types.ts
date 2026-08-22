@@ -94,7 +94,12 @@ export type GroupDialogOverlayPayload = {
   defaultColor: string;
 };
 
-export type GroupDialogOverlayAction = { type: "create"; tabId: string; name: string; color: string };
+export type GroupDialogOverlayAction = {
+  type: "create";
+  tabId: string;
+  name: string;
+  color: string;
+};
 
 // --- Tab search (Ctrl+Shift+A, cover mode) ---------------------------------
 // The full tab list is already live in index.tsx's own React state, so
@@ -243,7 +248,26 @@ export type FavoriteFolderOverlayAction =
 // (index.tsx already has the tab list in React state).
 export type TabsMenuOverlayPayload = {
   verticalTabsEnabled: boolean;
-  tabs: { id: string; title: string; url: string; isHome: boolean; isSettings: boolean; isActive: boolean; openedAt: number }[];
+  tabs: {
+    id: string;
+    title: string;
+    url: string;
+    isHome: boolean;
+    isSettings: boolean;
+    isActive: boolean;
+    openedAt: number;
+  }[];
+  recentlyClosed: {
+    id: string;
+    title: string;
+    url: string;
+    isHome: boolean;
+    isSettings: boolean;
+    closedAt: number;
+  }[];
 };
 
-export type TabsMenuOverlayAction = { type: "toggleVerticalTabs"; enabled: boolean } | { type: "switch"; id: string };
+export type TabsMenuOverlayAction =
+  | { type: "toggleVerticalTabs"; enabled: boolean }
+  | { type: "switch"; id: string }
+  | { type: "reopenClosed"; id: string };

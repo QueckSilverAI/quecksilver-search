@@ -2,19 +2,20 @@
 // vertical tabs are enabled (see settings-store's useVerticalTabsEnabled,
 // toggled from TabsMenuContent).
 //
-// Pinned: renders in-flow (as before), pushing page content over.
-// Unpinned ("closed"): renders as a single `absolute` element (positioned
-// against the row below the header — see routes/index.tsx) that is NOT
-// part of the flex layout at all, so it takes up zero layout width. It
-// shows a slim icon-only strip (favicons + a "+" button) by default, and
-// widens on hover to the full labelled panel. Using ONE element that
-// changes width (rather than a separate rail + a separate floating panel)
-// is deliberate: with two siblings, moving the mouse from one onto the
-// other used to count as leaving the first, causing the sidebar to slam
-// shut the instant the cursor crossed the seam. A single element with one
-// set of mouse handlers can't have that bug.
-import { useEffect, useRef, useState } from "react";
-import { ChevronDown, Pin, Plus, X } from "lucide-react";
+// Always renders in-flow (pushing page content over), at one of two
+// widths: RAIL_WIDTH (collapsed — favicons only) or SIDEBAR_WIDTH
+// (expanded — full labelled panel). Which width is showing is driven
+// purely by the `open` prop, toggled by clicking the sidebar button —
+// NOT by hovering. There used to be a separate "unpinned" mode that
+// rendered as an absolute overlay and expanded on hover, but that meant
+// widening the panel had to also shrink/move the real browsed page's
+// native view to keep it from covering the panel (that view always
+// paints above this component's own DOM regardless of z-index) — so
+// just brushing the mouse across the rail was enough to shift whatever
+// site was open. Collapsing that into a single always-in-flow width,
+// toggled only by a deliberate click, means the page only ever moves
+// when the person actually asked it to.
+import { ChevronDown, PanelLeft, Plus, X } from "lucide-react";
 import type { TabState } from "@/hooks/use-browser-api";
 import { TabIcon } from "@/components/TabStrip";
 
@@ -25,34 +26,24 @@ type Props = {
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
   onNewTab: () => void;
-  pinned: boolean;
-  onTogglePinned: () => void;
+  open: boolean;
+  onToggleOpen: () => void;
   onOpenTabsMenu: (rect: { top: number; left: number; right: number; bottom: number }) => void;
-  // Fired whenever the UNPINNED sidebar's own expanded/collapsed state
-  // changes (pinned mode never calls this — it doesn't need to, its width
-  // is already reserved in layout). The parent uses this to widen the
-  // real page's content-view inset while hovering: real browsed pages
-  // render in a separate native view that always paints on top of this
-  // component's own DOM, so without shrinking that native view's bounds
-  // to match, the widened hover panel would just get drawn UNDER
-  // whatever site is open — same complaint as "vertical sidebar hidden
-  // behind real websites when not pinned".
-  onHoverExpandedChange?: (expanded: boolean) => void;
+  // Whether the content column's header favorites bar is currently showing
+  // (same condition the caller uses to render it) — drives the height of
+  // the divider below, so it lines up with, and never runs past, that bar.
+  showFavoritesDivider: boolean;
 };
 
 export const SIDEBAR_WIDTH = 240;
-export const RAIL_WIDTH = 48; // wide enough to show a row of favicon buttons, not just a hover hairline
+export const RAIL_WIDTH = 48; // wide enough to show a row of favicon buttons, not just a hairline
 
-// How long to wait, after the cursor actually leaves the sidebar, before
-// collapsing it. This isn't just debounce polish — the top row (menu
-// chevron + pin button) sits in a `-webkit-app-region: drag` strip, and
-// frameless-window drag regions are known to fire a spurious mouseleave
-// on the element the instant the cursor moves over them, even though the
-// cursor never actually left the sidebar's bounds. Without this grace
-// period that spurious leave collapsed the panel immediately; a quick
-// re-entry (the real mousemove landing a frame later) cancels the pending
-// close before it ever fires, so a genuine leave still closes promptly.
-const CLOSE_DELAY_MS = 150;
+// Height of the header favorites bar's own row (HeaderFavoritesBar's
+// h-[29px] chips + the wrapper's pb-1.5, in routes/index.tsx). Kept in
+// sync by hand rather than measured, since it's a plain fixed-height row
+// on both sides — used below to size both the top divider and this
+// sidebar's own header row so they line up with it exactly.
+const TOP_ROW_HEIGHT = 35;
 
 export function VerticalTabsSidebar({
   tabs,
@@ -61,44 +52,11 @@ export function VerticalTabsSidebar({
   onSelect,
   onClose,
   onNewTab,
-  pinned,
-  onTogglePinned,
+  open,
+  onToggleOpen,
   onOpenTabsMenu,
-  onHoverExpandedChange,
+  showFavoritesDivider,
 }: Props) {
-  const [hovering, setHovering] = useState(false);
-  const closeTimerRef = useRef<number | null>(null);
-  const expanded = pinned || hovering;
-
-  const cancelScheduledClose = () => {
-    if (closeTimerRef.current !== null) {
-      window.clearTimeout(closeTimerRef.current);
-      closeTimerRef.current = null;
-    }
-  };
-  const scheduleClose = () => {
-    cancelScheduledClose();
-    closeTimerRef.current = window.setTimeout(() => {
-      closeTimerRef.current = null;
-      setHovering(false);
-    }, CLOSE_DELAY_MS);
-  };
-  useEffect(() => cancelScheduledClose, []);
-  // Only relevant while unpinned — pinned mode's width is already real
-  // layout space, so the content-view inset doesn't need adjusting for it.
-  useEffect(() => {
-    if (!pinned) onHoverExpandedChange?.(hovering);
-  }, [hovering, pinned, onHoverExpandedChange]);
-  // If the sidebar goes from unpinned to pinned (or unmounts) while still
-  // counted as "hover expanded", make sure the parent's extra inset gets
-  // cleared — otherwise it'd stay stuck shrinking the content view for no
-  // visible sidebar.
-  useEffect(() => {
-    if (pinned) onHoverExpandedChange?.(false);
-    return () => onHoverExpandedChange?.(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pinned]);
-
   const tabRow = (tab: TabState, compact: boolean) => {
     const active = tab.id === activeId;
     const label = tab.isHome ? "New Tab" : tab.isSettings ? "Settings" : tab.title || tab.url;
@@ -149,34 +107,42 @@ export function VerticalTabsSidebar({
     );
   };
 
-  const content = expanded ? (
+  const content = open ? (
     <>
-      {/* Menu (tabs-menu dropdown) + pin button, above the tab list. */}
-      <div className="flex h-11 shrink-0 items-center justify-between pl-1 pr-1.5 [-webkit-app-region:drag]">
+      {/* Menu (tabs-menu dropdown) + sidebar-toggle button, above the tab
+          list. Row height/padding (not a fixed h-11) matches
+          TOP_ROW_HEIGHT — same total height as the favorites bar's own
+          row in the content column next to it — so "Collapse sidebar"
+          sits at the same height as the favorites row rather than the
+          taller h-11 toolbar band above it.
+          Both buttons use explicit inline width/height/padding:0 rather
+          than Tailwind size classes — a plain <button>'s browser-default
+          padding/border isn't guaranteed even on all four sides, and that
+          was enough to throw off how square these looked. Inline values
+          leave nothing for the UA stylesheet to add on top of. */}
+      <div className="flex shrink-0 items-center justify-between px-1.5 pb-1.5 pt-0 [-webkit-app-region:drag]">
         <button
           onClick={(e) => {
             const r = e.currentTarget.getBoundingClientRect();
             onOpenTabsMenu({ top: r.top, left: r.left, right: r.right, bottom: r.bottom });
           }}
           aria-label="Tabs menu"
-          // Same bigger-hit-area treatment as the horizontal TabStrip's
-          // menu button — 32x32 hover/click target around a smaller
-          // visual chip.
-          className="mx-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-foreground transition-colors hover:bg-black/[0.1] [-webkit-app-region:no-drag]"
+          style={{ height: 29, width: 29, padding: 0, border: 0 }}
+          className="flex items-center justify-center rounded-lg bg-black/[0.05] text-foreground transition-colors hover:bg-black/[0.1] [-webkit-app-region:no-drag]"
         >
-          <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-black/[0.05]">
-            <ChevronDown className="h-[18px] w-[18px]" />
-          </span>
+          <ChevronDown className="h-[18px] w-[18px]" />
         </button>
+        {/* Plain two-panel icon, same either state — no arrow/chevron
+            drawn inside it (unlike PanelLeftClose/PanelLeftOpen) — just a
+            tint change to hint at "on". */}
         <button
-          onClick={onTogglePinned}
-          aria-label={pinned ? "Unpin sidebar" : "Pin sidebar"}
-          title={pinned ? "Unpin sidebar" : "Pin sidebar"}
-          className="mx-1.5 flex h-8 w-8 shrink-0 items-center justify-center self-center rounded-lg text-muted-foreground transition-colors hover:bg-black/[0.06] [-webkit-app-region:no-drag]"
+          onClick={onToggleOpen}
+          aria-label="Collapse sidebar"
+          title="Collapse sidebar"
+          style={{ height: 29, width: 29, padding: 0, border: 0 }}
+          className="flex items-center justify-center rounded-lg bg-black/[0.05] text-foreground transition-colors hover:bg-black/[0.1] [-webkit-app-region:no-drag]"
         >
-          <Pin
-            className={`h-4 w-4 transition-transform ${pinned ? "text-foreground" : "-rotate-45"}`}
-          />
+          <PanelLeft className="h-4 w-4" />
         </button>
       </div>
 
@@ -198,50 +164,50 @@ export function VerticalTabsSidebar({
       </div>
     </>
   ) : (
-    // Collapsed strip: favicons only, plus a "+" button — still shows
-    // something (not a blank hairline) while closed.
+    // Collapsed strip: the toggle button up top (so it's always
+    // reachable, whatever state the sidebar is in), then favicons, then
+    // a "+" button.
     <div className="flex flex-1 flex-col items-center gap-1 overflow-y-auto py-2 [-webkit-app-region:no-drag]">
+      <button
+        onClick={onToggleOpen}
+        aria-label="Expand sidebar"
+        title="Expand sidebar"
+        style={{ height: 29, width: 29, padding: 0, border: 0 }}
+        className="mb-1 flex shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-black/[0.06]"
+      >
+        <PanelLeft className="h-4 w-4" />
+      </button>
       {tabs.map((tab) => tabRow(tab, true))}
       <div className="my-1 h-px w-6 shrink-0 bg-black/10" />
       <button
         onClick={onNewTab}
         aria-label="New tab"
         title="New tab"
-        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-black/[0.06] [-webkit-app-region:no-drag]"
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-black/[0.06]"
       >
         <Plus className="h-4 w-4" />
       </button>
     </div>
   );
 
-  if (pinned) {
-    // White (var(--background)), matching the page content instead of the
-    // grey toolbar chrome — a right-hand border replaces the old
-    // grey-vs-white contrast as the visual seam against the content pane.
-    return (
-      <div
-        className="flex h-full shrink-0 flex-col overflow-hidden border-r border-black/10"
-        style={{ width: SIDEBAR_WIDTH, background: "var(--background)" }}
-      >
-        {content}
-      </div>
-    );
-  }
-
+  // White (var(--background)), matching the page content instead of the
+  // grey toolbar chrome. The divider between this and the content next to
+  // it is NOT a plain full-height border — it deliberately skips the top
+  // TOP_ROW_HEIGHT band (where the favorites bar sits, when it's shown)
+  // and only runs from there down to the bottom, alongside the actual
+  // page content. Previously this was backwards (only the top band had a
+  // line, nothing below it) — now it's inverted: no line next to
+  // favorites, a line everywhere else down the sidebar. When there's no
+  // favorites bar to skip past, it just runs the full height instead.
   return (
     <div
-      onMouseEnter={() => {
-        cancelScheduledClose();
-        setHovering(true);
-      }}
-      onMouseLeave={scheduleClose}
-      className="absolute left-0 top-0 z-40 flex h-full shrink-0 flex-col overflow-hidden shadow-lg transition-[width] duration-150"
-      style={{
-        width: hovering ? SIDEBAR_WIDTH : RAIL_WIDTH,
-        background: "var(--background)",
-        borderRight: hovering ? "1px solid rgba(0,0,0,0.1)" : undefined,
-      }}
+      className="relative flex h-full shrink-0 flex-col overflow-hidden transition-[width] duration-150"
+      style={{ width: open ? SIDEBAR_WIDTH : RAIL_WIDTH, background: "var(--background)" }}
     >
+      <div
+        className="pointer-events-none absolute right-0 bottom-0 w-px bg-black/10"
+        style={{ top: showFavoritesDivider ? TOP_ROW_HEIGHT : 0 }}
+      />
       {content}
     </div>
   );

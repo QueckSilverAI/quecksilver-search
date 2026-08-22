@@ -51,7 +51,7 @@ import {
   SEARCH_ENGINES,
   type ToolbarIconId,
 } from "@/lib/settings-store";
-import { RAIL_WIDTH, SIDEBAR_WIDTH, VerticalTabsSidebar } from "@/components/VerticalTabsSidebar";
+import { VerticalTabsSidebar } from "@/components/VerticalTabsSidebar";
 import { useToolbarStyle } from "@/lib/toolbar-style";
 import { ToolbarActionIcons, type ToolbarAction } from "@/components/ToolbarActionIcons";
 import { useAuth } from "@/hooks/use-auth";
@@ -159,13 +159,25 @@ function Index() {
   const { visible: headerFavoritesBarVisible } = useHeaderFavoritesBarVisible();
   const { enabled: verticalTabsEnabled, setEnabled: setVerticalTabsEnabled } =
     useVerticalTabsEnabled();
-  const { pinned: verticalTabsPinned, setPinned: setVerticalTabsPinned } = useVerticalTabsPinned();
-  // True while the UNPINNED vertical-tabs sidebar is hover-expanded to its
-  // full width — see VerticalTabsSidebar's onHoverExpandedChange. Used
-  // below to widen the real page's content-view inset so that native view
-  // (which always paints above this window's own DOM) doesn't cover the
-  // widened sidebar panel while it's open.
-  const [sidebarHoverExpanded, setSidebarHoverExpanded] = useState(false);
+  // Reused as the vertical-tabs sidebar's own expanded/collapsed state —
+  // see VerticalTabsSidebar's header comment for why this is now a
+  // single always-in-flow toggle instead of a separate pinned/hover-
+  // expanded pair.
+  const { pinned: verticalTabsOpen, setPinned: setVerticalTabsOpen } = useVerticalTabsPinned();
+  // Tabs closed recently enough to still offer "reopen" for, shown in the
+  // tabs-menu dropdown's "Recently closed" section — newest first, capped
+  // so the list can't grow without bound over a long session. Session-only
+  // (not persisted), same as every other browser's equivalent list.
+  const [recentlyClosed, setRecentlyClosed] = useState<
+    {
+      id: string;
+      title: string;
+      url: string;
+      isHome: boolean;
+      isSettings: boolean;
+      closedAt: number;
+    }[]
+  >([]);
   const {
     items: downloadItems,
     open: openDownloadItem,
@@ -481,6 +493,13 @@ function Index() {
         const action = event.action as TabsMenuOverlayAction;
         if (action.type === "toggleVerticalTabs") setVerticalTabsEnabled(action.enabled);
         else if (action.type === "switch") switchTab(action.id);
+        else if (action.type === "reopenClosed") {
+          const entry = recentlyClosed.find((t) => t.id === action.id);
+          if (entry) {
+            newTab(entry.url);
+            setRecentlyClosed((prev) => prev.filter((t) => t.id !== action.id));
+          }
+        }
         return;
       }
       if (event.kind === "downloads") {
@@ -641,6 +660,8 @@ function Index() {
     removeHeaderFavorite,
     removeHeaderFavoriteFromFolder,
     createHeaderFavoriteFolder,
+    recentlyClosed,
+    newTab,
   ]);
   const [urlDraft, setUrlDraft] = useState("");
   const [homeUrlDraft, setHomeUrlDraft] = useState("");
@@ -683,8 +704,8 @@ function Index() {
   }, [tabs]);
   // Keeps the tabs-menu dropdown (TabsMenuContent) current while it's
   // open — same idea as the tabSearch effect right above, just also
-  // carrying the vertical-tabs toggle's own current state along with the
-  // tab list.
+  // carrying the vertical-tabs toggle's own current state, the tab list,
+  // and the recently-closed list along.
   useEffect(() => {
     window.browserAPI?.overlay.update("tabsMenu", {
       verticalTabsEnabled,
@@ -697,8 +718,9 @@ function Index() {
         isActive: t.id === activeId,
         openedAt: t.openedAt,
       })),
+      recentlyClosed,
     });
-  }, [tabs, activeId, verticalTabsEnabled]);
+  }, [tabs, activeId, verticalTabsEnabled, recentlyClosed]);
   // Right-click on an image/link/selection inside a tab now opens the
   // native overlay window directly from the main process — see
   // electron/main.ts's showContextMenu and src/overlay/ContextMenuContent
@@ -1007,22 +1029,17 @@ function Index() {
     const report = () => {
       const rect = el.getBoundingClientRect();
       const inset = chromeHidden ? { top: 0, right: 0, bottom: 0, left: 0 } : { ...CONTENT_INSET };
-      // The unpinned vertical-tabs rail already gets its RAIL_WIDTH
-      // reserved via the content column's own paddingLeft (see below), so
-      // contentRef's rect already starts past it — nothing extra needed
-      // there. But hovering to expand that rail out to the full
-      // SIDEBAR_WIDTH does NOT reflow that padding (deliberately, so the
-      // Start/Settings page underneath doesn't jump every time the mouse
-      // brushes the rail) — it just draws the wider panel on top of the
-      // DOM. Real browsed pages, though, render in a separate native view
-      // that always paints above this window's own DOM regardless of
-      // z-index, so without pushing this inset out to match, an open
-      // website would still cover the expanded panel. Widening the inset
-      // here (rather than the padding) shrinks/moves the native view
-      // instead, uncovering exactly the strip the sidebar is drawn over.
-      if (!chromeHidden && verticalTabsEnabled && !verticalTabsPinned && sidebarHoverExpanded) {
-        inset.left += SIDEBAR_WIDTH - RAIL_WIDTH;
-      }
+      // No vertical-tabs-specific adjustment needed here anymore — the
+      // sidebar is always a normal in-flow flex sibling now (see
+      // VerticalTabsSidebar), so contentRef's own rect already starts
+      // right past it, at whichever width (RAIL_WIDTH or SIDEBAR_WIDTH)
+      // it's currently showing. Previously, hovering the unpinned rail
+      // widened it WITHOUT reflowing layout (to avoid the page jumping on
+      // every mouse-over), which meant this effect had to separately
+      // widen the inset to keep the real browsed page's native view
+      // (which always paints above this window's own DOM) from covering
+      // the widened panel. That whole hover-expand path is gone, so is
+      // this special case.
       const nextBounds = {
         x: Math.round(rect.x + inset.left),
         y: Math.round(rect.y + inset.top),
@@ -1039,7 +1056,7 @@ function Index() {
       observer.disconnect();
       window.removeEventListener("resize", report);
     };
-  }, [setBounds, chromeHidden, verticalTabsEnabled, verticalTabsPinned, sidebarHoverExpanded]);
+  }, [setBounds, chromeHidden]);
 
   // Ctrl/Cmd+T — new tab.
   useEffect(() => {
@@ -1326,6 +1343,32 @@ function Index() {
     urlBarRef.current?.blur();
   };
 
+  // Every place that closes a tab routes through here instead of calling
+  // closeTab directly, so the "Recently closed" list in the tabs-menu
+  // dropdown stays accurate no matter which UI triggered the close (tab
+  // strip, vertical sidebar, group deletion, ...). The New Tab/Settings
+  // pages are skipped — reopening either of those isn't a meaningful
+  // action, so they'd just be clutter in the list.
+  const handleCloseTab = (id: string) => {
+    const closed = tabs.find((t) => t.id === id);
+    if (closed && !closed.isHome && !closed.isSettings) {
+      setRecentlyClosed((prev) =>
+        [
+          {
+            id: closed.id,
+            title: closed.title,
+            url: closed.url,
+            isHome: closed.isHome,
+            isSettings: closed.isSettings,
+            closedAt: Date.now(),
+          },
+          ...prev,
+        ].slice(0, 20),
+      );
+    }
+    closeTab(id);
+  };
+
   const openBookmark = (url: string, targetId: string | null = activeId) => {
     if (targetId === activeId && url !== HOME_URL) setUrlDraft(url);
     if (targetId) navigate(targetId, url);
@@ -1395,7 +1438,7 @@ function Index() {
           activeId={activeId}
           loadingTabIds={loadingHomeTabs}
           onSelect={(id) => switchTab(id)}
-          onClose={(id) => closeTab(id)}
+          onClose={(id) => handleCloseTab(id)}
           onToggleMute={(id) => window.browserAPI?.tabs.toggleMute(id)}
           onReorder={(newOrder) => reorderTabs(newOrder)}
           onNewTab={() => newTab()}
@@ -1413,6 +1456,7 @@ function Index() {
                   isActive: t.id === activeId,
                   openedAt: t.openedAt,
                 })),
+                recentlyClosed,
               },
               rect,
             )
@@ -1432,7 +1476,7 @@ function Index() {
           onAddToGroup={(tabId, groupId) => setTabGroup(tabId, groupId)}
           onRemoveFromGroup={(tabId) => setTabGroup(tabId, null)}
           onDeleteGroup={(groupId) => {
-            for (const t of tabs) if (t.groupId === groupId) closeTab(t.id);
+            for (const t of tabs) if (t.groupId === groupId) handleCloseTab(t.id);
           }}
           onUngroup={(groupId) => {
             for (const t of tabs) if (t.groupId === groupId) setTabGroup(t.id, null);
@@ -1995,13 +2039,12 @@ function Index() {
       )}
 
       {/* Row below the header: the vertical-tabs sidebar (if enabled) plus
-          the page content, side by side. Kept `relative` so the unpinned
-          sidebar (an `absolute` overlay — see VerticalTabsSidebar) is
-          positioned against THIS box, i.e. starting right below the
-          header and reaching down to the window's bottom edge, rather
-          than the whole viewport. */}
+          the page content, side by side. The sidebar is a normal in-flow
+          flex sibling now (always either RAIL_WIDTH or SIDEBAR_WIDTH
+          wide — see VerticalTabsSidebar), so this box no longer needs to
+          be `relative` for anything to position against. */}
       <div
-        className={`relative flex min-h-0 flex-1 ${!chromeHidden && verticalTabsEnabled ? "flex-row" : "flex-col"} overflow-hidden`}
+        className={`flex min-h-0 flex-1 ${!chromeHidden && verticalTabsEnabled ? "flex-row" : "flex-col"} overflow-hidden`}
       >
         {!chromeHidden && verticalTabsEnabled && (
           <VerticalTabsSidebar
@@ -2009,11 +2052,13 @@ function Index() {
             activeId={activeId}
             loadingTabIds={loadingHomeTabs}
             onSelect={(id) => switchTab(id)}
-            onClose={(id) => closeTab(id)}
+            onClose={(id) => handleCloseTab(id)}
             onNewTab={() => newTab()}
-            pinned={verticalTabsPinned}
-            onTogglePinned={() => setVerticalTabsPinned(!verticalTabsPinned)}
-            onHoverExpandedChange={setSidebarHoverExpanded}
+            open={verticalTabsOpen}
+            onToggleOpen={() => setVerticalTabsOpen(!verticalTabsOpen)}
+            showFavoritesDivider={
+              !chromeHidden && !isGuest && headerFavoritesBarVisible && headerFavorites.length > 0
+            }
             onOpenTabsMenu={(rect) =>
               window.browserAPI?.overlay.open(
                 "tabsMenu",
@@ -2028,25 +2073,14 @@ function Index() {
                     isActive: t.id === activeId,
                     openedAt: t.openedAt,
                   })),
+                  recentlyClosed,
                 },
                 rect,
               )
             }
           />
         )}
-        <div
-          className="flex min-w-0 flex-1 flex-col overflow-hidden"
-          // Unpinned sidebar is an overlay with zero layout width (see
-          // VerticalTabsSidebar) — without this, its collapsed rail sits
-          // directly on top of the page content's left edge instead of
-          // beside it. Pinned sidebar already claims real flex space, so no
-          // extra padding is needed there.
-          style={
-            !chromeHidden && verticalTabsEnabled && !verticalTabsPinned
-              ? { paddingLeft: RAIL_WIDTH }
-              : undefined
-          }
-        >
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
           {/* Header favorites bar — separate from the 5 home-page slots.
               Toggleable from Settings (next to "Add favorite") independent
               of the favorites list itself — hiding the bar doesn't touch

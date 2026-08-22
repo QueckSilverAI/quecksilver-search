@@ -1,8 +1,31 @@
 import { useLayoutEffect, useReducer, useRef, useState } from "react";
-import { ChevronDown, ChevronRight, FolderInput, FolderMinus, FolderPlus, Loader2, Plus, Search as SearchIcon, Settings as SettingsIcon, Trash2, Volume2, VolumeX, X } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  FolderInput,
+  FolderMinus,
+  FolderPlus,
+  Loader2,
+  Plus,
+  Search as SearchIcon,
+  Settings as SettingsIcon,
+  Trash2,
+  Volume2,
+  VolumeX,
+  X,
+} from "lucide-react";
 import type { TabGroup, TabState } from "@/hooks/use-browser-api";
 import { QueckSilverLogo } from "@/components/QueckSilverLogo";
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger, ContextMenuTrigger } from "@/components/ui/context-menu";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 
 type Props = {
   tabs: TabState[];
@@ -50,7 +73,15 @@ function faviconUrl(pageUrl: string): string | null {
 // `useAppLogo` is true once a tab is so narrow there's no meaningful room to
 // tell favicons apart anyway — at that point we show the plain app mark
 // instead of fetching/rendering a per-tab favicon.
-export function TabIcon({ tab, loading, useAppLogo }: { tab: TabState; loading: boolean; useAppLogo: boolean }) {
+export function TabIcon({
+  tab,
+  loading,
+  useAppLogo,
+}: {
+  tab: TabState;
+  loading: boolean;
+  useAppLogo: boolean;
+}) {
   const [failed, setFailed] = useState(false);
   if (loading || tab.isLoading) {
     return <Loader2 className="h-4 w-4 shrink-0 animate-spin" style={{ color: "var(--brand)" }} />;
@@ -66,7 +97,15 @@ export function TabIcon({ tab, loading, useAppLogo }: { tab: TabState; loading: 
   }
   const src = !failed ? faviconUrl(tab.url) : null;
   if (!src) return <span className="h-4 w-4 shrink-0" />;
-  return <img src={src} alt="" draggable={false} onError={() => setFailed(true)} className="h-4 w-4 shrink-0 rounded-sm" />;
+  return (
+    <img
+      src={src}
+      alt=""
+      draggable={false}
+      onError={() => setFailed(true)}
+      className="h-4 w-4 shrink-0 rounded-sm"
+    />
+  );
 }
 
 // The active tab's little rounded "cutout" corners that visually merge it
@@ -81,13 +120,15 @@ function TabNotch({ side }: { side: "left" | "right" }) {
   return (
     <div
       className="pointer-events-none absolute bottom-0"
-      style={{
-        [side]: `-${NOTCH}px`,
-        height: NOTCH,
-        width: NOTCH,
-        background: `radial-gradient(circle at top left, transparent ${NOTCH}px, var(--background) ${NOTCH}px)`,
-        transform: side === "right" ? "scaleX(-1)" : undefined,
-      } as React.CSSProperties}
+      style={
+        {
+          [side]: `-${NOTCH}px`,
+          height: NOTCH,
+          width: NOTCH,
+          background: `radial-gradient(circle at top left, transparent ${NOTCH}px, var(--background) ${NOTCH}px)`,
+          transform: side === "right" ? "scaleX(-1)" : undefined,
+        } as React.CSSProperties
+      }
     />
   );
 }
@@ -150,7 +191,13 @@ export function TabStrip({
   const [version, bumpVersion] = useReducer((c: number) => c + 1, 0);
   const tabRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const prevRects = useRef<Map<string, DOMRect>>(new Map());
-  const dragInfo = useRef<{ id: string; startX: number; originIndex: number; shift: number; slotWidth: number } | null>(null);
+  const dragInfo = useRef<{
+    id: string;
+    startX: number;
+    originIndex: number;
+    shift: number;
+    slotWidth: number;
+  } | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
 
   // Keep orderRef in sync with the authoritative tabs prop (new/closed
@@ -158,12 +205,16 @@ export function TabStrip({
   // is actively being dragged right now.
   if (!dragInfo.current) {
     const propIds = tabs.map((t) => t.id);
-    const sameSet = orderRef.current.length === propIds.length && orderRef.current.every((id) => propIds.includes(id));
+    const sameSet =
+      orderRef.current.length === propIds.length &&
+      orderRef.current.every((id) => propIds.includes(id));
     if (!sameSet) orderRef.current = propIds;
   }
 
   const tabsById = new Map(tabs.map((t) => [t.id, t]));
-  const orderedTabs = orderRef.current.map((id) => tabsById.get(id)).filter((t): t is TabState => Boolean(t));
+  const orderedTabs = orderRef.current
+    .map((id) => tabsById.get(id))
+    .filter((t): t is TabState => Boolean(t));
 
   function clamp(n: number, min: number, max: number) {
     return Math.min(max, Math.max(min, n));
@@ -196,7 +247,10 @@ export function TabStrip({
 
   const tabCount = Math.max(orderedTabs.length, 1);
   const availableForTabs = Math.max(containerWidth - NEW_TAB_BTN_SPACE, 0);
-  const tabWidth = containerWidth > 0 ? clamp(availableForTabs / tabCount, MIN_TAB_WIDTH, MAX_TAB_WIDTH) : MAX_TAB_WIDTH;
+  const tabWidth =
+    containerWidth > 0
+      ? clamp(availableForTabs / tabCount, MIN_TAB_WIDTH, MAX_TAB_WIDTH)
+      : MAX_TAB_WIDTH;
   const showText = tabWidth >= TEXT_HIDE_WIDTH;
   const showCloseAlways = tabWidth >= CLOSE_HIDE_WIDTH;
   const useAppLogo = tabWidth <= LOGO_SWITCH_WIDTH;
@@ -331,38 +385,38 @@ export function TabStrip({
     dragInfo.current = null;
     setDraggingId(null);
     const propOrder = tabs.map((t) => t.id);
-    const changed = orderRef.current.length !== propOrder.length || orderRef.current.some((id, i) => id !== propOrder[i]);
+    const changed =
+      orderRef.current.length !== propOrder.length ||
+      orderRef.current.some((id, i) => id !== propOrder[i]);
     if (changed) onReorder([...orderRef.current]);
   }
 
   // The chevron button that replaced the old logo — same square footprint
   // and hover treatment either mode, just what it opens (and what sits
   // next to it) differs. Its own rect anchors the tabsMenu dropdown, same
-  // as every other belowRight overlay trigger in this app. 10px on every
-  // side — top/bottom via my-2.5, left via the row's own pl-2.5, right
-  // via the tabs row's own pl-2.5 (which has to stay >= NOTCH so the
-  // active tab's cutout corner never clips against the scroll
-  // container's edge) — so the visible gap reads as even in every
-  // direction instead of the tab-side gap being noticeably wider. Always
-  // shows a faint tint (not just on hover), and the arrow is bigger and
-  // plain black instead of brand-blue.
+  // as every other belowRight overlay trigger in this app.
+  //
+  // Every dimension here is an explicit inline pixel value, not a
+  // Tailwind h-8/w-8/p-1.5 class, and the button itself gets padding:0 +
+  // border:0 — a plain <button> carries browser-default padding/border
+  // that isn't necessarily uniform on all four sides, and relying on
+  // border-box to cancel that out inside a class-based size wasn't
+  // actually landing square in testing. Explicit inline width/height/
+  // padding leaves nothing for a UA stylesheet to add on top of.
   const menuButton = (
-    <button
-      onClick={(e) => {
-        const r = e.currentTarget.getBoundingClientRect();
-        onOpenTabsMenu({ top: r.top, left: r.left, right: r.right, bottom: r.bottom });
-      }}
-      aria-label="Tabs menu"
-      // Bigger hit/hover target than the visual chip itself (which stays
-      // 24x24 via the inner span) — a 32x32 button is much easier to land
-      // on top-left without shrinking the little rounded tint that used
-      // to be both the hover surface AND the click target at once.
-      className="my-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-foreground transition-colors hover:bg-black/[0.1] [-webkit-app-region:no-drag]"
-    >
-      <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-black/[0.05]">
+    <div className="shrink-0" style={{ padding: 6 }}>
+      <button
+        onClick={(e) => {
+          const r = e.currentTarget.getBoundingClientRect();
+          onOpenTabsMenu({ top: r.top, left: r.left, right: r.right, bottom: r.bottom });
+        }}
+        aria-label="Tabs menu"
+        style={{ height: 32, width: 32, padding: 0, border: 0 }}
+        className="flex items-center justify-center rounded-lg bg-black/[0.05] text-foreground transition-colors hover:bg-black/[0.1] [-webkit-app-region:no-drag]"
+      >
         <ChevronDown className="h-[18px] w-[18px]" />
-      </span>
-    </button>
+      </button>
+    </div>
   );
 
   if (verticalMode) {
@@ -372,10 +426,20 @@ export function TabStrip({
     // space the menu button used to take), and (if this window draws its
     // own frame) the window controls, all on one row.
     const activeTab = tabs.find((t) => t.id === activeId);
-    const activeFavicon = activeTab && !activeTab.isHome && !activeTab.isSettings ? faviconUrl(activeTab.url) : null;
-    const activeLabel = activeTab ? (activeTab.isHome ? "New Tab" : activeTab.isSettings ? "Settings" : activeTab.title || activeTab.url) : "";
+    const activeFavicon =
+      activeTab && !activeTab.isHome && !activeTab.isSettings ? faviconUrl(activeTab.url) : null;
+    const activeLabel = activeTab
+      ? activeTab.isHome
+        ? "New Tab"
+        : activeTab.isSettings
+          ? "Settings"
+          : activeTab.title || activeTab.url
+      : "";
     return (
-      <div className="relative flex h-11 shrink-0 items-center rounded-t-[10px] pl-3 pr-3 [-webkit-app-region:drag]" style={{ background: "var(--chrome-strip)" }}>
+      <div
+        className="relative flex h-11 shrink-0 items-center rounded-t-[10px] pl-3 pr-3 [-webkit-app-region:drag]"
+        style={{ background: "var(--chrome-strip)" }}
+      >
         <div className="min-w-0 flex-1 [-webkit-app-region:drag]" />
         {activeTab && (
           <div className="pointer-events-none absolute left-1/2 top-1/2 flex max-w-[55%] -translate-x-1/2 -translate-y-1/2 items-center gap-2 [-webkit-app-region:drag]">
@@ -390,29 +454,68 @@ export function TabStrip({
                 }}
               />
             ) : (
-              <TabIcon tab={activeTab} loading={loadingTabIds.has(activeTab.id)} useAppLogo={false} />
+              <TabIcon
+                tab={activeTab}
+                loading={loadingTabIds.has(activeTab.id)}
+                useAppLogo={false}
+              />
             )}
             <span className="truncate text-[13px] font-medium text-foreground">{activeLabel}</span>
           </div>
         )}
         {!hasNativeControls && (
           <div className="-mr-3 flex h-full shrink-0 items-stretch [-webkit-app-region:no-drag]">
-            <button onClick={onMinimize} aria-label="Minimize" className="flex w-[46px] items-center justify-center text-black transition-colors hover:bg-black/[0.06]">
-              <svg width="10" height="1" viewBox="0 0 10 1"><rect width="10" height="1" fill="currentColor" /></svg>
+            <button
+              onClick={onMinimize}
+              aria-label="Minimize"
+              className="flex w-[46px] items-center justify-center text-black transition-colors hover:bg-black/[0.06]"
+            >
+              <svg width="10" height="1" viewBox="0 0 10 1">
+                <rect width="10" height="1" fill="currentColor" />
+              </svg>
             </button>
-            <button onClick={onToggleMaximize} aria-label={isMaximized ? "Restore" : "Maximize"} className="flex w-[46px] items-center justify-center text-black transition-colors hover:bg-black/[0.06]">
+            <button
+              onClick={onToggleMaximize}
+              aria-label={isMaximized ? "Restore" : "Maximize"}
+              className="flex w-[46px] items-center justify-center text-black transition-colors hover:bg-black/[0.06]"
+            >
               {isMaximized ? (
                 <svg width="10" height="10" viewBox="0 0 10 10">
-                  <rect x="0.5" y="2.5" width="7" height="7" fill="none" stroke="currentColor" strokeWidth="1" />
-                  <path d="M2.5 2.5V0.5H9.5V7.5H7.5" fill="none" stroke="currentColor" strokeWidth="1" />
+                  <rect
+                    x="0.5"
+                    y="2.5"
+                    width="7"
+                    height="7"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1"
+                  />
+                  <path
+                    d="M2.5 2.5V0.5H9.5V7.5H7.5"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1"
+                  />
                 </svg>
               ) : (
                 <svg width="10" height="10" viewBox="0 0 10 10">
-                  <rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="1" />
+                  <rect
+                    x="0.5"
+                    y="0.5"
+                    width="9"
+                    height="9"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1"
+                  />
                 </svg>
               )}
             </button>
-            <button onClick={onCloseWindow} aria-label="Close window" className="flex w-[46px] items-center justify-center rounded-tr-[10px] text-black transition-colors hover:bg-[#c42b1c] hover:text-white">
+            <button
+              onClick={onCloseWindow}
+              aria-label="Close window"
+              className="flex w-[46px] items-center justify-center rounded-tr-[10px] text-black transition-colors hover:bg-[#c42b1c] hover:text-white"
+            >
               <svg width="10" height="10" viewBox="0 0 10 10">
                 <path d="M0.5 0.5L9.5 9.5M9.5 0.5L0.5 9.5" stroke="currentColor" strokeWidth="1" />
               </svg>
@@ -424,7 +527,10 @@ export function TabStrip({
   }
 
   return (
-    <div className="relative flex h-11 shrink-0 items-center gap-0 rounded-t-[10px] pl-2.5 pr-3 [-webkit-app-region:drag]" style={{ background: "var(--chrome-strip)" }}>
+    <div
+      className="relative flex h-11 shrink-0 items-center gap-0 rounded-t-[10px] pr-3 [-webkit-app-region:drag]"
+      style={{ background: "var(--chrome-strip)" }}
+    >
       {menuButton}
 
       {/* flex-1 so this row always claims exactly the space left over after
@@ -445,7 +551,10 @@ export function TabStrip({
           doesn't fit. Divider visibility is driven by React state
           (hoveredId), not a CSS sibling trick — that only ever hid one side
           reliably. */}
-      <div ref={containerRef} className="flex min-w-0 flex-1 items-end gap-0 self-end overflow-x-auto pl-2.5 pr-2.5 [-webkit-app-region:drag]">
+      <div
+        ref={containerRef}
+        className="flex min-w-0 flex-1 items-end gap-0 self-end overflow-x-auto pl-2.5 pr-2.5 [-webkit-app-region:drag]"
+      >
         {(() => {
           const seenCollapsedGroups = new Set<string>();
           return orderedTabs.map((tab, i) => {
@@ -458,7 +567,9 @@ export function TabStrip({
               // member tab is actually active — same white/notched look a
               // real active tab gets, since as far as the person can see
               // right now, THIS is the selected tab.
-              const groupIsActive = orderedTabs.some((t) => t.groupId === group.id && t.id === activeId);
+              const groupIsActive = orderedTabs.some(
+                (t) => t.groupId === group.id && t.id === activeId,
+              );
               return (
                 <ContextMenu key={`group-${group.id}`}>
                   <ContextMenuTrigger asChild>
@@ -506,9 +617,16 @@ export function TabStrip({
                           {group.name}
                         </span>
                       ) : (
-                        <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: group.color }} />
+                        <span
+                          className="h-2.5 w-2.5 shrink-0 rounded-full"
+                          style={{ background: group.color }}
+                        />
                       )}
-                      {showText && <span className="shrink-0 text-[12px] text-muted-foreground">{memberCount}</span>}
+                      {showText && (
+                        <span className="shrink-0 text-[12px] text-muted-foreground">
+                          {memberCount}
+                        </span>
+                      )}
                     </div>
                   </ContextMenuTrigger>
                   <ContextMenuContent>
@@ -521,7 +639,10 @@ export function TabStrip({
                       Ungroup
                     </ContextMenuItem>
                     <ContextMenuSeparator />
-                    <ContextMenuItem className="text-destructive" onClick={() => onDeleteGroup(group.id)}>
+                    <ContextMenuItem
+                      className="text-destructive"
+                      onClick={() => onDeleteGroup(group.id)}
+                    >
                       <Trash2 className="mr-2 h-3.5 w-3.5" />
                       Delete group (closes {memberCount} tab{memberCount === 1 ? "" : "s"})
                     </ContextMenuItem>
@@ -533,7 +654,8 @@ export function TabStrip({
             const active = tab.id === activeId;
             const prevActive = i > 0 && orderedTabs[i - 1]?.id === activeId;
             const prevId = i > 0 ? orderedTabs[i - 1]?.id : undefined;
-            const dividerHidden = hoveredId !== null && (hoveredId === tab.id || hoveredId === prevId);
+            const dividerHidden =
+              hoveredId !== null && (hoveredId === tab.id || hoveredId === prevId);
             const showClose = showCloseAlways || hoveredId === tab.id || active;
             // A group has no separate header row — its name lives on a
             // small solid-color capsule right before the first tab of a
@@ -579,7 +701,10 @@ export function TabStrip({
                             {group.name}
                           </span>
                         ) : (
-                          <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: group.color }} />
+                          <span
+                            className="h-2.5 w-2.5 shrink-0 rounded-full"
+                            style={{ background: group.color }}
+                          />
                         )}
                       </div>
                     </ContextMenuTrigger>
@@ -593,7 +718,10 @@ export function TabStrip({
                         Ungroup
                       </ContextMenuItem>
                       <ContextMenuSeparator />
-                      <ContextMenuItem className="text-destructive" onClick={() => onDeleteGroup(group.id)}>
+                      <ContextMenuItem
+                        className="text-destructive"
+                        onClick={() => onDeleteGroup(group.id)}
+                      >
                         <Trash2 className="mr-2 h-3.5 w-3.5" />
                         Delete group
                       </ContextMenuItem>
@@ -619,31 +747,33 @@ export function TabStrip({
                           ? `relative flex ${TAB_HEIGHT} shrink cursor-pointer select-none items-center self-end rounded-t-[10px] bg-background [-webkit-app-region:no-drag]`
                           : `relative flex ${TAB_HEIGHT} shrink cursor-pointer select-none items-center self-end rounded-t-lg text-muted-foreground transition-colors hover:bg-foreground/5 [-webkit-app-region:no-drag]`
                       }
-                      style={{
-                        flexGrow: 1,
-                        flexBasis: 0,
-                        minWidth: MIN_TAB_WIDTH,
-                        maxWidth: MAX_TAB_WIDTH,
-                        touchAction: "none",
-                        WebkitUserDrag: "none",
-                        gap: showText ? 8 : showClose ? 4 : 0,
-                        paddingLeft: showText ? 10 : 0,
-                        paddingRight: showText ? 10 : 0,
-                        // Nudges the favicon/title/close row up slightly
-                        // within the tab's fixed height (items-center) so
-                        // it lines up with the "+" new-tab button, which
-                        // sits a bit lower than the tabs — see that
-                        // button's own comment below.
-                        paddingBottom: 2,
-                        justifyContent: showText ? undefined : "center",
-                        // Light tint of the group's color on top of the
-                        // underline strip below — together with the label
-                        // capsule above, this is what reads as "these tabs
-                        // belong together". The active tab keeps its plain
-                        // white background (its notch corners are already
-                        // the "this one's selected" signal).
-                        background: group && !active ? `${group.color}1f` : undefined,
-                      } as React.CSSProperties}
+                      style={
+                        {
+                          flexGrow: 1,
+                          flexBasis: 0,
+                          minWidth: MIN_TAB_WIDTH,
+                          maxWidth: MAX_TAB_WIDTH,
+                          touchAction: "none",
+                          WebkitUserDrag: "none",
+                          gap: showText ? 8 : showClose ? 4 : 0,
+                          paddingLeft: showText ? 10 : 0,
+                          paddingRight: showText ? 10 : 0,
+                          // Nudges the favicon/title/close row up slightly
+                          // within the tab's fixed height (items-center) so
+                          // it lines up with the "+" new-tab button, which
+                          // sits a bit lower than the tabs — see that
+                          // button's own comment below.
+                          paddingBottom: 2,
+                          justifyContent: showText ? undefined : "center",
+                          // Light tint of the group's color on top of the
+                          // underline strip below — together with the label
+                          // capsule above, this is what reads as "these tabs
+                          // belong together". The active tab keeps its plain
+                          // white background (its notch corners are already
+                          // the "this one's selected" signal).
+                          background: group && !active ? `${group.color}1f` : undefined,
+                        } as React.CSSProperties
+                      }
                     >
                       {group && (
                         // A real element, not a box-shadow — this used to
@@ -653,7 +783,10 @@ export function TabStrip({
                         // reliably staying visible. An explicit
                         // bottom-edge strip has nothing else that can
                         // suppress it.
-                        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[2px] rounded-b-[1px]" style={{ background: group.color }} />
+                        <div
+                          className="pointer-events-none absolute inset-x-0 bottom-0 h-[2px] rounded-b-[1px]"
+                          style={{ background: group.color }}
+                        />
                       )}
                       {active && (
                         <>
@@ -661,10 +794,18 @@ export function TabStrip({
                           <TabNotch side="right" />
                         </>
                       )}
-                      <TabIcon tab={tab} loading={loadingTabIds.has(tab.id)} useAppLogo={useAppLogo} />
+                      <TabIcon
+                        tab={tab}
+                        loading={loadingTabIds.has(tab.id)}
+                        useAppLogo={useAppLogo}
+                      />
                       {showText && (
                         <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">
-                          {tab.isHome ? "New Tab" : tab.isSettings ? "Settings" : tab.title || tab.url}
+                          {tab.isHome
+                            ? "New Tab"
+                            : tab.isSettings
+                              ? "Settings"
+                              : tab.title || tab.url}
                         </span>
                       )}
                       {(tab.isAudible || tab.isMuted) && (
@@ -678,7 +819,11 @@ export function TabStrip({
                           title={tab.isMuted ? "Unmute tab" : "Mute tab"}
                           className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
                         >
-                          {tab.isMuted ? <VolumeX className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
+                          {tab.isMuted ? (
+                            <VolumeX className="h-3.5 w-3.5" />
+                          ) : (
+                            <Volume2 className="h-3.5 w-3.5" />
+                          )}
                         </button>
                       )}
                       {showClose && (
@@ -703,7 +848,10 @@ export function TabStrip({
                           <FolderMinus className="mr-2 h-3.5 w-3.5" />
                           Remove from group
                         </ContextMenuItem>
-                        <ContextMenuItem className="text-destructive" onClick={() => onDeleteGroup(group.id)}>
+                        <ContextMenuItem
+                          className="text-destructive"
+                          onClick={() => onDeleteGroup(group.id)}
+                        >
                           <Trash2 className="mr-2 h-3.5 w-3.5" />
                           Delete group
                         </ContextMenuItem>
@@ -722,8 +870,15 @@ export function TabStrip({
                         </ContextMenuSubTrigger>
                         <ContextMenuSubContent>
                           {groups.map((g) => (
-                            <ContextMenuItem key={g.id} disabled={g.id === group?.id} onClick={() => onAddToGroup(tab.id, g.id)}>
-                              <span className="mr-2 inline-block h-2 w-2 rounded-full" style={{ background: g.color }} />
+                            <ContextMenuItem
+                              key={g.id}
+                              disabled={g.id === group?.id}
+                              onClick={() => onAddToGroup(tab.id, g.id)}
+                            >
+                              <span
+                                className="mr-2 inline-block h-2 w-2 rounded-full"
+                                style={{ background: g.color }}
+                              />
                               {g.name}
                             </ContextMenuItem>
                           ))}
@@ -782,7 +937,9 @@ export function TabStrip({
             aria-label="Minimize"
             className="flex w-[46px] items-center justify-center text-black transition-colors hover:bg-black/[0.06]"
           >
-            <svg width="10" height="1" viewBox="0 0 10 1"><rect width="10" height="1" fill="currentColor" /></svg>
+            <svg width="10" height="1" viewBox="0 0 10 1">
+              <rect width="10" height="1" fill="currentColor" />
+            </svg>
           </button>
           <button
             onClick={onToggleMaximize}
@@ -791,12 +948,33 @@ export function TabStrip({
           >
             {isMaximized ? (
               <svg width="10" height="10" viewBox="0 0 10 10">
-                <rect x="0.5" y="2.5" width="7" height="7" fill="none" stroke="currentColor" strokeWidth="1" />
-                <path d="M2.5 2.5V0.5H9.5V7.5H7.5" fill="none" stroke="currentColor" strokeWidth="1" />
+                <rect
+                  x="0.5"
+                  y="2.5"
+                  width="7"
+                  height="7"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1"
+                />
+                <path
+                  d="M2.5 2.5V0.5H9.5V7.5H7.5"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1"
+                />
               </svg>
             ) : (
               <svg width="10" height="10" viewBox="0 0 10 10">
-                <rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="1" />
+                <rect
+                  x="0.5"
+                  y="0.5"
+                  width="9"
+                  height="9"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1"
+                />
               </svg>
             )}
           </button>
