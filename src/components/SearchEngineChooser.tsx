@@ -27,7 +27,7 @@ export function SearchEngineChooser({ engine, onChange, variant = "standalone" }
         className={
           variant === "standalone"
             ? "flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-[13px] font-medium text-foreground hover:bg-muted"
-            : "flex items-center gap-1 rounded-full bg-background py-0.5 pl-0.5 pr-1.5 shadow-sm"
+            : "flex items-center gap-1 rounded-full bg-background px-1.5 py-0.5 shadow-sm"
         }
       >
         <img

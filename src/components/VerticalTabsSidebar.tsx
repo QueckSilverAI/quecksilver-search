@@ -127,10 +127,10 @@ export function VerticalTabsSidebar({
             onOpenTabsMenu({ top: r.top, left: r.left, right: r.right, bottom: r.bottom });
           }}
           aria-label="Kontrollzentrum"
-          style={{ height: 29, width: 29, padding: 0, border: 0 }}
+          style={{ height: 29, width: 29, aspectRatio: "1 / 1", padding: 0, border: 0, boxSizing: "border-box" }}
           className="flex items-center justify-center rounded-lg bg-black/[0.05] text-foreground transition-colors hover:bg-black/[0.1] [-webkit-app-region:no-drag]"
         >
-          <SlidersHorizontal className="h-4 w-4" />
+          <SlidersHorizontal className="h-4 w-4 shrink-0" />
         </button>
         {/* Plain two-panel icon, same either state — no arrow/chevron
             drawn inside it (unlike PanelLeftClose/PanelLeftOpen) — just a
