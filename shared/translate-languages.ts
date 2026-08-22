@@ -1,9 +1,10 @@
 // Languages offered by the Control center's "Seite übersetzen" and the
-// empty-page context menu's "Auf Englisch übersetzen" (which just hardcodes
-// "en" from this same list). Codes match Google Translate's `tl` query
-// parameter — see electron/main.ts's "translatePage" case in
-// controlCenter:action, the proxy-URL approach chosen over a real
-// translation API (no key, no running cost, works immediately).
+// empty-page context menu's "Translate to English" (which just hardcodes
+// "en" from this same list). Codes match the Google Cloud Translation API's
+// `target` parameter — see electron/main.ts's "translatePage" case in
+// controlCenter:action, which now translates the page in place via
+// electron/translate-injector.ts + the translate-page edge function instead
+// of the earlier translate.google.com URL-rewrite.
 //
 // Single source of truth, imported from both the renderer (language picker
 // UI) and, indirectly, main.ts (which only needs the code the picker sent

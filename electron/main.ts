@@ -133,6 +133,7 @@ import {
 import { existsSync, rmSync, promises as fsPromises } from "node:fs";
 import { OverlayWindowManager, registerOverlayIpc } from "./overlay-window";
 import type { OverlayAction } from "./overlay-types";
+import { translatePageInPlace } from "./translate-injector";
 
 app.name = "QueckSilver Arch";
 // No File/Edit/View/Window/Help bar — this app is deliberately chrome-free
@@ -1207,15 +1208,16 @@ function registerIpc() {
         return tabId ? await ctx.tabs.savePageAs(tabId) : null;
       case "translatePage": {
         // No native Chromium translate (that's a proprietary Chrome
-        // component) — proxy through Google Translate's URL-rewriting
-        // endpoint instead, same tab (per explicit request: URL bar then
-        // shows translate.google.com, original URL isn't preserved).
-        const currentUrl = tabId ? ctx.tabs.getWebContents(tabId)?.getURL() : null;
-        if (tabId && currentUrl) {
-          await ctx.tabs.navigate(
-            tabId,
-            `https://translate.google.com/translate?sl=auto&tl=${encodeURIComponent(action.langCode)}&u=${encodeURIComponent(currentUrl)}`,
-          );
+        // component). Translated in place instead of the earlier
+        // translate.google.com URL-rewrite: extracts the page's text nodes,
+        // sends them through the translate-page edge function (Google Cloud
+        // Translation, proxied so the API key never ships in the app), and
+        // writes the results back into the same nodes — the URL bar keeps
+        // showing the real page throughout. See translate-injector.ts.
+        const wc = tabId ? ctx.tabs.getWebContents(tabId) : null;
+        if (wc) {
+          const result = await translatePageInPlace(wc, action.langCode);
+          if (!result.ok) console.error("[translatePage] failed:", result.error);
         }
         return null;
       }

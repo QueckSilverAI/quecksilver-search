@@ -150,13 +150,13 @@ export function ContextMenuContent({
         <div className="flex flex-col">
           <ContextMenuActionItem
             icon={ArrowLeft}
-            label="Zurück"
+            label="Back"
             shortcut="Alt+←"
             onClick={() => onAction({ type: "goBack" })}
           />
           <ContextMenuActionItem
             icon={RotateCw}
-            label="Aktualisieren"
+            label="Reload"
             shortcut={`${MOD}+R`}
             onClick={() => onAction({ type: "reload" })}
           />
@@ -165,13 +165,13 @@ export function ContextMenuContent({
 
           <ContextMenuActionItem
             icon={Download}
-            label="Speichern unter"
+            label="Save page as…"
             shortcut={`${MOD}+S`}
             onClick={() => onAction({ type: "savePageAs" })}
           />
           <ContextMenuActionItem
             icon={Printer}
-            label="Drucken"
+            label="Print"
             shortcut={`${MOD}+P`}
             onClick={() => onAction({ type: "print" })}
           />
@@ -182,14 +182,14 @@ export function ContextMenuContent({
             <div className="flex flex-col items-center gap-1.5 px-3 py-2">
               <img
                 src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(pageUrl)}`}
-                alt="QR-Code für diese Seite"
+                alt="QR code for this page"
                 className="h-[160px] w-[160px] rounded-lg border border-border"
               />
             </div>
           ) : (
             <ContextMenuActionItem
               icon={QrCode}
-              label="QR-Code für diese Seite generieren"
+              label="Generate QR code for this page"
               onClick={() => setShowQr(true)}
             />
           )}
@@ -198,7 +198,7 @@ export function ContextMenuContent({
 
           <ContextMenuActionItem
             icon={Languages}
-            label="Auf Englisch übersetzen"
+            label="Translate to English"
             onClick={() => onAction({ type: "translateToEnglish" })}
           />
 
@@ -207,7 +207,7 @@ export function ContextMenuContent({
           <ContextMenuActionItem
             icon={Camera}
             label="Screenshot"
-            shortcut={`${MOD}+Umschalt+S`}
+            shortcut={`${MOD}+Shift+S`}
             onClick={() => onAction({ type: "screenshot" })}
           />
 
@@ -215,7 +215,7 @@ export function ContextMenuContent({
 
           <ContextMenuActionItem
             icon={Code2}
-            label="Untersuchen"
+            label="Inspect"
             shortcut="F12"
             onClick={() => onAction({ type: "openDevTools" })}
           />
