@@ -409,16 +409,20 @@ export function TabStrip({
   // border-box to cancel that out inside a class-based size wasn't
   // actually landing square in testing. Explicit inline width/height/
   // padding leaves nothing for a UA stylesheet to add on top of.
-  // Left padding here (10) is deliberately set to match the total gap on
-  // the button's right side: paddingRight (0 here) PLUS the tabs row's own
-  // pl-2.5 (10px NOTCH reserve, see below) that immediately follows this
-  // button. Those two numbers must be read together — that reserve isn't
-  // this element's concern structurally, but it IS the space that visually
-  // reads as "this button's right gap", so this left padding is set to
-  // equal that combined total (10) rather than to 4, which is what made
-  // the button look shifted left of center before.
+  // The row is h-11 (44px) and the button is 32px tall, so centering
+  // (items-center) plus this 4px top/bottom padding puts a 6px gap above
+  // and below the button. To make the button read as evenly inset, the
+  // left/right gaps need to match that 6px too. Left padding is 6 for
+  // that reason. On the right, the visual gap is paddingRight (0 here)
+  // PLUS the tabs row's own pl-2.5 (10px NOTCH reserve, see below) that
+  // immediately follows this button — that reserve isn't this element's
+  // concern structurally, but it IS the space that visually reads as
+  // "this button's right gap". Rather than shrink the notch reserve
+  // (which the tab strip needs at its stated value), marginRight pulls
+  // this whole block 4px to the right, closing that 10px down to 6px to
+  // match the other three sides without touching the notch math.
   const menuButton = (
-    <div className="shrink-0" style={{ paddingTop: 4, paddingBottom: 4, paddingLeft: 10, paddingRight: 0, boxSizing: "border-box" }}>
+    <div className="shrink-0" style={{ paddingTop: 4, paddingBottom: 4, paddingLeft: 6, paddingRight: 0, marginRight: -4, boxSizing: "border-box" }}>
       <button
         onClick={(e) => {
           const r = e.currentTarget.getBoundingClientRect();
