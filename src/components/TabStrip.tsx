@@ -9,6 +9,7 @@ import {
   Plus,
   Search as SearchIcon,
   Settings as SettingsIcon,
+  SlidersHorizontal,
   Trash2,
   Volume2,
   VolumeX,
@@ -115,7 +116,14 @@ export function TabIcon({
 // oklch(...) color function, wrapping it in hsl() (as a previous pass did)
 // produces invalid CSS that silently breaks the whole cutout. 10px to match
 // the window's own corner radius elsewhere.
-const NOTCH = 10;
+// Radius of the little curved corner cut where an active tab meets the
+// row background (TabNotch below). Also drives how much left/right
+// padding the tab-row container reserves so that curve doesn't get
+// clipped by the container's own scroll edge when the first/last tab is
+// the active one — kept deliberately small (6, not the original 10) so
+// that reserved padding doesn't read as a big empty gap next to the
+// Control-center button the rest of the time.
+const NOTCH = 6;
 function TabNotch({ side }: { side: "left" | "right" }) {
   return (
     <div
@@ -404,17 +412,17 @@ export function TabStrip({
   // actually landing square in testing. Explicit inline width/height/
   // padding leaves nothing for a UA stylesheet to add on top of.
   const menuButton = (
-    <div className="shrink-0" style={{ padding: 6 }}>
+    <div className="shrink-0" style={{ padding: 4 }}>
       <button
         onClick={(e) => {
           const r = e.currentTarget.getBoundingClientRect();
           onOpenTabsMenu({ top: r.top, left: r.left, right: r.right, bottom: r.bottom });
         }}
-        aria-label="Tabs menu"
+        aria-label="Kontrollzentrum"
         style={{ height: 32, width: 32, padding: 0, border: 0 }}
         className="flex items-center justify-center rounded-lg bg-black/[0.05] text-foreground transition-colors hover:bg-black/[0.1] [-webkit-app-region:no-drag]"
       >
-        <ChevronDown className="h-[18px] w-[18px]" />
+        <SlidersHorizontal className="h-4 w-4" />
       </button>
     </div>
   );
@@ -541,19 +549,21 @@ export function TabStrip({
           some get closed, instead of stranding out on the right with a gap
           behind it. The container itself carries the drag region (so any
           leftover space past the "+" button still drags the window); each
-          tab and the button opt back out of that individually. pl-2.5/
-          pr-2.5 leave room for the active tab's left/right notches —
-          without them, a notch's -10px offset gets clipped by this
-          container's own scroll edge whenever that tab is first (left) or
-          last (right) in the list. overflow-x-auto is a fallback only: tabs
-          shrink down to MIN_TAB_WIDTH to fit, so it should essentially
-          never trigger, but it's there in case an extreme tab count still
-          doesn't fit. Divider visibility is driven by React state
-          (hoveredId), not a CSS sibling trick — that only ever hid one side
-          reliably. */}
+          tab and the button opt back out of that individually. pl-1.5
+          reserves exactly NOTCH's (now 6px, was 10px) width — the minimum
+          that still keeps the first tab's left notch from getting clipped
+          by this container's own scroll edge while that tab is active,
+          without leaving visibly dead space the rest of the time like the
+          old wider notch/padding pairing did. pr-2.5 is unrelated to the
+          notch — it's clearance for the "+" button's own edge. overflow-x-
+          auto is a fallback only: tabs shrink down to MIN_TAB_WIDTH to fit,
+          so it should essentially never trigger, but it's there in case an
+          extreme tab count still doesn't fit. Divider visibility is driven
+          by React state (hoveredId), not a CSS sibling trick — that only
+          ever hid one side reliably. */}
       <div
         ref={containerRef}
-        className="flex min-w-0 flex-1 items-end gap-0 self-end overflow-x-auto pl-2.5 pr-2.5 [-webkit-app-region:drag]"
+        className="flex min-w-0 flex-1 items-end gap-0 self-end overflow-x-auto pl-1.5 pr-2.5 [-webkit-app-region:drag]"
       >
         {(() => {
           const seenCollapsedGroups = new Set<string>();

@@ -1,12 +1,14 @@
-import { BrowserWindow, WebContentsView } from "electron";
+import { app, BrowserWindow, dialog, WebContentsView } from "electron";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
+import fs from "node:fs/promises";
 import { HOME_URL, SETTINGS_URL, type ContentBounds, type SessionSnapshot, type TabGroup, type TabState, type TabsSnapshot } from "./types";
 import { stepZoom } from "./zoom";
 import { stripTrackingParams } from "./tracking-params";
 import { trackingParamsEnabled, httpsOnlyEnabled, phishingProtectionEnabled } from "./privacy-settings-store";
 import { checkUrlSafety } from "./phishing-guard";
 import { getOriginalHttpUrl, allowHttpOnce } from "./https-upgrade-tracker";
+import { popupBlockEnabled } from "./control-center-store";
 
 // Runs at document-start in every browsed tab, injecting a small clean
 // scrollbar before first paint (see tab-preload.ts) — replaces an earlier
@@ -307,6 +309,243 @@ export class TabManager {
     return this.nightModeTabs.has(id);
   }
 
+  // --- Control center: global dark mode ----------------------------------
+  // Same invert+hue-rotate CSS trick as toggleNightMode above, just applied
+  // to every current tab at once and remembered so every tab created
+  // afterwards gets it too — this is the Control center's "Darkmode
+  // erzwingen" switch, deliberately independent of the per-tab night-mode
+  // toggle (a person could still turn a single tab's night mode off/on on
+  // top of the global one; the two don't share bookkeeping).
+  private globalDarkModeEnabled = false;
+  private readonly globalDarkModeKeys = new Map<string, string>();
+
+  private readonly GLOBAL_DARK_CSS = `
+    html { filter: invert(1) hue-rotate(180deg) !important; background: #fff !important; }
+    img, video, picture, canvas, svg, iframe { filter: invert(1) hue-rotate(180deg) !important; }
+  `;
+
+  async setGlobalDarkMode(enabled: boolean) {
+    this.globalDarkModeEnabled = enabled;
+    for (const [id, view] of this.views) {
+      const wc = view.webContents;
+      const existingKey = this.globalDarkModeKeys.get(id);
+      if (existingKey) {
+        await wc.removeInsertedCSS(existingKey).catch(() => {});
+        this.globalDarkModeKeys.delete(id);
+      }
+      if (enabled) {
+        const key = await wc.insertCSS(this.GLOBAL_DARK_CSS).catch(() => null);
+        if (key) this.globalDarkModeKeys.set(id, key);
+      }
+    }
+  }
+
+  // Called from createTab/loadURL-style paths for a freshly attached view
+  // so a tab opened AFTER the global toggle was flipped on still gets it.
+  private applyGlobalDarkModeTo(id: string, wc: Electron.WebContents) {
+    if (!this.globalDarkModeEnabled) return;
+    wc.insertCSS(this.GLOBAL_DARK_CSS)
+      .then((key) => this.globalDarkModeKeys.set(id, key))
+      .catch(() => {});
+  }
+
+  // --- Control center: master mute ---------------------------------------
+  // Mutes/unmutes every open tab in one shot, and remembers the setting so
+  // every tab created afterwards starts muted too — separate bookkeeping
+  // from the individual per-tab mute (mutedTabs/toggleMute above), same
+  // reasoning as global dark mode vs per-tab night mode.
+  private masterMuteEnabled = false;
+
+  setMasterMute(enabled: boolean) {
+    this.masterMuteEnabled = enabled;
+    for (const view of this.views.values()) {
+      view.webContents.setAudioMuted(enabled);
+    }
+    this.emitChange();
+  }
+
+  private applyMasterMuteTo(wc: Electron.WebContents) {
+    if (this.masterMuteEnabled) wc.setAudioMuted(true);
+  }
+
+  // --- Control center: per-tab JavaScript execution toggle ---------------
+  // Electron's webPreferences.javascript can only be set at WebContentsView
+  // creation time, not flipped live — the Chrome DevTools Protocol's
+  // Emulation domain is the one real way to disable/re-enable script
+  // execution on an ALREADY-RUNNING page without recreating the view (and
+  // therefore without losing the tab's history/scroll position).
+  private javascriptGloballyDisabled = false;
+
+  async setJavaScriptGloballyDisabled(disabled: boolean) {
+    this.javascriptGloballyDisabled = disabled;
+    for (const view of this.views.values()) {
+      await this.applyJsToggle(view.webContents, disabled);
+    }
+  }
+
+  private async applyJsToggle(wc: Electron.WebContents, disabled: boolean) {
+    try {
+      if (!wc.debugger.isAttached()) wc.debugger.attach("1.3");
+      await wc.debugger.sendCommand("Emulation.setScriptExecutionDisabled", { value: disabled });
+    } catch {
+      /* best-effort — some internal pages (chrome UI itself) can't be
+         attached to, that's fine, nothing to disable there anyway */
+    }
+  }
+
+  // --- Control center: network-condition simulation (per active tab) -----
+  private readonly THROTTLE_PRESETS: Record<string, { offline: boolean; latency: number; downloadThroughput: number; uploadThroughput: number } | null> = {
+    off: null,
+    slow3g: { offline: false, latency: 400, downloadThroughput: (500 * 1024) / 8, uploadThroughput: (500 * 1024) / 8 },
+    fast3g: { offline: false, latency: 150, downloadThroughput: (1.6 * 1024 * 1024) / 8, uploadThroughput: (750 * 1024) / 8 },
+    offline: { offline: true, latency: 0, downloadThroughput: 0, uploadThroughput: 0 },
+  };
+
+  async setNetworkThrottle(id: string, preset: "off" | "slow3g" | "fast3g" | "offline") {
+    const wc = this.views.get(id)?.webContents;
+    if (!wc) return;
+    try {
+      if (!wc.debugger.isAttached()) wc.debugger.attach("1.3");
+      await wc.debugger.sendCommand("Network.enable");
+      const conditions = this.THROTTLE_PRESETS[preset];
+      await wc.debugger.sendCommand("Network.emulateNetworkConditions", conditions ?? { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+    } catch {
+      /* best-effort, see applyJsToggle */
+    }
+  }
+
+  // --- Control center: console error counter ------------------------------
+  private consoleErrorCounts = new Map<string, number>();
+
+  private trackConsoleErrors(id: string, wc: Electron.WebContents) {
+    wc.on("console-message", (event) => {
+      // level 2 === "error" in Electron's console-message event
+      if (event.level === 2) {
+        this.consoleErrorCounts.set(id, (this.consoleErrorCounts.get(id) ?? 0) + 1);
+        this.emitChange();
+      }
+    });
+    wc.on("did-navigate", () => this.consoleErrorCounts.set(id, 0));
+  }
+
+  getConsoleErrorCount(id: string): number {
+    return this.consoleErrorCounts.get(id) ?? 0;
+  }
+
+  getTotalConsoleErrorCount(): number {
+    let total = 0;
+    for (const n of this.consoleErrorCounts.values()) total += n;
+    return total;
+  }
+
+  // --- Control center: screenshot + print/save-as-PDF ---------------------
+  async captureScreenshot(id: string): Promise<string | null> {
+    const wc = this.views.get(id)?.webContents;
+    if (!wc) return null;
+    const image = await wc.capturePage();
+    const { filePath, canceled } = await dialog.showSaveDialog({
+      title: "Screenshot speichern",
+      defaultPath: path.join(app.getPath("pictures"), `screenshot-${Date.now()}.png`),
+      filters: [{ name: "PNG-Bild", extensions: ["png"] }],
+    });
+    if (canceled || !filePath) return null;
+    await fs.writeFile(filePath, image.toPNG());
+    return filePath;
+  }
+
+  async saveAsPdf(id: string): Promise<string | null> {
+    const wc = this.views.get(id)?.webContents;
+    if (!wc) return null;
+    const data = await wc.printToPDF({});
+    const { filePath, canceled } = await dialog.showSaveDialog({
+      title: "Als PDF speichern",
+      defaultPath: path.join(app.getPath("documents"), `seite-${Date.now()}.pdf`),
+      filters: [{ name: "PDF-Dokument", extensions: ["pdf"] }],
+    });
+    if (canceled || !filePath) return null;
+    await fs.writeFile(filePath, data);
+    return filePath;
+  }
+
+  printPage(id: string) {
+    this.views.get(id)?.webContents.print({ silent: false });
+  }
+
+  openDevTools(id: string) {
+    this.views.get(id)?.webContents.openDevTools({ mode: "right" });
+  }
+
+  clearCache(): Promise<void> {
+    return this.win.webContents.session.clearCache();
+  }
+
+  // --- Control center: unload (discard) an inactive tab -------------------
+  // Real Chrome-style "tab discarding": destroys the tab's WebContentsView
+  // (freeing its renderer process/GPU resources) while keeping the tab
+  // pill itself around, remembering its URL so switching back to it just
+  // reloads fresh instead of the tab disappearing from the strip. Never
+  // called on the active (or split-secondary) tab — that would blank
+  // whatever the person is currently looking at.
+  private readonly unloadedTabUrls = new Map<string, string>();
+
+  unloadTab(id: string): boolean {
+    if (id === this.activeId || id === this.secondaryId) return false;
+    const view = this.views.get(id);
+    if (!view) return false;
+    const url = view.webContents.getURL();
+    if (url) this.unloadedTabUrls.set(id, url);
+    if (this.win.contentView.children.includes(view)) this.win.contentView.removeChildView(view);
+    view.webContents.close();
+    this.views.delete(id);
+    this.emitChange();
+    return true;
+  }
+
+  isUnloaded(id: string): boolean {
+    return this.unloadedTabUrls.has(id);
+  }
+
+  // Reloads a discarded tab's view on demand — callers (switchTo) check
+  // isUnloaded() first and call this instead of just re-showing the
+  // (no-longer-existing) view.
+  reviveUnloadedTab(id: string): string | null {
+    const url = this.unloadedTabUrls.get(id);
+    if (!url) return null;
+    this.unloadedTabUrls.delete(id);
+    return url;
+  }
+
+  unloadAllBackgroundTabs(): number {
+    let count = 0;
+    for (const id of [...this.views.keys()]) {
+      if (this.unloadTab(id)) count++;
+    }
+    return count;
+  }
+
+  // --- Control center: background-tab throttling --------------------------
+  // Electron's own real mechanism for this (not a simulation): a
+  // backgrounded renderer with this set gets deprioritized timers/rAF the
+  // same way Chrome itself throttles inactive tabs. Applied to every
+  // non-active view now, and remembered so new tabs get it too — the
+  // active/secondary tab is deliberately left un-throttled (set false)
+  // even while the setting is on, since that's the one the person is
+  // actually looking at.
+  private backgroundTabsThrottled = true;
+
+  setBackgroundTabsThrottled(enabled: boolean) {
+    this.backgroundTabsThrottled = enabled;
+    for (const [id, view] of this.views) {
+      const isForeground = id === this.activeId || id === this.secondaryId;
+      view.webContents.setBackgroundThrottling(isForeground ? false : enabled);
+    }
+  }
+
+  private applyBackgroundThrottleTo(id: string, wc: Electron.WebContents) {
+    const isForeground = id === this.activeId || id === this.secondaryId;
+    wc.setBackgroundThrottling(isForeground ? false : this.backgroundTabsThrottled);
+  }
+
   // Speaker-icon toggle in TabStrip.tsx — Electron's own setAudioMuted()
   // does the actual muting (silences the tab's audio output directly,
   // independent of whatever volume control the page's own player might
@@ -503,6 +742,10 @@ export class TabManager {
           },
         };
       }
+      // Control center's "Popup-Block": when on, a non-auth popup is
+      // dropped entirely (real popup blocking) instead of being turned
+      // into a new tab below.
+      if (popupBlockEnabled()) return { action: "deny" };
       // Anything that isn't a known auth-popup flow (checked above) still
       // shouldn't spawn a real OS window, but overwriting the CURRENT tab
       // with wherever the popup wanted to go is its own bug: this is the
@@ -533,6 +776,13 @@ export class TabManager {
       this.onContextMenuRequest?.(id, view.webContents, params, this.bounds);
     });
     view.webContents.on("dom-ready", () => view.setBackgroundColor("#ffffff"));
+    // Control center globals that need to apply to every NEW tab too, not
+    // just the ones open when the toggle was flipped.
+    this.applyMasterMuteTo(view.webContents);
+    this.applyGlobalDarkModeTo(id, view.webContents);
+    if (this.javascriptGloballyDisabled) void this.applyJsToggle(view.webContents, true);
+    this.trackConsoleErrors(id, view.webContents);
+    this.applyBackgroundThrottleTo(id, view.webContents);
     // HTML5 Fullscreen API (YouTube's fullscreen button, video players,
     // etc.) — a *document* asking to fill the screen, completely separate
     // from F11's OS-level "hide our own chrome" fullscreen (see
@@ -716,6 +966,9 @@ export class TabManager {
     // read properties of undefined (reading 'close')" before.
     if (view.webContents && !view.webContents.isDestroyed()) view.webContents.close();
     this.views.delete(id);
+    this.globalDarkModeKeys.delete(id);
+    this.consoleErrorCounts.delete(id);
+    this.unloadedTabUrls.delete(id);
     this.homeTabs.delete(id);
     this.settingsTabs.delete(id);
     this.manualZoomTabs.delete(id);

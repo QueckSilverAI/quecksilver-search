@@ -15,7 +15,7 @@
 // site was open. Collapsing that into a single always-in-flow width,
 // toggled only by a deliberate click, means the page only ever moves
 // when the person actually asked it to.
-import { ChevronDown, PanelLeft, Plus, X } from "lucide-react";
+import { PanelLeft, Plus, SlidersHorizontal, X } from "lucide-react";
 import type { TabState } from "@/hooks/use-browser-api";
 import { TabIcon } from "@/components/TabStrip";
 
@@ -126,11 +126,11 @@ export function VerticalTabsSidebar({
             const r = e.currentTarget.getBoundingClientRect();
             onOpenTabsMenu({ top: r.top, left: r.left, right: r.right, bottom: r.bottom });
           }}
-          aria-label="Tabs menu"
+          aria-label="Kontrollzentrum"
           style={{ height: 29, width: 29, padding: 0, border: 0 }}
           className="flex items-center justify-center rounded-lg bg-black/[0.05] text-foreground transition-colors hover:bg-black/[0.1] [-webkit-app-region:no-drag]"
         >
-          <ChevronDown className="h-[18px] w-[18px]" />
+          <SlidersHorizontal className="h-4 w-4" />
         </button>
         {/* Plain two-panel icon, same either state — no arrow/chevron
             drawn inside it (unlike PanelLeftClose/PanelLeftOpen) — just a
@@ -166,8 +166,16 @@ export function VerticalTabsSidebar({
   ) : (
     // Collapsed strip: the toggle button up top (so it's always
     // reachable, whatever state the sidebar is in), then favicons, then
-    // a "+" button.
-    <div className="flex flex-1 flex-col items-center gap-1 overflow-y-auto py-2 [-webkit-app-region:no-drag]">
+    // a "+" button. pt-0 on this wrapper (not the same py-2 the rest of
+    // the column uses) deliberately matches the open state's row above
+    // (px-1.5 pb-1.5 pt-0) — both start the toggle button at the exact
+    // same y=0 offset from the sidebar's top edge. Before this, this
+    // wrapper used a plain py-2 (8px top padding), which pushed the
+    // button 8px lower than in the open state — visible as the Control
+    // center/toggle buttons "jumping down" the moment the sidebar
+    // collapsed. pb-2 alone keeps the same breathing room above the
+    // favicon list below it.
+    <div className="flex flex-1 flex-col items-center gap-1 overflow-y-auto pt-0 pb-2 [-webkit-app-region:no-drag]">
       <button
         onClick={onToggleOpen}
         aria-label="Expand sidebar"

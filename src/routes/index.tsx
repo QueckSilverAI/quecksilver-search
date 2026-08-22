@@ -38,6 +38,7 @@ import { setPendingSettingsAnchor } from "@/lib/settings-anchor";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useBrowserApi, HOME_URL, SETTINGS_URL } from "@/hooks/use-browser-api";
+import { useControlCenter } from "@/hooks/use-control-center";
 import { useBookmarks } from "@/hooks/use-bookmarks";
 import { useHeaderFavorites } from "@/hooks/use-header-favorites";
 import { useDownloads } from "@/hooks/use-downloads";
@@ -145,6 +146,19 @@ function Index() {
     setTabGroup,
     togglePiP,
   } = useBrowserApi();
+  const { settings: controlCenterSettings, update: updateControlCenter, runAction: runControlCenterAction, getConsoleErrorTotal } =
+    useControlCenter();
+  // Cheap in-memory read on the main process side, polled only while
+  // something might be showing it (the Control center dropdown) — a
+  // short interval is fine since it's just a Map lookup, no disk/IPC cost
+  // to speak of.
+  const [consoleErrorTotal, setConsoleErrorTotal] = useState(0);
+  useEffect(() => {
+    const interval = setInterval(() => {
+      void getConsoleErrorTotal().then(setConsoleErrorTotal);
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [getConsoleErrorTotal]);
   const { bookmarks, setBookmarks } = useBookmarks();
   const {
     favorites: headerFavorites,
@@ -499,6 +513,10 @@ function Index() {
             newTab(entry.url);
             setRecentlyClosed((prev) => prev.filter((t) => t.id !== action.id));
           }
+        } else if (action.type === "cc:set") {
+          void updateControlCenter(action.patch);
+        } else if (action.type === "cc:action") {
+          void runControlCenterAction(action.request);
         }
         return;
       }
@@ -719,8 +737,10 @@ function Index() {
         openedAt: t.openedAt,
       })),
       recentlyClosed,
+      controlCenter: controlCenterSettings,
+      consoleErrorTotal,
     });
-  }, [tabs, activeId, verticalTabsEnabled, recentlyClosed]);
+  }, [tabs, activeId, verticalTabsEnabled, recentlyClosed, controlCenterSettings, consoleErrorTotal]);
   // Right-click on an image/link/selection inside a tab now opens the
   // native overlay window directly from the main process — see
   // electron/main.ts's showContextMenu and src/overlay/ContextMenuContent
@@ -1457,6 +1477,8 @@ function Index() {
                   openedAt: t.openedAt,
                 })),
                 recentlyClosed,
+                controlCenter: controlCenterSettings,
+                consoleErrorTotal,
               },
               rect,
             )
@@ -2074,6 +2096,8 @@ function Index() {
                     openedAt: t.openedAt,
                   })),
                   recentlyClosed,
+                  controlCenter: controlCenterSettings,
+                  consoleErrorTotal,
                 },
                 rect,
               )

@@ -14,6 +14,7 @@ import type {
   ToolResult,
 } from "./types";
 import type { OverlayAction, OverlayAnchor, OverlayKind } from "./overlay-types";
+import type { ControlCenterSettings, ControlCenterActionRequest } from "./control-center-store";
 
 const tabs = {
   new: (url?: string): Promise<string> => ipcRenderer.invoke("tabs:new", url),
@@ -200,6 +201,19 @@ const privacy = {
   get: (): Promise<PrivacySettings> => ipcRenderer.invoke("privacy:get"),
   set: (patch: Partial<PrivacySettings>): Promise<PrivacySettings> => ipcRenderer.invoke("privacy:set", patch),
 };
+// Backs the top-left "Control center" dropdown (ControlCenterContent.tsx)
+// — plain get/set for the persisted toggles, plus a single fire-and-forget
+// "action" channel for one-shot commands that aren't a setting themselves
+// (open devtools, take a screenshot, ...). Mirrors the tabs/privacy split
+// above: settings vs. imperative commands.
+const controlCenter = {
+  get: (): Promise<ControlCenterSettings> => ipcRenderer.invoke("controlCenter:get"),
+  set: (patch: Partial<ControlCenterSettings>): Promise<ControlCenterSettings> =>
+    ipcRenderer.invoke("controlCenter:set", patch),
+  action: (request: ControlCenterActionRequest): Promise<unknown> =>
+    ipcRenderer.invoke("controlCenter:action", request),
+  getConsoleErrorTotal: (): Promise<number> => ipcRenderer.invoke("controlCenter:consoleErrorTotal"),
+};
 type TorStatus =
   | { state: "stopped" }
   | { state: "starting"; bootstrapPercent: number; message: string }
@@ -356,6 +370,7 @@ contextBridge.exposeInMainWorld("browserAPI", {
   extensions,
   appUpdate,
   privacy,
+  controlCenter,
   tor,
   window: windowControls,
   overlay,
@@ -378,6 +393,7 @@ export type BrowserAPI = {
   extensions: typeof extensions;
   appUpdate: typeof appUpdate;
   privacy: typeof privacy;
+  controlCenter: typeof controlCenter;
   tor: typeof tor;
   window: typeof windowControls;
   overlay: typeof overlay;

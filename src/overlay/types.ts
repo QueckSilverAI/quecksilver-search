@@ -238,14 +238,58 @@ export type FavoriteFolderOverlayAction =
   | { type: "removeFromFolder"; id: string }
   | { type: "delete"; id: string };
 
+// --- Control center (renders inside the tabsMenu overlay slot) --------------
+// Renderer-side copy of electron/control-center-store.ts's types — same
+// reasoning as use-privacy-settings.ts's own hand-duplicated PrivacySettings:
+// the renderer never imports electron/ code directly.
+export type NetworkThrottlePreset = "off" | "slow3g" | "fast3g" | "offline";
+
+export type ControlCenterSettings = {
+  adBlockEnabled: boolean;
+  javascriptDisabled: boolean;
+  cookiesBlocked: boolean;
+  doNotTrack: boolean;
+  autoplayBlock: boolean;
+  popupBlock: boolean;
+  networkThrottle: NetworkThrottlePreset;
+  dnsOverHttpsEnabled: boolean;
+  cameraGlobalBlock: boolean;
+  micGlobalBlock: boolean;
+  locationGlobalBlock: boolean;
+  vpnEnabled: boolean;
+  unloadBackgroundTabsOnIdle: boolean;
+  backgroundTabsThrottled: boolean;
+  hardwareAcceleration: boolean;
+  masterMute: boolean;
+  darkModeForced: boolean;
+  globalZoomFactor: number;
+  focusMode: boolean;
+};
+
+export type ControlCenterActionType =
+  | "openDevTools"
+  | "reloadNoCache"
+  | "clearCache"
+  | "screenshot"
+  | "printPdf"
+  | "print"
+  | "unloadTab"
+  | "unloadAllBackgroundTabs"
+  | "setNetworkThrottle";
+
+export type ControlCenterActionRequest =
+  | { type: Exclude<ControlCenterActionType, "setNetworkThrottle">; tabId?: string }
+  | { type: "setNetworkThrottle"; tabId?: string; preset: NetworkThrottlePreset };
+
 // --- Tabs menu (belowRight placement) ---------------------------------------
-// Opened from the chevron button that replaced the old QueckSilver logo
-// button at the top-left of TabStrip (see TabStrip.tsx's onOpenTabsMenu).
-// Deliberately minimal, unlike the full tabSearch dialog above: just the
-// one "Enable vertical tabs" toggle up top, then the plain list of
-// currently open tabs below it — no search field, no "recently closed"
-// section. Kept live via overlay.update the same way tabSearch already is
-// (index.tsx already has the tab list in React state).
+// Opened from the Control center button at the top-left of TabStrip (see
+// TabStrip.tsx's onOpenTabsMenu — kept its original name/kind ("tabsMenu")
+// even though ControlCenterContent.tsx now renders in this slot, to avoid
+// re-wiring the overlay-kind plumbing for what's really the same trigger
+// button with a bigger dropdown). Top section is the original minimal
+// "Enable vertical tabs" toggle + tab list; below that, the full Control
+// center grid — see ControlCenterContent.tsx. Kept live via overlay.update
+// the same way tabSearch already is.
 export type TabsMenuOverlayPayload = {
   verticalTabsEnabled: boolean;
   tabs: {
@@ -265,9 +309,16 @@ export type TabsMenuOverlayPayload = {
     isSettings: boolean;
     closedAt: number;
   }[];
+  controlCenter: ControlCenterSettings;
+  consoleErrorTotal: number;
 };
 
 export type TabsMenuOverlayAction =
   | { type: "toggleVerticalTabs"; enabled: boolean }
   | { type: "switch"; id: string }
-  | { type: "reopenClosed"; id: string };
+  | { type: "reopenClosed"; id: string }
+  // Control center additions — both go through notifyAction (see
+  // overlay.tsx/ControlCenterContent.tsx), so the dropdown stays open
+  // while flipping several settings in a row.
+  | { type: "cc:set"; patch: Partial<ControlCenterSettings> }
+  | { type: "cc:action"; request: ControlCenterActionRequest };

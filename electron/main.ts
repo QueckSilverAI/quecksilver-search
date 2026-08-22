@@ -54,6 +54,12 @@ import { autoUpdater } from "electron-updater";
 import { readSnapshot, writeSnapshot, lastExitWasClean, markRunning, markCleanExit, getRestoreOnStart, setRestoreOnStart } from "./session-store";
 import { recordVisit, listFrequentSites } from "./frequent-sites-store";
 import { getPrivacySettings, setPrivacySettings } from "./privacy-settings-store";
+import {
+  getControlCenterSettings,
+  setControlCenterSettings,
+  type ControlCenterSettings,
+  type ControlCenterActionRequest,
+} from "./control-center-store";
 import { startTor, stopTor, onTorStatusChange, getTorStatus, getSocksProxyRule, requestNewIdentity } from "./tor-manager";
 import { listSitePermissions, setSitePermission, removeSitePermission, type PermissionKind, type PermissionState } from "./site-permissions-store";
 import { loadStoredExtensions, addExtension, listExtensions, removeExtension, setExtensionEnabled } from "./extensions-store";
@@ -69,6 +75,19 @@ Menu.setApplicationMenu(null);
 // during Chromium's own startup, before app.whenReady() ever fires (see
 // privacy.ts for why this specific one exists).
 applyEarlyPrivacySwitches();
+
+// Control center's "Autoplay-Block" and "Hardware-Beschleunigung" only
+// take effect via Chromium command-line switches / an API that MUST run
+// before app.whenReady() — same constraint as applyEarlyPrivacySwitches()
+// above. Read once, synchronously, at startup; toggling either setting
+// later in Settings/Control center still persists immediately, it just
+// needs the next app launch to actually apply (surfaced as a "Neustart
+// erforderlich" hint in ControlCenterContent.tsx).
+{
+  const cc = getControlCenterSettings();
+  if (cc.autoplayBlock) app.commandLine.appendSwitch("autoplay-policy", "user-gesture-required");
+  if (!cc.hardwareAcceleration) app.disableHardwareAcceleration();
+}
 
 // Bundled to CommonJS by scripts/build-electron.mjs, so __dirname is available
 // natively here regardless of the app's own package.json "type": "module".
@@ -926,6 +945,76 @@ function registerIpc() {
   });
   ipcMain.handle("app:installUpdate", () => autoUpdater.quitAndInstall());
   ipcMain.handle("session:setRestoreOnStart", (_e, value: boolean) => setRestoreOnStart(value));
+
+  // --- Control center --------------------------------------------------
+  // Backs the new top-left Control center dropdown (replaced the old
+  // chevron/tabsMenu-only button, see ControlCenterContent.tsx). Plain
+  // get/set for the persisted flags, plus a single "action" channel for
+  // one-shot commands (open devtools, screenshot, ...) that don't belong
+  // in the settings object itself.
+  ipcMain.handle("controlCenter:get", () => getControlCenterSettings());
+  ipcMain.handle("controlCenter:set", async (e, patch: Partial<ControlCenterSettings>) => {
+    const next = setControlCenterSettings(patch);
+    const ctx = contextFor(e);
+
+    // Side effects that need to touch every open tab right now, not just
+    // be read lazily on the next request/permission check.
+    if (patch.masterMute !== undefined) ctx?.tabs.setMasterMute(patch.masterMute);
+    if (patch.darkModeForced !== undefined) await ctx?.tabs.setGlobalDarkMode(patch.darkModeForced);
+    if (patch.javascriptDisabled !== undefined) await ctx?.tabs.setJavaScriptGloballyDisabled(patch.javascriptDisabled);
+    if (patch.globalZoomFactor !== undefined) ctx?.tabs.setDefaultZoom(patch.globalZoomFactor);
+    if (patch.backgroundTabsThrottled !== undefined) ctx?.tabs.setBackgroundTabsThrottled(patch.backgroundTabsThrottled);
+
+    // VPN toggle is an alias for the existing Tor manager — this app has
+    // no other anonymization layer, see the masterplan's open question
+    // about a real VPN protocol vs. Tor.
+    if (patch.vpnEnabled !== undefined) {
+      if (patch.vpnEnabled) await startTor().catch((err) => console.error("[control-center] VPN (Tor) start failed:", err));
+      else stopTor();
+    }
+
+    // DNS-over-HTTPS toggle is an alias for the existing privacy-settings
+    // store's dohProvider (off <-> cloudflare) — one on/off switch here
+    // instead of the full provider picker that already lives in Settings.
+    if (patch.dnsOverHttpsEnabled !== undefined) {
+      setPrivacySettings({ dohProvider: patch.dnsOverHttpsEnabled ? "cloudflare" : "off" });
+    }
+
+    return next;
+  });
+  ipcMain.handle("controlCenter:action", async (e, action: ControlCenterActionRequest) => {
+    const ctx = contextFor(e);
+    if (!ctx) return null;
+    const tabId = action.tabId ?? ctx.tabs.getActiveId();
+    switch (action.type) {
+      case "openDevTools":
+        if (tabId) ctx.tabs.openDevTools(tabId);
+        return null;
+      case "reloadNoCache":
+        if (tabId) ctx.tabs.reload(tabId, true);
+        return null;
+      case "clearCache":
+        await ctx.tabs.clearCache();
+        return null;
+      case "screenshot":
+        return tabId ? await ctx.tabs.captureScreenshot(tabId) : null;
+      case "printPdf":
+        return tabId ? await ctx.tabs.saveAsPdf(tabId) : null;
+      case "print":
+        if (tabId) ctx.tabs.printPage(tabId);
+        return null;
+      case "unloadTab":
+        return tabId ? ctx.tabs.unloadTab(tabId) : false;
+      case "unloadAllBackgroundTabs":
+        return ctx.tabs.unloadAllBackgroundTabs();
+      case "setNetworkThrottle":
+        if (tabId) await ctx.tabs.setNetworkThrottle(tabId, action.preset);
+        return null;
+      default:
+        return null;
+    }
+  });
+  ipcMain.handle("controlCenter:consoleErrorTotal", (e) => contextFor(e)?.tabs.getTotalConsoleErrorCount() ?? 0);
 
   ipcMain.handle("bookmarks:list", (e) => listBookmarks(contextFor(e)?.win.id ?? -1));
   ipcMain.handle("bookmarks:save", (e, bookmarks: Bookmark[]) => {

@@ -2,6 +2,14 @@ import { app, session as electronSession, BrowserWindow } from "electron";
 import { getSitePermission, recordDefaultBlock, type PermissionKind } from "./site-permissions-store";
 import { recordHttpsUpgrade, consumeHttpExemption } from "./https-upgrade-tracker";
 import { getPrivacySettings } from "./privacy-settings-store";
+import {
+  adBlockEnabled,
+  doNotTrackEnabled,
+  cookiesBlocked,
+  cameraGloballyBlocked,
+  micGloballyBlocked,
+  locationGloballyBlocked,
+} from "./control-center-store";
 
 // Applied once, globally, to session.defaultSession — every tab's
 // WebContentsView uses that session (no per-profile partitioning exists
@@ -72,8 +80,10 @@ export function applyPrivacyHardening(targetSession?: Electron.Session) {
   const ses = targetSession ?? electronSession.defaultSession;
 
   // --- Tracker/ad blocking -------------------------------------------
+  // Gated by the Control center's "Add-Blocker" toggle (default on, so
+  // behavior is unchanged for anyone who never opens it).
   ses.webRequest.onBeforeRequest((details, callback) => {
-    if (hostMatches(details.url)) {
+    if (adBlockEnabled() && hostMatches(details.url)) {
       callback({ cancel: true });
       return;
     }
@@ -107,7 +117,13 @@ export function applyPrivacyHardening(targetSession?: Electron.Session) {
   // --- Do-Not-Track + trimmed cross-site Referer ----------------------
   ses.webRequest.onBeforeSendHeaders((details, callback) => {
     const headers = { ...details.requestHeaders };
-    headers["DNT"] = "1";
+    if (doNotTrackEnabled()) headers["DNT"] = "1";
+    // Control center's "Cookies blockieren" — strips any outgoing Cookie
+    // header entirely rather than trying to distinguish first/third-party
+    // here (that distinction needs details.resourceType + the frame's own
+    // top-level origin, which isn't reliably available at this hook for
+    // every request type) — the simple, honest version of "block cookies".
+    if (cookiesBlocked()) delete headers["Cookie"];
     // Cuts a cross-site Referer down to just the origin (path/query
     // dropped) — matches browsers' "strict-origin-when-cross-origin"
     // default, so a link out to another site no longer hands it your
@@ -125,6 +141,20 @@ export function applyPrivacyHardening(targetSession?: Electron.Session) {
       }
     }
     callback({ requestHeaders: headers });
+  });
+
+  // Strips incoming Set-Cookie response headers too — stopping the
+  // OUTGOING Cookie header alone still lets a site set/refresh cookies
+  // that would go out on the person's very next request.
+  ses.webRequest.onHeadersReceived((details, callback) => {
+    if (!cookiesBlocked()) {
+      callback({});
+      return;
+    }
+    const headers = { ...details.responseHeaders };
+    delete headers["set-cookie"];
+    delete headers["Set-Cookie"];
+    callback({ responseHeaders: headers });
   });
 
   // --- WebRTC IP leak protection --------------------------------------
@@ -163,9 +193,28 @@ export function applyPrivacyHardening(targetSession?: Electron.Session) {
       callback(true);
       return;
     }
+    // geolocation has no per-site store entry (see PERMISSION_KIND_MAP's
+    // comment) — it's governed entirely by the Control center's
+    // "Standortfreigabe global" toggle, defaulting to blocked (the
+    // app's original hardcoded behavior).
+    if (permission === "geolocation") {
+      callback(!locationGloballyBlocked());
+      return;
+    }
     const kind = PERMISSION_KIND_MAP[permission];
     const win = BrowserWindow.fromWebContents(webContents);
     if (!kind || !win) {
+      callback(false);
+      return;
+    }
+    // Control center's "Kamera/Mikrofon global" toggles override any
+    // per-site "allow" a person may have granted earlier — a hard kill
+    // switch, not just a different default.
+    if (kind === "camera" && cameraGloballyBlocked()) {
+      callback(false);
+      return;
+    }
+    if (kind === "microphone" && micGloballyBlocked()) {
       callback(false);
       return;
     }
@@ -186,9 +235,12 @@ export function applyPrivacyHardening(targetSession?: Electron.Session) {
   });
   ses.setPermissionCheckHandler((webContents, permission) => {
     if (permission === "fullscreen") return true;
+    if (permission === "geolocation") return !locationGloballyBlocked();
     const kind = PERMISSION_KIND_MAP[permission];
     const win = webContents ? BrowserWindow.fromWebContents(webContents) : null;
     if (!kind || !win) return false;
+    if (kind === "camera" && cameraGloballyBlocked()) return false;
+    if (kind === "microphone" && micGloballyBlocked()) return false;
     try {
       const domain = new URL(webContents!.getURL()).hostname;
       return getSitePermission(win.id, domain)?.[kind] === "allow";

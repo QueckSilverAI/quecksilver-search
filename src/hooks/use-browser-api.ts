@@ -238,6 +238,14 @@ type BrowserAPI = {
       torSecurityLevel: "standard" | "safer" | "safest";
     }>;
   };
+  controlCenter: {
+    get: () => Promise<import("@/hooks/use-control-center").ControlCenterSettings>;
+    set: (
+      patch: Partial<import("@/hooks/use-control-center").ControlCenterSettings>,
+    ) => Promise<import("@/hooks/use-control-center").ControlCenterSettings>;
+    action: (request: import("@/hooks/use-control-center").ControlCenterActionRequest) => Promise<unknown>;
+    getConsoleErrorTotal: () => Promise<number>;
+  };
   tor: {
     getStatus: () => Promise<
       | { state: "stopped" }
