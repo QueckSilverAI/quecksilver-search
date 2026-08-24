@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  Bell, Camera, Check, ChevronDown, ChevronLeft, ChevronRight, Columns2, Download, Edit3, Eye, EyeOff, FolderOpen, Globe, KeyRound, Link2, Lock, Mic, Monitor,
-  Moon, Palette, Plus, PictureInPicture2, RotateCw, Search, Settings as SettingsIcon, ShieldAlert, Star, Sun, Trash2, User, Zap,
+  Bell, Bot, Camera, Check, ChevronDown, ChevronLeft, ChevronRight, Columns2, Download, Edit3, Eye, EyeOff, FolderOpen, Globe, KeyRound, Link2, Lock, Mic, Monitor,
+  Moon, Palette, Plus, PictureInPicture2, RotateCcw, RotateCw, Search, Settings as SettingsIcon, ShieldAlert, Star, Sun, Trash2, User, Zap,
 } from "lucide-react";
 import { useAccentColor, useColorScheme, THEME_COLORS, type ColorScheme } from "@/lib/theme";
 import { useSearchEngine, SEARCH_ENGINES, useZoomLevel, useHeaderFavoritesBarVisible } from "@/lib/settings-store";
@@ -13,6 +13,7 @@ import { useProfiles } from "@/hooks/use-profiles";
 import { usePasswords } from "@/hooks/use-passwords";
 import { useSitePermissions } from "@/hooks/use-site-permissions";
 import { usePrivacySettings, type DohProvider } from "@/hooks/use-privacy-settings";
+import { useZoraSettings, ZORA_PRESET_LABELS, type ZoraPreset } from "@/hooks/use-zora-settings";
 import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -158,6 +159,8 @@ export function SettingsView({ nightModeTabId }: { nightModeTabId?: string | nul
   const { favorites, add: addFavorite, addMany: addManyFavorites, update: updateFavorite, remove: removeFavorite } = useHeaderFavorites();
   const { visible: headerFavoritesBarVisible, setVisible: setHeaderFavoritesBarVisible } = useHeaderFavoritesBarVisible();
   const { items: downloadItems, folder: downloadFolder, remove: removeDownload, open: openDownload, showInFolder, pickFolder } = useDownloads();
+  const { settings: zoraSettings, effective: zoraEffective, catalog: zoraCatalog, setPreset: setZoraPreset, setToolPermission: setZoraToolPermission } = useZoraSettings();
+  const [zoraToolQuery, setZoraToolQuery] = useState("");
   const downloadSearchRef = useRef<HTMLInputElement | null>(null);
   const [downloadSearchQuery, setDownloadSearchQuery] = useState("");
   const filteredDownloadItems = downloadSearchQuery.trim()
@@ -890,6 +893,100 @@ export function SettingsView({ nightModeTabId }: { nightModeTabId?: string | nul
         </Section>
 
         {/* Privacy & Security */}
+        {/* Zora tool permissions */}
+        <Section id="zora" title="Zora">
+          <SettingsCard>
+            <CardSection>
+              <div className="mb-3 flex items-center gap-3">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[9px] bg-muted">
+                  <Bot className="h-4 w-4 text-muted-foreground" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-foreground">How much Zora can do on its own</p>
+                  <p className="mt-0.5 text-xs leading-snug text-muted-foreground">
+                    Choose a preset, or fine-tune individual tools below. Clicking or typing on a banking/payment
+                    site always asks first, no matter what's set here.
+                  </p>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {(Object.keys(ZORA_PRESET_LABELS) as ZoraPreset[]).map((preset) => (
+                  <Chip
+                    key={preset}
+                    label={ZORA_PRESET_LABELS[preset].label}
+                    selected={zoraSettings.preset === preset}
+                    onClick={() => void setZoraPreset(preset)}
+                  />
+                ))}
+              </div>
+              <p className="mt-2 text-xs leading-snug text-muted-foreground">
+                {ZORA_PRESET_LABELS[zoraSettings.preset].description}
+              </p>
+            </CardSection>
+            <Divider />
+            <CardSection>
+              <div className="relative mb-2">
+                <Search className="pointer-events-none absolute left-3.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={zoraToolQuery}
+                  onChange={(e) => setZoraToolQuery(e.target.value)}
+                  placeholder="Search tools"
+                  className="h-8 rounded-full pl-9 text-[12.5px]"
+                />
+              </div>
+              {(() => {
+                const q = zoraToolQuery.trim().toLowerCase();
+                const entries = Object.entries(zoraCatalog).filter(
+                  ([name, entry]) =>
+                    !q || name.toLowerCase().includes(q) || entry.description.toLowerCase().includes(q) || entry.category.toLowerCase().includes(q),
+                );
+                const byCategory = new Map<string, [string, (typeof zoraCatalog)[string]][]>();
+                for (const [name, entry] of entries) {
+                  const list = byCategory.get(entry.category) ?? [];
+                  list.push([name, entry]);
+                  byCategory.set(entry.category, list);
+                }
+                if (entries.length === 0) {
+                  return <p className="px-1 py-3 text-center text-xs text-muted-foreground">No matching tools</p>;
+                }
+                return [...byCategory.entries()].map(([category, tools]) => (
+                  <div key={category} className="mb-2 last:mb-0">
+                    <p className="mb-1 mt-2 px-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/80">
+                      {category}
+                    </p>
+                    {tools.map(([name, entry]) => {
+                      const hasOverride = zoraSettings.toolPermissions[name] !== undefined;
+                      const isAuto = (zoraEffective[name] ?? "auto") === "auto";
+                      return (
+                        <div key={name} className="flex items-center gap-2 py-1.5">
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-[12.5px] font-medium text-foreground">{name}</p>
+                            <p className="truncate text-[11px] text-muted-foreground">{entry.description}</p>
+                          </div>
+                          {hasOverride && (
+                            <button
+                              onClick={() => void setZoraToolPermission(name, null)}
+                              title="Reset to preset default"
+                              className="shrink-0 rounded-full p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                            >
+                              <RotateCcw className="h-3 w-3" />
+                            </button>
+                          )}
+                          <span className="shrink-0 text-[11px] text-muted-foreground">{isAuto ? "Auto" : "Ask"}</span>
+                          <Switch
+                            checked={isAuto}
+                            onCheckedChange={(v) => void setZoraToolPermission(name, v ? "auto" : "ask")}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                ));
+              })()}
+            </CardSection>
+          </SettingsCard>
+        </Section>
+
         <Section id="privacy" title="Privacy & Security">
           <SettingsCard>
             <CardSection>

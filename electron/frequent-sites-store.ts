@@ -50,3 +50,14 @@ export function listFrequentSites(windowId: number, prefix: string, limit = 5): 
   console.log(`[frequent-sites] list("${prefix}") — ${all.length} sites stored total, ${results.length} matched: ${results.map((r) => r.domain).join(", ")}`);
   return results;
 }
+
+// For Zora's list_frequent_sites tool — the URL-bar autocomplete above
+// needs a prefix (nothing typed yet = nothing to suggest), but "what
+// sites do I visit a lot" is a sensible question with no prefix at all.
+export function listTopFrequentSites(windowId: number, limit = 15): FrequentSite[] {
+  return store
+    .read(windowId, [])
+    .slice()
+    .sort((a, b) => b.visitCount - a.visitCount || b.lastVisit - a.lastVisit)
+    .slice(0, limit);
+}

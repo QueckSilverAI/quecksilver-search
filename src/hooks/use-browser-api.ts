@@ -59,6 +59,21 @@ export type DownloadItem = {
   totalBytes: number;
   startedAt: number;
 };
+export type AppContext = {
+  // Opaque from the renderer's point of view — forwarded to search-chat as
+  // part of the request body, never read apart directly here. See
+  // electron/build-app-context.ts for the real shape.
+  controlCenterSettings: Record<string, unknown>;
+  controlCenterSchema: Record<string, unknown>;
+  privacySettings: Record<string, unknown>;
+  openTabs: { id: string; title: string; url: string; isActive: boolean }[];
+  windowMode: "normal" | "incognito" | "tor";
+  activeTabDomain: string | null;
+};
+export type ZoraPreset = "autonomous" | "balanced" | "cautious";
+export type ToolPermissionMode = "auto" | "ask";
+export type ZoraSettings = { preset: ZoraPreset; toolPermissions: Record<string, ToolPermissionMode> };
+export type ZoraToolCatalogEntry = { category: string; tier: "read" | "write"; description: string };
 
 type BrowserAPI = {
   tabs: {
@@ -135,6 +150,14 @@ type BrowserAPI = {
   };
   tools: {
     execute: (name: string, args: Record<string, unknown>) => Promise<ToolResult>;
+  };
+  zora: {
+    getAppContext: () => Promise<AppContext | null>;
+    getSettings: () => Promise<ZoraSettings>;
+    setPreset: (preset: ZoraPreset) => Promise<ZoraSettings>;
+    setToolPermission: (toolName: string, mode: ToolPermissionMode | null) => Promise<ZoraSettings>;
+    getEffectivePermissions: () => Promise<Record<string, ToolPermissionMode>>;
+    getToolCatalog: () => Promise<Record<string, ZoraToolCatalogEntry>>;
   };
   downloads: {
     list: () => Promise<DownloadItem[]>;

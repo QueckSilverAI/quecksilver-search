@@ -17,8 +17,18 @@ import { ipcRenderer, webFrame } from "electron";
 // scrollbar`, naturally wins over this without needing `!important`
 // anywhere. Inserted once at document-start, before the page's own
 // stylesheets exist yet, so ties at equal specificity also resolve in the
-// page's favor (later in document order wins). This can't guarantee a win
-// against every possible site rule — that's what the old hide-and-replace
+// page's favor (later in document order wins).
+//
+// Confirmed on claude.ai (Aug 2026): a page that sets its own
+// scrollbar-width/scrollbar-color (the standardized property, not
+// ::-webkit-scrollbar) keeps its own look even though this rule below
+// still gets inserted successfully — Chromium prefers scrollbar-width/
+// -color over ::-webkit-scrollbar rules whenever both exist on the same
+// element, regardless of specificity. That's deliberately left as-is:
+// the page's own choice wins, even when it looks worse than what this
+// file would have given it — same principle as not fighting a page's own
+// ::-webkit-scrollbar rules. This can't guarantee a win against every
+// possible site rule either way — that's what the old hide-and-replace
 // system that used to live in this file was actually for, and it's
 // deliberately gone now in favor of just not fighting the page. Same
 // visual recipe as this app's own chrome UI's .custom-scrollbar class
@@ -51,12 +61,6 @@ function insertDefaultScrollbarCss() {
       background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239a9a9a' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
     }
   `);
-  // Temporary diagnostic — proves in the electron:dev terminal whether
-  // this code path actually ran for a given tab/frame at all, since the
-  // visual result alone couldn't tell us that. Remove once confirmed
-  // working. Not gated behind process.isMainFrame — this runs (and is
-  // worth confirming) in every frame.
-  ipcRenderer.send("__qs_debug_scrollbar_css", location.href);
 }
 
 // Diagnostic-only: confirms in the electron:dev terminal that this preload

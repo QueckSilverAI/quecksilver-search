@@ -1,3 +1,4 @@
+import { shell } from "electron";
 import type { TabManager } from "./tab-manager";
 import { listBookmarks, saveBookmarks } from "./bookmark-store";
 import { HOME_URL } from "./types";
@@ -10,13 +11,21 @@ import {
   type ControlCenterActionRequest,
 } from "./control-center-store";
 import { CONTROL_CENTER_FIELD_DESCRIPTIONS } from "./control-center-field-descriptions";
+import { listDownloads, cancelDownload } from "./downloads-store";
+import { listTopFrequentSites } from "./frequent-sites-store";
+import { getZoraSettings } from "./zora-settings-store";
+import { getActiveIdentity } from "./profile-store";
+import { sendCdpCommand } from "./cdp-client";
 
 // Every tool returns a short text result — this is what gets fed back to
 // Gemini as the functionResponse content, so keep it compact and factual,
 // not chatty. Errors are returned as text too (not thrown) so a bad
 // selector/tab id becomes a normal conversational turn ("that tab doesn't
-// exist anymore") instead of a hard failure.
-export type ToolResult = { ok: boolean; text: string };
+// exist anymore") instead of a hard failure. imageBase64 is see_screen's
+// one exception — search-chat/index.ts attaches it as an inlineData part
+// alongside the text functionResponse, giving Gemini an actual image, not
+// just a description of one.
+export type ToolResult = { ok: boolean; text: string; imageBase64?: string };
 
 const MAX_TEXT_CHARS = 6000;
 const MAX_LINKS = 40;
@@ -43,6 +52,47 @@ export const BROWSER_TOOL_NAMES = new Set([
   "wait_for_load",
   "add_bookmark",
   "remove_bookmark",
+  // Phase 5 — Kategorien A, B, C, F, G aus dem Katalog
+  // (zora-browser-integration-plan.md Abschnitt 8). Nicht alle Tools aus
+  // diesen Kategorien sind dabei — siehe die Kommentare direkt bei den
+  // jeweiligen case-Blocks unten für was bewusst ausgelassen wurde und
+  // warum (v.a.: kein Pin/Move/History, weil diese Browser-Features
+  // selbst noch gar nicht existieren, und einiges was schon 1:1 über
+  // run_control_center_tool erreichbar ist).
+  "close_other_tabs",
+  "duplicate_tab",
+  "reopen_closed_tab",
+  "open_split_view",
+  "stop_loading",
+  "search_web_in_tab",
+  "zoom_in",
+  "zoom_out",
+  "reset_zoom",
+  "get_page_metadata",
+  "extract_table_data",
+  "list_bookmarks",
+  "download_url",
+  "list_downloads",
+  "open_download",
+  "cancel_download",
+  "list_frequent_sites",
+  // Category D — Screen-Vision & Interaktion (see
+  // zora-browser-integration-plan.md section 5 for the technical
+  // reasoning). Deliberately NOT the exact tool set the plan describes —
+  // click_element/type_text already exist as CSS-selector-based tools
+  // from an earlier phase and work well; rather than replace them with a
+  // parallel ref-based mechanism (and the ref-cache staleness problem
+  // that comes with it), get_clickable_elements returns a computed CSS
+  // selector per element that plugs directly into the EXISTING
+  // click_element/type_text — so those two aren't listed again here.
+  // click_at, hover_element, select_dropdown_option and submit_form are
+  // the genuinely new ones.
+  "see_screen",
+  "get_clickable_elements",
+  "click_at",
+  "hover_element",
+  "select_dropdown_option",
+  "submit_form",
   // Category E — Control Center, see zora-browser-integration-plan.md
   // section 8. All four delegate to runControlCenterAction /
   // control-center-store so there's exactly one place that actually
@@ -140,9 +190,15 @@ export async function executeBrowserTool(
       case "reload_tab": {
         const id = requireId(tabs, args.tab_id);
         if (!id) return noActiveTab();
-        tabs.reload(id);
+        tabs.reload(id, args.hard === true);
         await tabs.waitForLoad(id);
-        return { ok: true, text: "Reloaded." };
+        return { ok: true, text: args.hard ? "Reloaded without cache." : "Reloaded." };
+      }
+      case "stop_loading": {
+        const wc = requireWebContents(tabs, args.tab_id);
+        if (!wc) return noActiveTab();
+        wc.stop();
+        return { ok: true, text: "Stopped loading." };
       }
       case "get_current_url": {
         const id = requireId(tabs, args.tab_id);
@@ -237,6 +293,132 @@ export async function executeBrowserTool(
         if (!id) return noActiveTab();
         await tabs.waitForLoad(id);
         return { ok: true, text: "Page finished loading." };
+      }
+      case "search_web_in_tab": {
+        // Builds the search URL directly (Google) rather than respecting
+        // the person's chosen default search engine (src/lib/settings-store.ts's
+        // SEARCH_ENGINES) — that preference is stored in the renderer
+        // (localStorage), not reachable from here without a new IPC
+        // bridge just for this. A reasonable first pass; worth wiring up
+        // properly if it turns out to matter in practice.
+        const query = typeof args.query === "string" ? args.query.trim() : "";
+        if (!query) return { ok: false, text: "Missing query." };
+        const url = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+        const id = resolveId(tabs, args.tab_id) ?? tabs.getActiveId();
+        if (!id) {
+          tabs.createTab(url);
+          return { ok: true, text: `Opened a search for "${query}" in a new tab.` };
+        }
+        await tabs.navigate(id, url);
+        await tabs.waitForLoad(id);
+        return { ok: true, text: `Searched for "${query}".` };
+      }
+      case "zoom_in":
+      case "zoom_out":
+      case "reset_zoom": {
+        const wc = requireWebContents(tabs, args.tab_id);
+        if (!wc) return noActiveTab();
+        const next =
+          name === "reset_zoom"
+            ? 1
+            : name === "zoom_in"
+              ? Math.min(2, Math.round((wc.getZoomFactor() + 0.1) * 10) / 10)
+              : Math.max(0.5, Math.round((wc.getZoomFactor() - 0.1) * 10) / 10);
+        wc.setZoomFactor(next);
+        return { ok: true, text: `Zoomed to ${Math.round(next * 100)}%.` };
+      }
+      case "close_other_tabs": {
+        const { activeId, tabs: list } = tabs.listTabs();
+        let closed = 0;
+        for (const t of list) {
+          if (t.id !== activeId) {
+            tabs.closeTab(t.id);
+            closed++;
+          }
+        }
+        return { ok: true, text: `Closed ${closed} other tab${closed === 1 ? "" : "s"}.` };
+      }
+      case "duplicate_tab": {
+        const id = requireId(tabs, args.tab_id);
+        if (!id) return noActiveTab();
+        const wc = tabs.getWebContents(id);
+        const url = wc?.getURL() || HOME_URL;
+        const newId = tabs.createTab(url);
+        return { ok: true, text: `Duplicated the tab (new tab id: ${newId}).` };
+      }
+      case "reopen_closed_tab": {
+        tabs.reopenLastClosedTab();
+        return { ok: true, text: "Reopened the most recently closed tab, if there was one." };
+      }
+      case "open_split_view": {
+        const url = typeof args.url === "string" ? args.url : null;
+        if (!url) return { ok: false, text: "Missing url." };
+        // createTab() switches to the tab it just made, but enterSplit(id)
+        // requires id !== the CURRENT active tab (it puts `id` on the right
+        // half alongside whatever's active) — so the original tab has to
+        // be made active again before calling it, or this silently no-ops.
+        const originalActiveId = tabs.getActiveId();
+        const newId = tabs.createTab(url);
+        if (originalActiveId) tabs.switchTab(originalActiveId);
+        tabs.enterSplit(newId);
+        return { ok: true, text: `Opened ${url} in split view.` };
+      }
+      case "get_page_metadata": {
+        const id = requireId(tabs, args.tab_id);
+        if (!id) return noActiveTab();
+        const meta = await tabs.getPageMetadata(id);
+        return meta ? { ok: true, text: truncate(JSON.stringify(meta)) } : { ok: false, text: "Couldn't read page metadata." };
+      }
+      case "extract_table_data": {
+        const wc = requireWebContents(tabs, args.tab_id);
+        if (!wc) return noActiveTab();
+        const tables = (await wc.executeJavaScript(
+          `Array.from(document.querySelectorAll("table")).slice(0, 5).map(table =>
+            Array.from(table.querySelectorAll("tr")).map(tr =>
+              Array.from(tr.querySelectorAll("th,td")).map(cell => cell.innerText.trim())
+            )
+          )`,
+          true,
+        )) as string[][][];
+        return tables.length > 0
+          ? { ok: true, text: truncate(JSON.stringify(tables)) }
+          : { ok: false, text: "No tables found on this page." };
+      }
+      case "list_bookmarks": {
+        const current = listBookmarks(win.id);
+        const lines = current.filter((b): b is NonNullable<typeof b> => !!b).map((b) => `${b.label} — ${b.url}`);
+        return { ok: true, text: lines.join("\n") || "No bookmarks saved." };
+      }
+      case "download_url": {
+        const url = typeof args.url === "string" ? args.url : null;
+        if (!url) return { ok: false, text: "Missing url." };
+        win.webContents.downloadURL(url);
+        return { ok: true, text: `Started downloading ${url}.` };
+      }
+      case "list_downloads": {
+        const items = listDownloads();
+        const lines = items.slice(0, 20).map((d) => `${d.id}: ${d.filename} — ${d.state} (${d.receivedBytes}/${d.totalBytes || "?"} bytes)`);
+        return { ok: true, text: lines.join("\n") || "No downloads yet." };
+      }
+      case "open_download": {
+        const id = typeof args.id === "string" ? args.id : null;
+        if (!id) return { ok: false, text: "Missing id." };
+        const item = listDownloads().find((d) => d.id === id);
+        if (!item) return { ok: false, text: `No download with id ${id}.` };
+        const err = await shell.openPath(item.path);
+        return err ? { ok: false, text: `Couldn't open the file: ${err}` } : { ok: true, text: `Opened ${item.filename}.` };
+      }
+      case "cancel_download": {
+        const id = typeof args.id === "string" ? args.id : null;
+        if (!id) return { ok: false, text: "Missing id." };
+        return cancelDownload(id)
+          ? { ok: true, text: "Cancelled." }
+          : { ok: false, text: "That download isn't in progress (already finished, or unknown id)." };
+      }
+      case "list_frequent_sites": {
+        const sites = listTopFrequentSites(win.id);
+        const lines = sites.map((s) => `${s.domain} (visited ${s.visitCount}x)`);
+        return { ok: true, text: lines.join("\n") || "Not enough browsing yet to have frequent sites." };
       }
       case "add_bookmark": {
         const label = typeof args.label === "string" ? args.label.trim() : "";

@@ -1600,10 +1600,13 @@ function Index() {
     else newTab("https://quecksilver.ch");
   };
 
+  // Always a new tab, never navigating whatever the person was already
+  // looking at away from under them — true for every entry point (the
+  // toolbar's Settings icon, the Edit icon, the "password saved" pill,
+  // ...), since they all route through this one function.
   const goToSettings = (section?: string) => {
     if (section) setPendingSettingsAnchor(section);
-    if (activeId) navigate(activeId, SETTINGS_URL);
-    else newTab(SETTINGS_URL);
+    newTab(SETTINGS_URL);
   };
 
   // The backend's own splitRatio (0..1, left side's share) is kept in sync

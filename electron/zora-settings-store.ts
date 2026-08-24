@@ -12,11 +12,18 @@ export type ZoraSettings = {
   // override stays sticky across preset changes until the person clears
   // it again, same as any other explicit choice.
   toolPermissions: Record<string, ToolPermissionMode>;
+  // zora-browser-integration-plan.md section 5 — off by default. Gates
+  // ONLY the see_screen tool (a real screenshot sent to Gemini as an
+  // image); the DOM-based tools (get_clickable_elements, click_element,
+  // type_text, ...) send structured text, not pixels, so they work
+  // regardless of this toggle.
+  screenShareEnabled: boolean;
 };
 
 const DEFAULTS: ZoraSettings = {
   preset: "autonomous",
   toolPermissions: {},
+  screenShareEnabled: false,
 };
 
 const store = new JsonStore<ZoraSettings>("zora-settings.json");

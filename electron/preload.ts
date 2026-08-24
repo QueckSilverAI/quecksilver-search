@@ -283,6 +283,8 @@ const zora = {
   // use-zora-chat.ts's per-tool gating.
   getSettings: (): Promise<ZoraSettings> => ipcRenderer.invoke("zora:getSettings"),
   setPreset: (preset: ZoraPreset): Promise<ZoraSettings> => ipcRenderer.invoke("zora:setPreset", preset),
+  setScreenShareEnabled: (enabled: boolean): Promise<ZoraSettings> =>
+    ipcRenderer.invoke("zora:setScreenShareEnabled", enabled),
   setToolPermission: (toolName: string, mode: ToolPermissionMode | null): Promise<ZoraSettings> =>
     ipcRenderer.invoke("zora:setToolPermission", toolName, mode),
   getEffectivePermissions: (): Promise<Record<string, ToolPermissionMode>> =>

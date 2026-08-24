@@ -1721,6 +1721,7 @@ function registerIpc() {
   // across every window, same as the rest of Settings.
   ipcMain.handle("zora:getSettings", () => getZoraSettings());
   ipcMain.handle("zora:setPreset", (_e, preset: ZoraPreset) => setZoraSettings({ preset }));
+  ipcMain.handle("zora:setScreenShareEnabled", (_e, enabled: boolean) => setZoraSettings({ screenShareEnabled: enabled }));
   ipcMain.handle(
     "zora:setToolPermission",
     (_e, toolName: string, mode: ToolPermissionMode | null) => setToolPermission(toolName, mode),
@@ -1752,11 +1753,6 @@ function registerIpc() {
   // tab preload actually ran.
   ipcMain.on("__qs_debug_tab_preload_loaded", (_event, url: string) => {
     console.log(`[tab-preload loaded] ${url}`);
-  });
-  // Temporary diagnostic — matches insertDefaultScrollbarCss() in
-  // tab-preload.ts. Remove both once confirmed working.
-  ipcMain.on("__qs_debug_scrollbar_css", (_event, url: string) => {
-    console.log(`[scrollbar-css inserted] ${url}`);
   });
   // Diagnostic-only — matches pwDebug() in tab-preload.ts, traces autofill/
   // auto-save through each step (field found, IPC lookup result, capture

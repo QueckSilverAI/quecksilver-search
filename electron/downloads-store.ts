@@ -26,6 +26,21 @@ export function removeDownload(id: string) {
   store.write(items);
 }
 
+// Populated by registerDownloadTracking below, so cancelDownload() (used
+// by Zora's cancel_download tool) can reach the live Electron.DownloadItem
+// — the persisted DownloadItem record above has no handle back to the
+// real in-progress download, only its last-known snapshot. Cleared once a
+// download finishes (done/updated-to-a-final-state), so this map only
+// ever holds genuinely cancellable downloads.
+const liveDownloads = new Map<string, Electron.DownloadItem>();
+
+export function cancelDownload(id: string): boolean {
+  const item = liveDownloads.get(id);
+  if (!item) return false;
+  item.cancel();
+  return true;
+}
+
 function addOrUpdate(item: DownloadItem) {
   const items = listDownloads();
   const idx = items.findIndex((d) => d.id === item.id);
@@ -56,6 +71,7 @@ export function registerDownloadTracking(onChanged: () => void) {
     };
     addOrUpdate(record);
     onChanged();
+    liveDownloads.set(id, item);
 
     item.on("updated", (_e, state) => {
       // item.getSavePath() — not the `savePath` we requested up front — is
@@ -79,6 +95,7 @@ export function registerDownloadTracking(onChanged: () => void) {
         state: state === "completed" ? "completed" : state === "cancelled" ? "cancelled" : "interrupted",
         receivedBytes: item.getReceivedBytes(),
       });
+      liveDownloads.delete(id);
       onChanged();
     });
   });

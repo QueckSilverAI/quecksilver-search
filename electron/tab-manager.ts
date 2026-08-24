@@ -933,6 +933,20 @@ export class TabManager {
     return filePath;
   }
 
+  // For Zora's see_screen tool (zora-browser-integration-plan.md section
+  // 5a) — same capturePage() as captureScreenshot above, but returns the
+  // PNG as base64 directly instead of writing to disk through a save
+  // dialog. Never gets its own IPC channel exposed to the chrome UI —
+  // only browser-tools.ts calls this, and only when the screenShareEnabled
+  // toggle is on (checked there, not here, so this stays a plain capture
+  // primitive with no policy baked in).
+  async captureScreenshotBase64(id: string): Promise<string | null> {
+    const wc = this.views.get(id)?.webContents;
+    if (!wc) return null;
+    const image = await wc.capturePage().catch(() => null);
+    return image ? image.toPNG().toString("base64") : null;
+  }
+
   // --- Control center: full-page screenshot (masterplan #19) --------------
   // Temporarily grows the tab's own WebContentsView past the window's
   // visible bounds to the page's real scrollHeight, captures it in one
@@ -1658,9 +1672,10 @@ export class TabManager {
     // instead leaves it with no opener to message and nothing to close,
     // which is exactly the blank white accounts.google.com/gsi/... page
     // this was causing. Known auth-popup hosts get a real popup window
-    // instead; everything else keeps the original deny-and-redirect
-    // behavior.
-    view.webContents.setWindowOpenHandler(({ url }) => {
+    // instead; everything else opens as a new tab — always for a genuine
+    // target="_blank"/new-tab request (disposition check below), and for
+    // everything else only when Popup-Block is off.
+    view.webContents.setWindowOpenHandler(({ url, disposition }) => {
       if (isAuthPopupUrl(url)) {
         return {
           action: "allow",
@@ -1672,10 +1687,21 @@ export class TabManager {
           },
         };
       }
-      // Control center's "Popup-Block": when on, a non-auth popup is
-      // dropped entirely (real popup blocking) instead of being turned
-      // into a new tab below.
-      if (popupBlockEnabled()) return { action: "deny" };
+      // A genuine target="_blank" link (or middle-click/Ctrl-click on any
+      // link — see tab-preload.ts's own separate handling for those)
+      // arrives here with disposition "foreground-tab"/"background-tab",
+      // Chromium's own standard signal for "the user asked for a new tab",
+      // completely distinct from a JS-triggered window.open() popup
+      // (disposition "new-window"/"other"). Previously nothing here
+      // checked disposition at all, so Popup-Block (on by default) was
+      // silently eating ordinary "open in new tab" links along with actual
+      // popups — indistinguishable from "the link does nothing". Real
+      // new-tab requests always open a tab, popup blocking or not.
+      const isRealNewTabRequest = disposition === "foreground-tab" || disposition === "background-tab";
+      // Control center's "Popup-Block": when on, a non-auth, non-new-tab
+      // popup is dropped entirely (real popup blocking) instead of being
+      // turned into a new tab below.
+      if (!isRealNewTabRequest && popupBlockEnabled()) return { action: "deny" };
       // Anything that isn't a known auth-popup flow (checked above) still
       // shouldn't spawn a real OS window, but overwriting the CURRENT tab
       // with wherever the popup wanted to go is its own bug: this is the
