@@ -1,7 +1,6 @@
 import { useRef, useState } from "react";
 import { Check, ChevronDown } from "lucide-react";
 import { SEARCH_ENGINES, type SearchEngine } from "@/lib/settings-store";
-import { PageScrollbar } from "@/components/PageScrollbar";
 
 type Props = {
   engine: SearchEngine;
@@ -42,50 +41,24 @@ export function SearchEngineChooser({ engine, onChange, variant = "standalone" }
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
           <div className="absolute left-0 top-[calc(100%+8px)] z-50 w-52 overflow-hidden rounded-xl border border-border bg-popover shadow-lg">
-            {/* Everything below (title + list) shares this one relative
-                wrapper so the scrollbar — positioned absolute inset-y-0
-                against it, not just against the scrollable list div — runs
-                the full height of the dropdown instead of stopping short
-                of the title row. */}
-            <div className="relative">
-              {/* margin-right, not padding — padding doesn't shrink the
-                  border-box, so border-b (drawn at the border-box edge)
-                  would still run the full width and visibly cross right
-                  under the scrollbar's up-arrow button, which is exactly
-                  what was happening. A margin actually narrows the box the
-                  border is drawn around, stopping the line before the
-                  scrollbar's reserved space instead of running through it. */}
-              <div className="mr-3.5 border-b border-border py-2 pl-3 text-[12px] font-semibold text-muted-foreground">Choose Search Engine</div>
-              {/* Explicit per-side padding (not "p-1 pr-4") — combining a
-                  shorthand and a single-side utility doesn't reliably let
-                  the single-side one win, since Tailwind's generated CSS
-                  order (which decides the cascade here) isn't the same as
-                  the order the class names happen to be written in. That
-                  was quietly leaving padding-right at p-1's 4px instead of
-                  the intended amount. Bumped further past the scrollbar's
-                  own 14px width (pr-7 = 28px) — the numbers said 2px of
-                  clearance was already there, but at this size 2px reads
-                  as touching, not as a gap.
-                  */}
-              <div ref={scrollRef} className="max-h-64 overflow-y-auto py-1 pl-1 pr-7">
-                {SEARCH_ENGINES.map((e) => (
-                  <button
-                    key={e.id}
-                    onClick={() => {
-                      onChange(e.id);
-                      setOpen(false);
-                    }}
-                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] font-medium hover:bg-muted ${
-                      e.id === engine ? "text-[var(--brand)]" : "text-foreground"
-                    }`}
-                  >
-                    <img src={`https://icons.duckduckgo.com/ip3/${e.domain}.ico`} alt="" className="h-4 w-4 shrink-0 rounded-sm object-contain" />
-                    <span className="truncate">{e.label}</span>
-                    {e.id === engine && <Check className="ml-auto h-3.5 w-3.5 shrink-0" />}
-                  </button>
-                ))}
-              </div>
-              <PageScrollbar scrollRef={scrollRef} />
+            <div className="border-b border-border py-2 pl-3 text-[12px] font-semibold text-muted-foreground">Choose Search Engine</div>
+            <div ref={scrollRef} className="custom-scrollbar max-h-64 overflow-y-auto py-1 px-1">
+              {SEARCH_ENGINES.map((e) => (
+                <button
+                  key={e.id}
+                  onClick={() => {
+                    onChange(e.id);
+                    setOpen(false);
+                  }}
+                  className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] font-medium hover:bg-muted ${
+                    e.id === engine ? "text-[var(--brand)]" : "text-foreground"
+                  }`}
+                >
+                  <img src={`https://icons.duckduckgo.com/ip3/${e.domain}.ico`} alt="" className="h-4 w-4 shrink-0 rounded-sm object-contain" />
+                  <span className="truncate">{e.label}</span>
+                  {e.id === engine && <Check className="ml-auto h-3.5 w-3.5 shrink-0" />}
+                </button>
+              ))}
             </div>
           </div>
         </>

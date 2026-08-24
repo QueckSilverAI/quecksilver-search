@@ -108,11 +108,9 @@ export function DownloadsPopoverContent({
           tall the flyout itself gets (see reportSize in
           overlay-window.ts: the native window is sized to match this
           div, so an unbounded list would grow the window forever instead
-          of scrolling). custom-scrollbar (styles.css) is a NATIVE
+          of scrolling). custom-scrollbar (styles.css) is a native
           scrollbar restyled via ::-webkit-scrollbar — see that class's
-          own comment for why (not the app's hand-built PageScrollbar
-          widget, which tracked unreliably specifically inside this
-          overlay window). */}
+          own comment. */}
       <div ref={downloadListRef} className="custom-scrollbar max-h-[480px] overflow-y-auto border-t border-border">
         {payload.items.length === 0 ? (
           <p className="px-4 py-8 text-center text-[13px] text-muted-foreground">No downloads yet.</p>

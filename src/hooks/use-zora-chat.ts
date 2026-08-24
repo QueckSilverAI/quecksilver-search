@@ -49,7 +49,7 @@ export function useZoraChat(accessToken: string | null) {
   }, []);
 
   const postJson = useCallback(
-    async (body: Record<string, unknown>): Promise<SearchChatResponse> => {
+    async (body: Record<string, unknown>, appContext: unknown): Promise<SearchChatResponse> => {
       const res = await fetch(SEARCH_CHAT_URL, {
         method: "POST",
         headers: {
@@ -59,7 +59,7 @@ export function useZoraChat(accessToken: string | null) {
           Authorization: `Bearer ${accessToken ?? SUPABASE_ANON_KEY}`,
           apikey: SUPABASE_ANON_KEY,
         },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ ...body, appContext }),
       });
       if (!res.ok) {
         const detail = await res.text().catch(() => "");
@@ -82,7 +82,21 @@ export function useZoraChat(accessToken: string | null) {
       setIsLoading(true);
 
       try {
-        let response = await postJson({ prompt: text, history: historyBefore });
+        // Snapshot once per turn (not once per hop) — see
+        // electron/build-app-context.ts. Only a subset of the full
+        // AppContext travels over the wire; see AppContextPayload in
+        // supabase/functions/search-chat/index.ts for which fields it reads.
+        const fullAppContext = window.browserAPI ? await window.browserAPI.zora.getAppContext() : null;
+        const appContext = fullAppContext
+          ? {
+              controlCenterSettings: fullAppContext.controlCenterSettings,
+              openTabs: fullAppContext.openTabs,
+              windowMode: fullAppContext.windowMode,
+              activeTabDomain: fullAppContext.activeTabDomain,
+            }
+          : null;
+
+        let response = await postJson({ prompt: text, history: historyBefore }, appContext);
         let hops = 0;
 
         while ("toolCall" in response && hops < MAX_CLIENT_HOPS) {
@@ -97,10 +111,10 @@ export function useZoraChat(accessToken: string | null) {
                 ? await window.browserAPI.tools.execute(name, args)
                 : { ok: false, text: "Browser tools aren't available outside the desktop app." };
 
-          response = await postJson({
-            contents: response.contents,
-            toolResult: { name, response: result.text },
-          });
+          response = await postJson(
+            { contents: response.contents, toolResult: { name, response: result.text } },
+            appContext,
+          );
         }
 
         setStatusText(null);

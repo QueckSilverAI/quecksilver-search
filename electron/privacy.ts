@@ -145,7 +145,7 @@ export function applyPrivacyHardening(targetSession?: Electron.Session) {
       callback({ redirectURL: dataUri });
       return;
     }
-    // Control center's "Bilder deaktivieren" — a plain data-saver mode,
+    // Control center's "Disable images" — a plain data-saver mode,
     // cancels every image sub-resource regardless of host. Checked here
     // (same hook as the ad-blocker above) rather than a separate
     // onBeforeRequest listener, since Electron dispatches multiple
@@ -393,7 +393,7 @@ export function applyEarlyPrivacySwitches() {
     app.commandLine.appendSwitch("dns-over-https-mode", "secure"); // "secure", not "automatic" — refuses to silently fall back to plain DNS if the DoH resolver is unreachable
     app.commandLine.appendSwitch("dns-over-https-templates", DOH_TEMPLATES[provider]);
   }
-  // Control center's "Preload/Prefetch deaktivieren" — Chromium's own
+  // Control center's "Disable preload/prefetch" — Chromium's own
   // predictive-networking features (DNS prefetch, preconnect, prerender)
   // are only configurable via startup switches, same constraint as the
   // two above: a change here needs a relaunch to take effect, which is

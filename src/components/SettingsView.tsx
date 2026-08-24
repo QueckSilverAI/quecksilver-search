@@ -22,7 +22,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { takePendingSettingsAnchor, subscribeSettingsAnchor } from "@/lib/settings-anchor";
-import { PageScrollbar } from "@/components/PageScrollbar";
 import { ImportProgress } from "@/components/ImportProgress";
 
 // ─── Design primitives — 1:1 from QueckSilver AI's own Settings.tsx ────────
@@ -345,8 +344,7 @@ export function SettingsView({ nightModeTabId }: { nightModeTabId?: string | nul
   };
 
   return (
-    <div ref={scrollRef} className="relative flex-1 overflow-y-auto">
-      <PageScrollbar scrollRef={scrollRef} />
+    <div ref={scrollRef} className="custom-scrollbar relative flex-1 overflow-y-auto">
       {/* Page zoom here is now the same real, interactive Ctrl+wheel/pinch
           zoom as on browsed tabs (see main.ts's mainWindow zoom-changed
           listener) — this used to be a CSS `zoom:` fake tied to the

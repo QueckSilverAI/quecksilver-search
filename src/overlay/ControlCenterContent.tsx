@@ -260,17 +260,17 @@ const DOH_PROVIDER_OPTIONS: { id: ControlCenterSettings["dnsOverHttpsProvider"];
 ];
 
 const VISION_FILTER_OPTIONS: { id: ControlCenterSettings["visionFilter"]; label: string }[] = [
-  { id: "none", label: "Aus" },
-  { id: "high-contrast", label: "Kontrast" },
-  { id: "protanopia", label: "Protanopie" },
-  { id: "deuteranopia", label: "Deuteranopie" },
-  { id: "tritanopia", label: "Tritanopie" },
+  { id: "none", label: "Off" },
+  { id: "high-contrast", label: "High contrast" },
+  { id: "protanopia", label: "Protanopia" },
+  { id: "deuteranopia", label: "Deuteranopia" },
+  { id: "tritanopia", label: "Tritanopia" },
 ];
 
 const CURSOR_SIZE_OPTIONS: { id: ControlCenterSettings["cursorSize"]; label: string }[] = [
-  { id: "default", label: "Standard" },
-  { id: "large", label: "Groß" },
-  { id: "xlarge", label: "Sehr groß" },
+  { id: "default", label: "Default" },
+  { id: "large", label: "Large" },
+  { id: "xlarge", label: "Extra large" },
 ];
 
 const USER_AGENT_OPTIONS: { id: ControlCenterSettings["userAgentPreset"]; label: string }[] = [
@@ -499,20 +499,20 @@ export function ControlCenterContent({
         <div className="grid grid-cols-2 gap-0.5">
           <ToggleRow
             icon={Radar}
-            label="WebRTC-Schutz"
+            label="WebRTC protection"
             checked={cc.webrtcLeakProtection}
             onChange={(v) => set({ webrtcLeakProtection: v })}
             badge="Restart"
           />
           <ToggleRow
             icon={Lock}
-            label="HTTPS-Only-Modus"
+            label="HTTPS-only mode"
             checked={cc.httpsOnlyEnforced}
             onChange={(v) => set({ httpsOnlyEnforced: v })}
           />
           <ToggleRow
             icon={Cookie}
-            label="Cookie-Autodelete"
+            label="Cookie auto-delete"
             checked={cc.cookieAutoDelete}
             onChange={(v) => set({ cookieAutoDelete: v })}
           />
@@ -524,7 +524,7 @@ export function ControlCenterContent({
             ) : (
               <AlertTriangle className="h-3 w-3 shrink-0 text-amber-500" />
             )}
-            {payload.currentSiteSafety === "safe" ? "Diese Seite ist sicher" : "Diese Seite ist verdächtig"}
+            {payload.currentSiteSafety === "safe" ? "This site is safe" : "This site looks suspicious"}
           </p>
         )}
 
@@ -569,7 +569,7 @@ export function ControlCenterContent({
           />
           <ToggleRow
             icon={ImageOff}
-            label="Bilder deaktivieren"
+            label="Disable images"
             checked={cc.imagesDisabled}
             onChange={(v) => set({ imagesDisabled: v })}
           />
@@ -577,7 +577,7 @@ export function ControlCenterContent({
         {payload.trackerCountForActiveTab > 0 && (
           <p className="flex items-center gap-2 px-2.5 py-1 text-[11px] text-muted-foreground">
             <ShieldBan className="h-3 w-3 shrink-0" />
-            {payload.trackerCountForActiveTab} Tracker auf dieser Seite blockiert
+            {payload.trackerCountForActiveTab} trackers blocked on this page
           </p>
         )}
         <div className="flex items-center gap-2 px-2.5 py-1.5">
@@ -628,19 +628,19 @@ export function ControlCenterContent({
               onChange={(e) => set({ customLatencyMs: Number(e.target.value) || 0 })}
               onBlur={() => act({ type: "setNetworkThrottle", preset: "custom" })}
               className="w-16 rounded-md border border-border bg-background px-1.5 py-0.5 text-[11px] text-foreground outline-none"
-              title="Latenz ms"
+              title="Latency ms"
             />
-            <span className="text-[10px] text-muted-foreground">ms Latenz</span>
+            <span className="text-[10px] text-muted-foreground">ms latency</span>
           </div>
         )}
         <div className="flex items-center gap-2 px-2.5 py-1.5">
           <ShieldBan className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-          <span className="text-[12.5px] font-medium text-foreground">Request-Blocking nach Muster</span>
+          <span className="text-[12.5px] font-medium text-foreground">Pattern-based request blocking</span>
           <button
             onClick={() => setShowBlockedPatterns((v) => !v)}
             className="ml-auto rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground hover:bg-muted/70"
           >
-            {cc.customBlockedPatterns.length > 0 ? `${cc.customBlockedPatterns.length} aktiv` : "Bearbeiten"}
+            {cc.customBlockedPatterns.length > 0 ? `${cc.customBlockedPatterns.length} active` : "Edit"}
           </button>
         </div>
         {showBlockedPatterns && (
@@ -648,7 +648,7 @@ export function ControlCenterContent({
             <textarea
               value={blockedPatternsInput}
               onChange={(e) => setBlockedPatternsInput(e.target.value)}
-              placeholder={"*.analytics.example.com/*\nein Muster pro Zeile, * als Platzhalter"}
+              placeholder={"*.analytics.example.com/*\none pattern per line, * as wildcard"}
               rows={3}
               className="w-full resize-none rounded-lg border border-border bg-background px-2.5 py-1.5 text-[11px] font-mono text-foreground outline-none focus:border-foreground/40"
             />
@@ -664,7 +664,7 @@ export function ControlCenterContent({
                 }
                 className="rounded-full bg-foreground px-2.5 py-1 text-[11px] font-medium text-background hover:opacity-90"
               >
-                Speichern
+                Save
               </button>
             </div>
           </div>
@@ -691,7 +691,7 @@ export function ControlCenterContent({
           />
           <ToggleRow
             icon={BellOff}
-            label="Nicht stören"
+            label="Do not disturb"
             checked={cc.doNotDisturb}
             onChange={(v) => set({ doNotDisturb: v })}
           />
@@ -713,14 +713,14 @@ export function ControlCenterContent({
           />
           <ToggleRow
             icon={ShieldAlert}
-            label="VPN-Kill-Switch"
+            label="VPN kill switch"
             checked={cc.vpnKillSwitch}
             onChange={(v) => set({ vpnKillSwitch: v })}
           />
         </div>
         {cc.dnsOverHttpsEnabled && (
           <div className="flex items-center gap-2 px-2.5 py-1.5">
-            <span className="text-[12.5px] font-medium text-foreground">DNS-Anbieter</span>
+            <span className="text-[12.5px] font-medium text-foreground">DNS provider</span>
             <div className="ml-auto flex gap-1">
               {DOH_PROVIDER_OPTIONS.map((opt) => (
                 <button
@@ -788,7 +788,7 @@ export function ControlCenterContent({
               <span className="text-[13px] leading-none">−</span>
             </button>
             <span className="w-14 text-center text-[11px] tabular-nums text-muted-foreground">
-              {cc.autoSuspendMinutes === 0 ? "Aus" : `${cc.autoSuspendMinutes} Min`}
+              {cc.autoSuspendMinutes === 0 ? "Off" : `${cc.autoSuspendMinutes} min`}
             </span>
             <button
               onClick={() => set({ autoSuspendMinutes: Math.min(180, cc.autoSuspendMinutes + 5) })}
@@ -808,14 +808,14 @@ export function ControlCenterContent({
           />
           <ToggleRow
             icon={Zap}
-            label="Preload/Prefetch aus"
+            label="Disable preload/prefetch"
             checked={cc.preloadDisabled}
             onChange={(v) => set({ preloadDisabled: v })}
             badge="Restart"
           />
           <ToggleRow
             icon={BatteryLow}
-            label="Akku-Sparmodus"
+            label="Battery saver mode"
             checked={cc.batterySaverMode}
             onChange={(v) =>
               // A preset, not just its own flag — flipping it on also
@@ -868,14 +868,14 @@ export function ControlCenterContent({
           />
           <ToggleRow
             icon={Grid3x3}
-            label="Raster-Overlay"
+            label="Grid overlay"
             checked={cc.gridOverlayEnabled}
             onChange={(v) => set({ gridOverlayEnabled: v })}
           />
         </div>
         <div className="flex items-center gap-2 px-2.5 py-1.5">
           <Contrast className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-          <span className="text-[12.5px] font-medium text-foreground">Kontrast / Farbsehen</span>
+          <span className="text-[12.5px] font-medium text-foreground">Contrast / color vision</span>
           <div className="ml-auto flex flex-wrap justify-end gap-1">
             {VISION_FILTER_OPTIONS.map((opt) => (
               <button
@@ -894,7 +894,7 @@ export function ControlCenterContent({
         </div>
         <div className="flex items-center gap-2 px-2.5 py-1.5">
           <MousePointer2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-          <span className="text-[12.5px] font-medium text-foreground">Cursor-Größe</span>
+          <span className="text-[12.5px] font-medium text-foreground">Cursor size</span>
           <div className="ml-auto flex gap-1">
             {CURSOR_SIZE_OPTIONS.map((opt) => (
               <button
@@ -973,37 +973,37 @@ export function ControlCenterContent({
           />
           <ActionButton
             icon={Languages}
-            label="Seite übersetzen"
+            label="Translate page"
             onClick={() => setShowTranslate((v) => !v)}
           />
           <ActionButton
             icon={Pipette}
-            label="Farbpipette"
+            label="Color picker"
             onClick={() => void pickColor()}
           />
           <ActionButton
             icon={PictureInPicture2}
-            label="Picture-in-Picture erzwingen"
+            label="Force picture-in-picture"
             onClick={() => act({ type: "forcePip" })}
           />
           <ActionButton
             icon={Radio}
-            label="Alle Medien pausieren"
+            label="Pause all media"
             onClick={() => act({ type: "pauseAllMedia" })}
           />
           <ActionButton
             icon={Volume2}
-            label="Alle Medien stumm"
+            label="Mute all media"
             onClick={() => act({ type: "muteAllMedia", muted: true })}
           />
           <ActionButton
             icon={KeyRound}
-            label="JWT decodieren"
+            label="Decode JWT"
             onClick={() => setShowJwt((v) => !v)}
           />
           <ActionButton
             icon={BookOpen}
-            label="Leseansicht"
+            label="Reader view"
             onClick={() => act({ type: "toggleReaderMode" })}
           />
           {customCssTarget && (
@@ -1015,17 +1015,17 @@ export function ControlCenterContent({
           )}
           <ActionButton
             icon={Images}
-            label="Vollständiger Screenshot"
+            label="Full-page screenshot"
             onClick={() => act({ type: "fullPageScreenshot" })}
           />
           <ActionButton
             icon={FileDown}
-            label="Als Markdown exportieren"
+            label="Export as Markdown"
             onClick={() => act({ type: "exportPageAsMarkdown" })}
           />
           <ActionButton
             icon={FileSearch}
-            label="Seiten-Metadaten"
+            label="Page metadata"
             onClick={() => {
               setShowMetadata((v) => !v);
               act({ type: "getPageMetadata" });
@@ -1033,7 +1033,7 @@ export function ControlCenterContent({
           />
           <ActionButton
             icon={Crosshair}
-            label="Element-Picker"
+            label="Element picker"
             onClick={() => act({ type: "startElementPicker" })}
           />
         </div>
@@ -1042,7 +1042,7 @@ export function ControlCenterContent({
         <div className="grid grid-cols-2 gap-0.5">
           <ToggleRow
             icon={AlertOctagon}
-            label="JS-Fehler-Overlay"
+            label="JS error overlay"
             checked={cc.jsErrorOverlayEnabled}
             onChange={(v) => set({ jsErrorOverlayEnabled: v })}
           />
@@ -1050,7 +1050,7 @@ export function ControlCenterContent({
         <div className="grid grid-cols-2 gap-0.5">
           <ActionButton
             icon={ListTree}
-            label="Request-Log"
+            label="Request log"
             onClick={() => {
               setShowRequestLog((v) => !v);
               act({ type: "getRequestLog" });
@@ -1058,12 +1058,12 @@ export function ControlCenterContent({
           />
           <ActionButton
             icon={FileText}
-            label="Console-Log exportieren"
+            label="Export console log"
             onClick={() => act({ type: "exportConsoleLog" })}
           />
           <ActionButton
             icon={Cookie}
-            label="Cookie-Viewer"
+            label="Cookie viewer"
             onClick={() => {
               setShowCookies((v) => !v);
               act({ type: "getCookiesForTab" });
@@ -1079,7 +1079,7 @@ export function ControlCenterContent({
           />
           <ActionButton
             icon={ServerCog}
-            label="Service-Worker"
+            label="Service workers"
             onClick={() => {
               setShowServiceWorker((v) => !v);
               act({ type: "getServiceWorkerStatus" });
@@ -1087,7 +1087,7 @@ export function ControlCenterContent({
           />
           <ActionButton
             icon={FileArchive}
-            label={harRecording ? "HAR-Aufnahme stoppen" : "HAR-Aufnahme starten"}
+            label={harRecording ? "Stop HAR recording" : "Start HAR recording"}
             onClick={() => {
               setHarRecording((v) => !v);
               act({ type: "toggleHarRecording" });
@@ -1095,7 +1095,7 @@ export function ControlCenterContent({
           />
           <ActionButton
             icon={Webhook}
-            label="Request-Mocking"
+            label="Request mocking"
             onClick={() => {
               setShowMocks((v) => !v);
               act({ type: "getRequestMocks" });
@@ -1105,9 +1105,9 @@ export function ControlCenterContent({
         {showRequestLog && (
           <div className="mt-1 flex flex-col gap-1 px-2.5 py-1.5">
             {payload.requestLogResult === null ? (
-              <p className="px-1 text-[11px] text-muted-foreground">Lädt …</p>
+              <p className="px-1 text-[11px] text-muted-foreground">Loading…</p>
             ) : payload.requestLogResult.length === 0 ? (
-              <p className="px-1 text-[11px] text-muted-foreground">Keine Requests aufgezeichnet</p>
+              <p className="px-1 text-[11px] text-muted-foreground">No requests recorded</p>
             ) : (
               <div className="max-h-[180px] overflow-y-auto">
                 {payload.requestLogResult.map((r, i) => (
@@ -1134,9 +1134,9 @@ export function ControlCenterContent({
         {showCookies && (
           <div className="mt-1 flex flex-col gap-1 px-2.5 py-1.5">
             {payload.cookiesResult === null ? (
-              <p className="px-1 text-[11px] text-muted-foreground">Lädt …</p>
+              <p className="px-1 text-[11px] text-muted-foreground">Loading…</p>
             ) : payload.cookiesResult.length === 0 ? (
-              <p className="px-1 text-[11px] text-muted-foreground">Keine Cookies für diese Seite</p>
+              <p className="px-1 text-[11px] text-muted-foreground">No cookies for this page</p>
             ) : (
               <div className="max-h-[160px] overflow-y-auto">
                 {payload.cookiesResult.map((c) => (
@@ -1164,7 +1164,7 @@ export function ControlCenterContent({
               <input
                 value={newCookieValue}
                 onChange={(e) => setNewCookieValue(e.target.value)}
-                placeholder="Wert"
+                placeholder="Value"
                 className="min-w-0 flex-1 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-foreground outline-none"
               />
               <button
@@ -1184,15 +1184,15 @@ export function ControlCenterContent({
         {showIndexedDb && (
           <div className="mt-1 flex flex-col gap-1 px-2.5 py-1.5">
             {payload.indexedDbResult === null ? (
-              <p className="px-1 text-[11px] text-muted-foreground">Lädt …</p>
+              <p className="px-1 text-[11px] text-muted-foreground">Loading…</p>
             ) : payload.indexedDbResult.databases.length === 0 ? (
-              <p className="px-1 text-[11px] text-muted-foreground">Keine IndexedDB-Datenbanken</p>
+              <p className="px-1 text-[11px] text-muted-foreground">No IndexedDB databases</p>
             ) : (
               payload.indexedDbResult.databases.map((db) => (
                 <div key={db.name} className="text-[11px]">
                   <p className="font-medium text-foreground">{db.name}</p>
                   <p className="pl-2 text-muted-foreground">
-                    {db.objectStores.length > 0 ? db.objectStores.join(", ") : "— keine Object Stores —"}
+                    {db.objectStores.length > 0 ? db.objectStores.join(", ") : "— no object stores —"}
                   </p>
                 </div>
               ))
@@ -1202,15 +1202,15 @@ export function ControlCenterContent({
         {showServiceWorker && (
           <div className="mt-1 flex flex-col gap-1.5 px-2.5 py-1.5">
             {payload.serviceWorkerResult === null ? (
-              <p className="px-1 text-[11px] text-muted-foreground">Lädt …</p>
+              <p className="px-1 text-[11px] text-muted-foreground">Loading…</p>
             ) : payload.serviceWorkerResult.registrations.length === 0 ? (
-              <p className="px-1 text-[11px] text-muted-foreground">Kein Service Worker registriert</p>
+              <p className="px-1 text-[11px] text-muted-foreground">No service worker registered</p>
             ) : (
               <>
                 {payload.serviceWorkerResult.registrations.map((r, i) => (
                   <p key={i} className="truncate text-[11px] text-foreground">
                     <span className={r.active ? "text-emerald-600" : "text-amber-600"}>
-                      {r.active ? "aktiv" : "wartend"}
+                      {r.active ? "active" : "waiting"}
                     </span>{" "}
                     <span className="text-muted-foreground">{r.scope}</span>
                   </p>
@@ -1219,7 +1219,7 @@ export function ControlCenterContent({
                   onClick={() => act({ type: "unregisterServiceWorkers" })}
                   className="mt-1 self-start rounded-full bg-muted px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:bg-muted/70"
                 >
-                  Alle deregistrieren
+                  Unregister all
                 </button>
               </>
             )}
@@ -1247,7 +1247,7 @@ export function ControlCenterContent({
             <input
               value={mockPattern}
               onChange={(e) => setMockPattern(e.target.value)}
-              placeholder="URL-Muster (* als Platzhalter)"
+              placeholder="URL pattern (* as wildcard)"
               className="w-full rounded-md border border-border bg-background px-2 py-1 text-[11px] text-foreground outline-none"
             />
             <div className="flex items-center gap-1.5">
@@ -1260,7 +1260,7 @@ export function ControlCenterContent({
               <input
                 value={mockBody}
                 onChange={(e) => setMockBody(e.target.value)}
-                placeholder="Response-Body (JSON)"
+                placeholder="Response body (JSON)"
                 className="min-w-0 flex-1 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-foreground outline-none"
               />
               <button
@@ -1283,10 +1283,10 @@ export function ControlCenterContent({
           </div>
         )}
 
-        <CategoryLabel label="Geräte-Emulation" />
+        <CategoryLabel label="Device emulation" />
         <div className="flex items-center gap-2 px-2.5 py-1.5">
           <Smartphone className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-          <span className="text-[12.5px] font-medium text-foreground">Geräte-Emulation</span>
+          <span className="text-[12.5px] font-medium text-foreground">Device emulation</span>
           <div className="ml-auto flex gap-1">
             {DEVICE_PRESET_OPTIONS.map((opt) => (
               <button
@@ -1313,7 +1313,7 @@ export function ControlCenterContent({
               <Input
                 value={langQuery}
                 onChange={(e) => setLangQuery(e.target.value)}
-                placeholder="Sprache suchen"
+                placeholder="Search language"
                 className="h-8 rounded-full pl-9 text-[12.5px]"
                 autoFocus
               />
@@ -1321,7 +1321,7 @@ export function ControlCenterContent({
             <div className="max-h-[160px] overflow-y-auto">
               {filteredLanguages.length === 0 ? (
                 <p className="px-2.5 py-2 text-center text-[12.5px] text-muted-foreground">
-                  Keine Treffer
+                  No matches
                 </p>
               ) : (
                 filteredLanguages.map((lang) => (
@@ -1359,7 +1359,7 @@ export function ControlCenterContent({
             <textarea
               value={jwtInput}
               onChange={(e) => setJwtInput(e.target.value)}
-              placeholder="JWT hier einfügen …"
+              placeholder="Paste JWT here…"
               rows={2}
               className="w-full resize-none rounded-lg border border-border bg-background px-2.5 py-1.5 text-[11px] font-mono text-foreground outline-none focus:border-foreground/40"
               autoFocus
@@ -1381,7 +1381,7 @@ export function ControlCenterContent({
                   </pre>
                 </div>
               ) : (
-                <p className="px-1 text-[11px] text-muted-foreground">Kein gültiges JWT</p>
+                <p className="px-1 text-[11px] text-muted-foreground">Not a valid JWT</p>
               )
             )}
           </div>
@@ -1389,12 +1389,12 @@ export function ControlCenterContent({
         {showCustomCss && customCssTarget && (
           <div className="mt-1 flex flex-col gap-1.5 px-2.5 py-1.5">
             <p className="px-0.5 text-[11px] text-muted-foreground">
-              Für <span className="font-medium text-foreground">{customCssTarget.domain}</span>
+              For <span className="font-medium text-foreground">{customCssTarget.domain}</span>
             </p>
             <textarea
               value={cssInput}
               onChange={(e) => setCssInput(e.target.value)}
-              placeholder={"html { }\n/* eigenes CSS für diese Domain */"}
+              placeholder={"html { }\n/* custom CSS for this domain */"}
               rows={4}
               className="w-full resize-none rounded-lg border border-border bg-background px-2.5 py-1.5 text-[11px] font-mono text-foreground outline-none focus:border-foreground/40"
               autoFocus
@@ -1404,7 +1404,7 @@ export function ControlCenterContent({
                 onClick={() => setCssInput("")}
                 className="rounded-full px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:bg-muted"
               >
-                Leeren
+                Clear
               </button>
               <button
                 onClick={() =>
@@ -1412,7 +1412,7 @@ export function ControlCenterContent({
                 }
                 className="rounded-full bg-foreground px-2.5 py-1 text-[11px] font-medium text-background hover:opacity-90"
               >
-                Speichern
+                Save
               </button>
             </div>
           </div>
@@ -1422,25 +1422,25 @@ export function ControlCenterContent({
             {payload.pageMetadataResult ? (
               <>
                 <p className="text-[11px] text-muted-foreground">
-                  Title ({payload.pageMetadataResult.titleLength} Zeichen)
+                  Title ({payload.pageMetadataResult.titleLength} characters)
                   {payload.pageMetadataResult.titleLength > 60 && (
-                    <span className="text-amber-600"> — über 60 Zeichen</span>
+                    <span className="text-amber-600"> — over 60 characters</span>
                   )}
                 </p>
                 <p className="truncate text-[12.5px] text-foreground">
                   {payload.pageMetadataResult.title || "—"}
                 </p>
-                <p className="mt-1 text-[11px] text-muted-foreground">Meta-Description</p>
+                <p className="mt-1 text-[11px] text-muted-foreground">Meta description</p>
                 <p className="truncate text-[12.5px] text-foreground">
-                  {payload.pageMetadataResult.description || "— fehlt —"}
+                  {payload.pageMetadataResult.description || "— missing —"}
                 </p>
                 <p className="mt-1 text-[11px] text-muted-foreground">Canonical URL</p>
                 <p className="truncate text-[12.5px] text-foreground">
-                  {payload.pageMetadataResult.canonicalUrl || "— fehlt —"}
+                  {payload.pageMetadataResult.canonicalUrl || "— missing —"}
                 </p>
                 {payload.pageMetadataResult.ogTags.length > 0 && (
                   <>
-                    <p className="mt-1 text-[11px] text-muted-foreground">OG-Tags</p>
+                    <p className="mt-1 text-[11px] text-muted-foreground">OG tags</p>
                     <div className="max-h-[120px] overflow-y-auto">
                       {payload.pageMetadataResult.ogTags.map((tag, i) => (
                         <p key={i} className="truncate text-[11px] text-foreground">
@@ -1452,14 +1452,14 @@ export function ControlCenterContent({
                 )}
               </>
             ) : (
-              <p className="px-1 text-[11px] text-muted-foreground">Lädt …</p>
+              <p className="px-1 text-[11px] text-muted-foreground">Loading…</p>
             )}
           </div>
         )}
         <button
           type="button"
           onClick={() => act({ type: "openDevTools" })}
-          title="DevTools öffnen"
+          title="Open DevTools"
           className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
         >
           <AlertTriangle className="h-3.5 w-3.5 shrink-0" />

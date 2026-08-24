@@ -15,6 +15,9 @@ import type {
 } from "./types";
 import type { OverlayAction, OverlayAnchor, OverlayKind } from "./overlay-types";
 import type { ControlCenterSettings, ControlCenterActionRequest } from "./control-center-store";
+import type { AppContext } from "./build-app-context";
+import type { ZoraSettings, ZoraPreset, ToolPermissionMode } from "./zora-settings-store";
+import type { ZoraToolCatalogEntry } from "./zora-tool-catalog";
 
 const tabs = {
   new: (url?: string): Promise<string> => ipcRenderer.invoke("tabs:new", url),
@@ -271,6 +274,21 @@ const tools = {
   execute: (name: string, args: Record<string, unknown>): Promise<ToolResult> =>
     ipcRenderer.invoke("tools:execute", name, args),
 };
+const zora = {
+  // See electron/build-app-context.ts — called once per send() by
+  // use-zora-chat.ts and attached to the request as `appContext`.
+  getAppContext: (): Promise<AppContext | null> => ipcRenderer.invoke("zora:getAppContext"),
+  // Permission model (electron/zora-settings-store.ts /
+  // zora-tool-catalog.ts) — used by both the Settings UI and
+  // use-zora-chat.ts's per-tool gating.
+  getSettings: (): Promise<ZoraSettings> => ipcRenderer.invoke("zora:getSettings"),
+  setPreset: (preset: ZoraPreset): Promise<ZoraSettings> => ipcRenderer.invoke("zora:setPreset", preset),
+  setToolPermission: (toolName: string, mode: ToolPermissionMode | null): Promise<ZoraSettings> =>
+    ipcRenderer.invoke("zora:setToolPermission", toolName, mode),
+  getEffectivePermissions: (): Promise<Record<string, ToolPermissionMode>> =>
+    ipcRenderer.invoke("zora:getEffectivePermissions"),
+  getToolCatalog: (): Promise<Record<string, ZoraToolCatalogEntry>> => ipcRenderer.invoke("zora:getToolCatalog"),
+};
 
 const windowControls = {
   minimize: (): Promise<void> => ipcRenderer.invoke("window:minimize"),
@@ -384,6 +402,7 @@ contextBridge.exposeInMainWorld("browserAPI", {
   tor,
   window: windowControls,
   overlay,
+  zora,
 });
 contextBridge.exposeInMainWorld("platformInfo", { platform: process.platform });
 
@@ -407,4 +426,5 @@ export type BrowserAPI = {
   tor: typeof tor;
   window: typeof windowControls;
   overlay: typeof overlay;
+  zora: typeof zora;
 };

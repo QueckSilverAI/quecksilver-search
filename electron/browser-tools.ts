@@ -1,7 +1,15 @@
-import type { BrowserWindow } from "electron";
 import type { TabManager } from "./tab-manager";
 import { listBookmarks, saveBookmarks } from "./bookmark-store";
 import { HOME_URL } from "./types";
+import type { WindowEntry } from "./main";
+import { runControlCenterAction } from "./control-center-actions";
+import {
+  getControlCenterSettings,
+  setControlCenterSettings,
+  type ControlCenterSettings,
+  type ControlCenterActionRequest,
+} from "./control-center-store";
+import { CONTROL_CENTER_FIELD_DESCRIPTIONS } from "./control-center-field-descriptions";
 
 // Every tool returns a short text result — this is what gets fed back to
 // Gemini as the functionResponse content, so keep it compact and factual,
@@ -35,14 +43,50 @@ export const BROWSER_TOOL_NAMES = new Set([
   "wait_for_load",
   "add_bookmark",
   "remove_bookmark",
+  // Category E — Control Center, see zora-browser-integration-plan.md
+  // section 8. All four delegate to runControlCenterAction /
+  // control-center-store so there's exactly one place that actually
+  // applies a setting or runs an action.
+  "get_control_center_state",
+  "set_control_center_setting",
+  "run_control_center_tool",
+  "apply_preset",
 ]);
 
+// apply_preset combos (plan section 8, category E). Deliberately NOT
+// exhaustive/aggressive — e.g. privacy_max leaves imagesDisabled off so the
+// preset doesn't quietly break most sites; Juri can retune these values in
+// this one place without touching the tool dispatcher.
+const CONTROL_CENTER_PRESETS: Record<string, Partial<ControlCenterSettings>> = {
+  battery_saver: {
+    batterySaverMode: true,
+    backgroundTabsThrottled: true,
+    unloadBackgroundTabsOnIdle: true,
+    autoSuspendMinutes: 10,
+  },
+  privacy_max: {
+    adBlockEnabled: true,
+    doNotTrack: true,
+    cookiesBlocked: true,
+    popupBlock: true,
+    dnsOverHttpsEnabled: true,
+    dnsOverHttpsProvider: "cloudflare",
+    webrtcLeakProtection: true,
+    httpsOnlyEnforced: true,
+    cookieAutoDelete: true,
+  },
+  dev_mode: {
+    jsErrorOverlayEnabled: true,
+  },
+};
+
 export async function executeBrowserTool(
-  tabs: TabManager,
-  win: BrowserWindow,
+  ctx: WindowEntry,
   name: string,
   args: Record<string, unknown>,
 ): Promise<ToolResult> {
+  const tabs = ctx.tabs;
+  const win = ctx.win;
   try {
     switch (name) {
       case "new_tab": {
@@ -217,6 +261,49 @@ export async function executeBrowserTool(
         win.webContents.send("bookmarks:changed", current);
         return { ok: true, text: `Removed bookmark "${args.label}".` };
       }
+      case "get_control_center_state": {
+        const settings = getControlCenterSettings();
+        const lines = (Object.keys(settings) as (keyof ControlCenterSettings)[]).map((key) => {
+          const desc = CONTROL_CENTER_FIELD_DESCRIPTIONS[key];
+          return `${key} (${desc.category}) = ${JSON.stringify(settings[key])} — ${desc.description}`;
+        });
+        return { ok: true, text: lines.join("\n") };
+      }
+      case "set_control_center_setting": {
+        const key = typeof args.key === "string" ? (args.key as keyof ControlCenterSettings) : null;
+        if (!key || !(key in CONTROL_CENTER_FIELD_DESCRIPTIONS)) {
+          return { ok: false, text: `Unknown control center field: ${String(args.key)}` };
+        }
+        const coerced = coerceControlCenterValue(key, args.value);
+        if (!coerced.ok) return { ok: false, text: coerced.error };
+        const desc = CONTROL_CENTER_FIELD_DESCRIPTIONS[key];
+        // Note: the Control Center dropdown re-fetches via controlCenter.get()
+        // whenever it's opened rather than listening for a push event, so a
+        // setting Zora changes shows up correctly next time it's opened —
+        // no live-update channel needed here.
+        setControlCenterSettings({ [key]: coerced.value } as Partial<ControlCenterSettings>);
+        return {
+          ok: true,
+          text: `Set ${key} to ${JSON.stringify(coerced.value)}.${desc.requiresRelaunch ? " Takes effect after restarting the app." : ""}`,
+        };
+      }
+      case "run_control_center_tool": {
+        const action = args.action as ControlCenterActionRequest | undefined;
+        if (!action || typeof action.type !== "string") {
+          return { ok: false, text: "Missing or invalid action." };
+        }
+        const result = await runControlCenterAction(ctx, action);
+        return { ok: true, text: result === null || result === undefined ? "Done." : truncate(JSON.stringify(result)) };
+      }
+      case "apply_preset": {
+        const name = typeof args.name === "string" ? args.name : "";
+        const patch = CONTROL_CENTER_PRESETS[name];
+        if (!patch) {
+          return { ok: false, text: `Unknown preset "${name}". Available: ${Object.keys(CONTROL_CENTER_PRESETS).join(", ")}.` };
+        }
+        setControlCenterSettings(patch);
+        return { ok: true, text: `Applied preset "${name}": ${Object.entries(patch).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(", ")}.` };
+      }
       default:
         return { ok: false, text: `Unknown tool: ${name}` };
     }
@@ -250,4 +337,50 @@ function noActiveTab(): ToolResult {
 
 function truncate(text: string): string {
   return text.length > MAX_TEXT_CHARS ? `${text.slice(0, MAX_TEXT_CHARS)}\n…(truncated)` : text;
+}
+
+type CoerceResult = { ok: true; value: unknown } | { ok: false; error: string };
+
+// Gemini sends function-call args as loosely-typed JSON — this validates +
+// coerces against the field's real type from CONTROL_CENTER_FIELD_DESCRIPTIONS
+// before it ever reaches setControlCenterSettings, so a bad value from the
+// model becomes a normal "that's not valid" conversational turn instead of
+// silently corrupting the settings file.
+function coerceControlCenterValue(key: keyof ControlCenterSettings, raw: unknown): CoerceResult {
+  const desc = CONTROL_CENTER_FIELD_DESCRIPTIONS[key];
+  switch (desc.type) {
+    case "boolean": {
+      if (typeof raw === "boolean") return { ok: true, value: raw };
+      if (raw === "true") return { ok: true, value: true };
+      if (raw === "false") return { ok: true, value: false };
+      return { ok: false, error: `${key} expects true or false, got ${JSON.stringify(raw)}.` };
+    }
+    case "number": {
+      const num = typeof raw === "number" ? raw : Number(raw);
+      if (Number.isNaN(num)) return { ok: false, error: `${key} expects a number, got ${JSON.stringify(raw)}.` };
+      return { ok: true, value: num };
+    }
+    case "enum": {
+      if (typeof raw !== "string" || !desc.options?.includes(raw)) {
+        return { ok: false, error: `${key} must be one of: ${desc.options?.join(", ")}. Got ${JSON.stringify(raw)}.` };
+      }
+      return { ok: true, value: raw };
+    }
+    case "string[]": {
+      if (Array.isArray(raw)) return { ok: true, value: raw.map(String) };
+      if (typeof raw === "string") {
+        try {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) return { ok: true, value: parsed.map(String) };
+        } catch {
+          // fall through to comma-split below
+        }
+        return { ok: true, value: raw.split(",").map((s) => s.trim()).filter(Boolean) };
+      }
+      return { ok: false, error: `${key} expects a list of strings.` };
+    }
+    case "string":
+    default:
+      return { ok: true, value: String(raw) };
+  }
 }

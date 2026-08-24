@@ -1,6 +1,5 @@
 import { usePageZoom } from "@/hooks/use-page-zoom";
 import { useZoomLevel } from "@/lib/settings-store";
-import { PageScrollbar } from "@/components/PageScrollbar";
 
 // Wraps exactly the Home/Settings content area — Ctrl+wheel/pinch zoom
 // applies only inside this box, never to the header or tab strip rendered
@@ -34,9 +33,12 @@ export function ZoomedContent({ className, children }: { className?: string; chi
   const { ref, factor } = usePageZoom<HTMLDivElement>();
   const { level } = useZoomLevel();
   return (
-    <div ref={ref} className={className} style={{ zoom: factor * (level / 100), overflow: "auto" }}>
+    <div
+      ref={ref}
+      className={`custom-scrollbar ${className ?? ""}`}
+      style={{ zoom: factor * (level / 100), overflow: "auto" }}
+    >
       {children}
-      <PageScrollbar scrollRef={ref} />
     </div>
   );
 }

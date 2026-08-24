@@ -31,7 +31,6 @@ import { HeaderFavoritesBar } from "@/components/HeaderFavoritesBar";
 import { SettingsView } from "@/components/SettingsView";
 import { FavIcon } from "@/components/FavIcon";
 import { HomeContent } from "@/components/HomeContent";
-import { PageScrollbar } from "@/components/PageScrollbar";
 import { ZoomedContent } from "@/components/ZoomedContent";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { setPendingSettingsAnchor } from "@/lib/settings-anchor";
@@ -2403,12 +2402,11 @@ function Index() {
           --chrome-border everywhere else in the toolbar. */}
           <div
             ref={pageScrollRef}
-            className="relative flex-1 overflow-y-auto bg-white"
+            className="custom-scrollbar relative flex-1 overflow-y-auto bg-white"
             style={
               isHome && !secondaryId ? { borderTop: "1px solid var(--chrome-border)" } : undefined
             }
           >
-            <PageScrollbar scrollRef={pageScrollRef} />
             <div className="flex h-full flex-col bg-white">
               <div ref={contentRef} className="relative flex h-full w-full flex-1 overflow-hidden">
                 {secondaryId ? (

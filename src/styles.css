@@ -195,13 +195,9 @@
   border-radius: 3px;
 }
 
-/* Same native, always-correctly-tracking scrollbar mechanism as
-   .thin-scrollbar above (the browser itself keeps it in sync with scroll
-   position — never the class of bug PageScrollbar.tsx's own hand-built
-   JS version had inside the downloads overlay window), just restyled to
-   match THAT widget's own visual design instead — a fully rounded thumb
-   in muted-foreground at low opacity, brightening on hover, same colors
-   and radius as PageScrollbar.tsx's own thumb div. */
+/* Native, always-correctly-tracking scrollbar (the browser itself keeps
+   it in sync with scroll position), restyled to a fully rounded thumb in
+   muted-foreground at low opacity, brightening on hover. */
 /* Deliberately does NOT set scrollbar-width/scrollbar-color (the
    standardized CSS Scrollbars API) alongside the ::-webkit-scrollbar
    rules below — Chromium can end up preferring the plain standardized
@@ -233,10 +229,8 @@
 }
 /* Up/down arrow buttons at each end of the track — WebKit's scrollbar
    pseudo-elements DO support these (::-webkit-scrollbar-button), so the
-   native scrollbar can match the app's own hand-drawn PageScrollbar
-   widget's track+thumb+arrows look without needing that widget's own
-   (unreliable inside this specific overlay window — see
-   DownloadsPopoverContent.tsx's comment) JS-driven version at all. */
+   native scrollbar gets a track+thumb+arrows look without any hand-drawn
+   widget at all. */
 .custom-scrollbar::-webkit-scrollbar-button {
   display: block;
   height: 14px;

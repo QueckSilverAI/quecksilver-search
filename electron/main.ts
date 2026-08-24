@@ -33,6 +33,34 @@ process.on("uncaughtException", (err) => {
 process.on("unhandledRejection", (reason) => {
   console.error("[main] unhandled promise rejection (app kept running):", reason);
 });
+
+// Without this, a second launch (double-clicking the installed app while
+// a window from an earlier launch — or a dev instance — is still running)
+// starts a whole second Electron process that races the first one over
+// the exact same userData directory: same disk cache, same GPU cache,
+// same service-worker database. That's exactly what produces "Unable to
+// move the cache: Access denied" / "Failed to delete the database" on
+// Windows — two processes fighting over files the OS only lets one of
+// them hold at a time — and separately, why the panic shortcut can fail
+// to register ("already claimed by another app"): the FIRST instance
+// already holds that global hotkey, so the second one claiming the exact
+// same accelerator is rejected by the OS, no third-party app involved at
+// all. Must be requested before any window gets created.
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    // Someone tried to open a second copy — surface the existing window
+    // instead of silently doing nothing (or, without the lock above,
+    // actually starting a conflicting second process).
+    const existing = [...windows.values()][0]?.win;
+    if (!existing) return;
+    if (existing.isMinimized()) existing.restore();
+    existing.focus();
+  });
+}
+
 import {
   HOME_URL,
   SETTINGS_URL,
@@ -133,8 +161,19 @@ import {
 import { existsSync, rmSync, promises as fsPromises } from "node:fs";
 import { OverlayWindowManager, registerOverlayIpc } from "./overlay-window";
 import type { OverlayAction } from "./overlay-types";
-import { translatePageInPlace } from "./translate-injector";
-import { toggleReaderMode } from "./reader-mode-injector";
+// translatePageInPlace/toggleReaderMode moved into control-center-actions.ts
+// along with the rest of the controlCenter:action switch — see below.
+import { runControlCenterAction } from "./control-center-actions";
+import { buildAppContext } from "./build-app-context";
+import { assertControlCenterFieldDescriptionsComplete } from "./control-center-field-descriptions";
+import {
+  getZoraSettings,
+  setZoraSettings,
+  setToolPermission,
+  type ZoraPreset,
+  type ToolPermissionMode,
+} from "./zora-settings-store";
+import { resolveAllToolPermissions, ZORA_TOOL_CATALOG } from "./zora-tool-catalog";
 
 app.name = "QueckSilver Arch";
 // No File/Edit/View/Window/Help bar — this app is deliberately chrome-free
@@ -170,7 +209,11 @@ const ICON_PATH = path.join(
   process.platform === "win32" ? "icon.ico" : "icon-256.png",
 );
 
-type WindowEntry = {
+// Exported (not just module-local) so control-center-actions.ts and
+// build-app-context.ts can type their `ctx` parameter against the exact
+// same shape via `import type` — no runtime circular import, since
+// type-only imports are erased at compile time.
+export type WindowEntry = {
   win: BrowserWindow;
   tabs: TabManager;
   contentSession?: Electron.Session;
@@ -622,9 +665,8 @@ async function createTorWindow(): Promise<BrowserWindow> {
 function attachWindowListeners(win: BrowserWindow, tabs: TabManager) {
   // Surfaces preload load failures (both the chrome UI's own preload.cjs and,
   // via TabManager's onViewCreated below, each tab's tab-preload.cjs) in the
-  // terminal running electron:dev — without this, a crash inside the
-  // scrollbar/zoom preload script fails completely silently, and the
-  // scrollbar widget just never appears with no clue why.
+  // terminal running electron:dev — without this, a crash inside a tab's
+  // preload script (autofill, link handling) fails completely silently.
   win.webContents.on("preload-error", (_event, preloadPath, error) => {
     console.error(`[preload-error] ${preloadPath}:`, error);
   });
@@ -1231,126 +1273,13 @@ function registerIpc() {
 
     return next;
   });
+  // Full switch moved to control-center-actions.ts's runControlCenterAction()
+  // — Zora's run_control_center_tool dispatches to the exact same function,
+  // see zora-browser-integration-plan.md section 7.
   ipcMain.handle("controlCenter:action", async (e, action: ControlCenterActionRequest) => {
     const ctx = contextFor(e);
     if (!ctx) return null;
-    const tabId = action.tabId ?? ctx.tabs.getActiveId();
-    switch (action.type) {
-      case "openDevTools":
-        if (tabId) ctx.tabs.openDevTools(tabId);
-        return null;
-      case "reloadNoCache":
-        if (tabId) ctx.tabs.reload(tabId, true);
-        return null;
-      case "clearCache":
-        await ctx.tabs.clearCache();
-        return null;
-      case "screenshot":
-        return tabId ? await ctx.tabs.captureScreenshot(tabId) : null;
-      case "printPdf":
-        return tabId ? await ctx.tabs.saveAsPdf(tabId) : null;
-      case "print":
-        if (tabId) ctx.tabs.printPage(tabId);
-        return null;
-      case "savePageAs":
-        return tabId ? await ctx.tabs.savePageAs(tabId) : null;
-      case "translatePage": {
-        // No native Chromium translate (that's a proprietary Chrome
-        // component). Translated in place instead of the earlier
-        // translate.google.com URL-rewrite: extracts the page's text nodes,
-        // sends them through the translate-page edge function (Google Cloud
-        // Translation, proxied so the API key never ships in the app), and
-        // writes the results back into the same nodes — the URL bar keeps
-        // showing the real page throughout. See translate-injector.ts.
-        const wc = tabId ? ctx.tabs.getWebContents(tabId) : null;
-        if (wc) {
-          const result = await translatePageInPlace(wc, action.langCode);
-          if (!result.ok) console.error("[translatePage] failed:", result.error);
-        }
-        return null;
-      }
-      case "unloadTab":
-        return tabId ? ctx.tabs.unloadTab(tabId) : false;
-      case "unloadAllBackgroundTabs":
-        return ctx.tabs.unloadAllBackgroundTabs();
-      case "forcePip":
-        return tabId ? await ctx.tabs.togglePictureInPicture(tabId) : "no-video";
-      case "setNetworkThrottle":
-        if (tabId) {
-          // Masterplan #35 — "custom" needs the three free-form values,
-          // which live in settings (not on the action itself, since the
-          // Control center's cc:set already persists them separately from
-          // picking the preset).
-          const cc = getControlCenterSettings();
-          await ctx.tabs.setNetworkThrottle(
-            tabId,
-            action.preset,
-            action.preset === "custom"
-              ? {
-                  downloadKbps: cc.customDownloadKbps,
-                  uploadKbps: cc.customUploadKbps,
-                  latencyMs: cc.customLatencyMs,
-                }
-              : undefined,
-          );
-        }
-        return null;
-      case "pauseAllMedia":
-        await ctx.tabs.pauseAllMedia();
-        return null;
-      case "muteAllMedia":
-        await ctx.tabs.muteAllMedia(action.muted);
-        return null;
-      case "toggleReaderMode": {
-        // Reader/Leseansicht (masterplan #15) — see reader-mode-injector.ts.
-        const wc = tabId ? ctx.tabs.getWebContents(tabId) : null;
-        return wc ? await toggleReaderMode(wc) : "error";
-      }
-      case "setCustomCss":
-        // Custom CSS pro Domain (masterplan #16) — persists + re-applies
-        // immediately to every open tab on that domain, see
-        // TabManager.setCustomCssForDomain.
-        await ctx.tabs.setCustomCssForDomain(action.domain, action.css);
-        return null;
-      case "fullPageScreenshot":
-        return tabId ? await ctx.tabs.captureFullPageScreenshot(tabId) : null;
-      case "exportPageAsMarkdown":
-        return tabId ? await ctx.tabs.exportPageAsMarkdown(tabId) : null;
-      case "getPageMetadata":
-        return tabId ? await ctx.tabs.getPageMetadata(tabId) : null;
-      case "setDeviceEmulation":
-        return tabId ? await ctx.tabs.setDeviceEmulation(tabId, action.preset) : false;
-      case "startElementPicker":
-        return tabId ? await ctx.tabs.startElementPicker(tabId) : false;
-      case "getRequestLog":
-        return tabId ? ctx.tabs.getRequestLogForTab(tabId) : [];
-      case "exportConsoleLog":
-        return tabId ? await ctx.tabs.exportConsoleLog(tabId) : null;
-      case "getCookiesForTab":
-        return tabId ? await ctx.tabs.getCookiesForTab(tabId) : [];
-      case "setCookie":
-        return tabId ? await ctx.tabs.setCookieForTab(tabId, action.name, action.value) : false;
-      case "deleteCookie":
-        return tabId ? await ctx.tabs.deleteCookieForTab(tabId, action.name) : false;
-      case "getIndexedDbInfo":
-        return tabId ? await ctx.tabs.getIndexedDbInfo(tabId) : { databases: [] };
-      case "getServiceWorkerStatus":
-        return tabId ? await ctx.tabs.getServiceWorkerStatus(tabId) : { registrations: [] };
-      case "unregisterServiceWorkers":
-        return tabId ? await ctx.tabs.unregisterServiceWorkers(tabId) : 0;
-      case "toggleHarRecording":
-        return tabId ? await ctx.tabs.toggleHarRecording(tabId) : null;
-      case "setRequestMock":
-        ctx.tabs.setRequestMockEntry(action.pattern, action.status, action.body);
-        return null;
-      case "deleteRequestMock":
-        ctx.tabs.deleteRequestMockEntry(action.pattern);
-        return null;
-      case "getRequestMocks":
-        return ctx.tabs.getRequestMocks();
-      default:
-        return null;
-    }
+    return runControlCenterAction(ctx, action);
   });
   ipcMain.handle(
     "controlCenter:consoleErrorTotal",
@@ -1778,8 +1707,30 @@ function registerIpc() {
     if (!BROWSER_TOOL_NAMES.has(name)) {
       return { ok: false, text: `Unknown tool: ${name}` };
     }
-    return executeBrowserTool(ctx.tabs, ctx.win, name, args ?? {});
+    return executeBrowserTool(ctx, name, args ?? {});
   });
+  // Assembled fresh right before Zora's first request each turn (see
+  // build-app-context.ts) — the renderer's use-zora-chat.ts calls this once
+  // per send() and attaches the result as `appContext` in the request body.
+  ipcMain.handle("zora:getAppContext", (e) => {
+    const ctx = contextFor(e);
+    return ctx ? buildAppContext(ctx) : null;
+  });
+  // Permission model (zora-browser-integration-plan.md section 6). Not
+  // window-scoped — one person's choice of preset/overrides applies
+  // across every window, same as the rest of Settings.
+  ipcMain.handle("zora:getSettings", () => getZoraSettings());
+  ipcMain.handle("zora:setPreset", (_e, preset: ZoraPreset) => setZoraSettings({ preset }));
+  ipcMain.handle(
+    "zora:setToolPermission",
+    (_e, toolName: string, mode: ToolPermissionMode | null) => setToolPermission(toolName, mode),
+  );
+  // Bulk-resolved (preset + overrides collapsed into one auto/ask per
+  // tool) — used by both the Settings UI (to show current effective
+  // state) and use-zora-chat.ts (one call per turn instead of one per
+  // tool call).
+  ipcMain.handle("zora:getEffectivePermissions", () => resolveAllToolPermissions(getZoraSettings()));
+  ipcMain.handle("zora:getToolCatalog", () => ZORA_TOOL_CATALOG);
 
   ipcMain.handle("window:minimize", (e) => contextFor(e)?.win.minimize());
   ipcMain.handle("window:toggleMaximize", (e) => {
@@ -1798,21 +1749,15 @@ function registerIpc() {
 
   // Diagnostic-only, matches the ipcRenderer.send in tab-preload.ts — prints
   // one line per tab load in the electron:dev terminal confirming the
-  // scrollbar/zoom preload actually ran.
+  // tab preload actually ran.
   ipcMain.on("__qs_debug_tab_preload_loaded", (_event, url: string) => {
     console.log(`[tab-preload loaded] ${url}`);
   });
-  // Diagnostic-only — reports exactly why the scrollbar widget did or
-  // didn't render for a page (site already styles its own, or which
-  // element it attached to), matching debugReport() in tab-preload.ts.
-  ipcMain.on(
-    "__qs_debug_scrollbar",
-    (_event, report: { url: string; status: string; detail?: string }) => {
-      console.log(
-        `[scrollbar] ${report.status}${report.detail ? ` — ${report.detail}` : ""} (${report.url})`,
-      );
-    },
-  );
+  // Temporary diagnostic — matches insertDefaultScrollbarCss() in
+  // tab-preload.ts. Remove both once confirmed working.
+  ipcMain.on("__qs_debug_scrollbar_css", (_event, url: string) => {
+    console.log(`[scrollbar-css inserted] ${url}`);
+  });
   // Diagnostic-only — matches pwDebug() in tab-preload.ts, traces autofill/
   // auto-save through each step (field found, IPC lookup result, capture
   // triggered, save result) instead of just "it doesn't work".
@@ -1825,6 +1770,11 @@ function registerIpc() {
     },
   );
 }
+
+// Fail loud in dev if a new Control Center field was ever added without a
+// matching entry in control-center-field-descriptions.ts — see that file's
+// doc comment. Runs once at startup, not per-request.
+assertControlCenterFieldDescriptionsComplete(isDev);
 
 app.whenReady().then(async () => {
   applyPrivacyHardening();

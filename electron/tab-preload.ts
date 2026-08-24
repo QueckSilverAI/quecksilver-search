@@ -1,29 +1,67 @@
 // Dedicated preload for every browsed tab (not the chrome UI's own preload).
 //
-// Two independent jobs, both scoped to this one tab's page:
-//  1. Hide Chromium's native page scrollbar immediately (document-start,
-//     before first paint — no flash of the default chunky one) and, once
-//     the page has actually loaded, replace it with our own widget (same
-//     track/thumb/arrow design as the chat history sidebar), for any page
-//     that actually scrolls the document itself (not just an internal div
-//     — that path is still respected, see findScrollTarget below).
-//
-//     Always replaces the page's own scrollbar, even ones the page styled
-//     itself (e.g. YouTube's ::-webkit-scrollbar-thumb tweak) — deliberate:
-//     a ::-webkit-scrollbar-* rule only ever re-skins the native Chromium
-//     scrollbar in Chromium-based browsers. It's not a real cross-browser
-//     design (Firefox ignores it entirely and shows its own native one via
-//     scrollbar-color instead, which almost no site sets alongside it), so
-//     respecting it bought inconsistency, not respect for a deliberate
-//     design.
+// One job, scoped to this one tab's page: password autofill/autosave, and
+// modifier-click/middle-click link handling. Scrollbars are deliberately
+// left alone in the sense that matters — a page that styles its own
+// scrollbar keeps that exactly as it renders it, no forced override, no
+// custom widget, no hide-and-replace. The one thing this file does add is
+// a plain DEFAULT look for scrollbars a page does NOT style itself (see
+// insertDefaultScrollbarCss below) — vanilla Chromium's own built-in
+// scrollbar (thick, square, edge-to-edge) looks noticeably worse than
+// what Edge shows by default for the exact same unstyled case, and there's
+// no reason to inherit that here when a nicer default costs nothing.
 import { ipcRenderer, webFrame } from "electron";
 
+// Applied via the universal selector (`*`), the lowest possible CSS
+// specificity there is — any real page rule, even a plain `div::-webkit-
+// scrollbar`, naturally wins over this without needing `!important`
+// anywhere. Inserted once at document-start, before the page's own
+// stylesheets exist yet, so ties at equal specificity also resolve in the
+// page's favor (later in document order wins). This can't guarantee a win
+// against every possible site rule — that's what the old hide-and-replace
+// system that used to live in this file was actually for, and it's
+// deliberately gone now in favor of just not fighting the page. Same
+// visual recipe as this app's own chrome UI's .custom-scrollbar class
+// (src/styles.css), so the two match instead of looking like two
+// different browsers.
+function insertDefaultScrollbarCss() {
+  webFrame.insertCSS(`
+    *::-webkit-scrollbar { width: 12px; height: 12px; }
+    *::-webkit-scrollbar-track { background: transparent; }
+    *::-webkit-scrollbar-thumb {
+      background-color: #9a9a9a;
+      border-radius: 999px;
+      border: 3px solid transparent;
+      background-clip: padding-box;
+      min-height: 40px;
+    }
+    *::-webkit-scrollbar-thumb:hover { background-color: #757575; }
+    *::-webkit-scrollbar-button {
+      display: block;
+      height: 14px;
+      background-color: transparent;
+      background-repeat: no-repeat;
+      background-position: center;
+      background-size: 9px 9px;
+    }
+    *::-webkit-scrollbar-button:vertical:decrement {
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239a9a9a' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='18 15 12 9 6 15'/%3E%3C/svg%3E");
+    }
+    *::-webkit-scrollbar-button:vertical:increment {
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239a9a9a' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+    }
+  `);
+  // Temporary diagnostic — proves in the electron:dev terminal whether
+  // this code path actually ran for a given tab/frame at all, since the
+  // visual result alone couldn't tell us that. Remove once confirmed
+  // working. Not gated behind process.isMainFrame — this runs (and is
+  // worth confirming) in every frame.
+  ipcRenderer.send("__qs_debug_scrollbar_css", location.href);
+}
+
 // Diagnostic-only: confirms in the electron:dev terminal that this preload
-// actually loaded and ran for this tab. If the scrollbar is missing and
-// this line never shows up in the terminal, tab-preload.cjs isn't being
-// injected at all (build/path/wait-on issue) rather than the scrollbar
-// logic itself failing — narrows the search immediately instead of
-// guessing. Safe to leave in; it's one ipcRenderer.send per tab load.
+// actually loaded and ran for this tab. Safe to leave in; it's one
+// ipcRenderer.send per tab load.
 //
 // Main-frame-only — nodeIntegrationInSubFrames (tab-manager.ts) now also
 // injects this same script into every <iframe> on the page (needed so
@@ -31,647 +69,13 @@ import { ipcRenderer, webFrame } from "electron";
 // Wix's sign-in widget), and logging this once per random ad/embed iframe
 // on every page would drown out anything useful. Autofill logic further
 // below deliberately does NOT have this guard — it's meant to run in
-// every frame.
-// Extracted so it can be applied at MULTIPLE points (document-start,
-// again once <body> exists, and again at 'load') — see the call sites
-// below for why each one matters. Two separate mechanisms, applied
-// together:
-//
-// 1. A real CSS property (`scrollbar-width: none`) set as an INLINE
-//    style with the JS `!important` priority flag. Inline styles set
-//    this way take precedence over ANY stylesheet rule, including a
-//    page's own `!important` one, regardless of when that stylesheet
-//    loads relative to ours — unlike a stylesheet-vs-stylesheet fight
-//    (the previous approach here), which only wins if OUR stylesheet
-//    happens to load last, and stops winning the moment a page injects
-//    more CSS after that. This is the actually-robust fix for "our
-//    hiding rule got overridden by the page's own scrollbar styling",
-//    which is the concrete "double scrollbar" bug reported (our widget
-//    renders fine, but Chromium's native one comes back next to it).
-// 2. The webFrame.insertCSS stylesheet (kept as-is) for the
-//    ::-webkit-scrollbar pseudo-element rule, which genuinely CAN'T be
-//    set as an inline style at all (pseudo-elements have no JS style
-//    object) — inline styles handle scrollbar-width, this handles the
-//    older WebKit-specific pseudo-element API as a second layer, and
-//    also the "site draws its own fake scrollbar via ::before/::after"
-//    case documented below.
-function hideNativeScrollbarInline(extra?: HTMLElement | null) {
-  const important = (el: HTMLElement | null | undefined) => el?.style.setProperty("scrollbar-width", "none", "important");
-  important(document.documentElement);
-  important(document.body);
-  // Covers the case documented at this function's other call sites in
-  // buildScrollbar()/retarget()/measure() below: when the page's REAL
-  // scrolling element isn't <html>/<body> at all but some inner
-  // container (common on heavily-JS-driven layouts, where html/body are
-  // pinned with their own overflow:hidden and an inner div does the
-  // actual scrolling), hiding only html/body's scrollbar does nothing
-  // for THAT element's own native one. The existing <style> tag inserted
-  // for this case (see [data-qs-hide-native-scrollbar] below) is a
-  // regular DOM stylesheet — same cascade priority as anything the page
-  // itself loads, so a page rule of equal specificity loaded later can
-  // still beat it. This inline style, same as the html/body case above,
-  // can't be beaten by ANY external/internal stylesheet regardless of
-  // load order — inline style has the highest specificity there is.
-  important(extra);
-}
-
-// Diagnostic-only, called from measure() below at most a handful of
-// times per page (not every call — see the counter at its call site) —
-// reports what the browser actually RESOLVED scrollbar-width to after
-// our hiding attempts, on both html and body, plus whether the
-// currently-tracked scroll element still visually reserves space for a
-// scrollbar (offsetWidth > clientWidth is the classic native-scrollbar
-// tell: the box is wider than its own content area specifically because
-// something is carving out a scrollbar gutter). If "computed" ever comes
-// back as anything other than "none", something with higher cascade
-// priority than our inline !important is winning — that's the actual,
-// concrete thing to chase, instead of guessing further blind.
-function debugReportScrollbarState(el: HTMLElement) {
-  const htmlComputed = getComputedStyle(document.documentElement).scrollbarWidth;
-  const bodyComputed = document.body ? getComputedStyle(document.body).scrollbarWidth : "(no body)";
-  const gutter = el.offsetWidth - el.clientWidth;
-  debugReport(
-    "native-scrollbar-check",
-    `html computed scrollbar-width="${htmlComputed}", body computed scrollbar-width="${bodyComputed}", tracked-el(${describeElement(el)}) offsetWidth-clientWidth=${gutter}px (>0 usually means a native scrollbar is still taking up space)`,
-  );
-}
-
-function insertScrollbarHidingCss() {
-  // Hides the top-level document's own scrollbar on both html and body
-  // (some sites, e.g. YouTube, style body::-webkit-scrollbar rather than
-  // html's even though html is the actual scrolling element in standards
-  // mode — harmless to hide both), so any internal scroll container the page
-  // manages itself (a chat panel, a code viewer, ...) keeps its native one
-  // untouched — we only ever take over the page-level scrollbar. Unconditional
-  // and permanent — our own widget always replaces the page-level scrollbar,
-  // even on a site that renders its own (no exceptions, by design).
-  webFrame.insertCSS(`
-    html, body { scrollbar-width: none !important; }
-    html::-webkit-scrollbar, body::-webkit-scrollbar { display: none !important; }
-    /* A site's own custom scrollbar can be a generated ::before/::after
-       pseudo-element rather than a real DOM node (quecksilver.ch/documents
-       is exactly this — a "page-scrollbar" class directly on <html>, no
-       separate widget element to find or hide). hideForeignScrollbarWidgets()
-       further below can only ever act on real elements it can query and
-       walk — a pseudo-element isn't in the DOM at all, querySelectorAll
-       can never return it, so that approach structurally can't reach this
-       case. A blanket CSS rule can, though: this doesn't remove or hide
-       any REAL content (pseudo-content is always purely decorative), so
-       it's safe to apply broadly rather than needing to identify the
-       exact element first.
-       */
-    [class*="scrollbar" i]::before, [class*="scrollbar" i]::after,
-    [id*="scrollbar" i]::before, [id*="scrollbar" i]::after { display: none !important; content: none !important; }
-  `);
-}
-
+// every frame. The default scrollbar CSS above is also injected into
+// every frame, not just the main one — an ad/embed iframe with its own
+// scrollable area deserves the same nicer default as everything else.
 if (process.isMainFrame) {
   ipcRenderer.send("__qs_debug_tab_preload_loaded", location.href);
-  insertScrollbarHidingCss();
-  hideNativeScrollbarInline(); // document.body doesn't exist yet this early; only documentElement gets set here
-  // Catches body as soon as it exists (documentElement often does, body
-  // usually doesn't yet at document-start) — a MutationObserver on
-  // documentElement's childList fires the instant <body> is inserted,
-  // which for most pages is much earlier than DOMContentLoaded/'load'.
-  const bodyObserver = new MutationObserver(() => {
-    hideNativeScrollbarInline();
-    if (document.body) bodyObserver.disconnect();
-  });
-  bodyObserver.observe(document.documentElement, { childList: true });
-
-  // Belt-and-suspenders on top of everything above: a plain, unconditional
-  // interval that re-applies the hiding every 500ms for the page's first
-  // 15 seconds, completely independent of whether our own scrollbar
-  // widget (below) ever successfully builds at all. Every other
-  // mechanism in this file for re-asserting the hide is tied to SOME
-  // other thing happening first (body existing, our widget's own
-  // measure() loop running, ...) — if any of those preconditions don't
-  // hold on a given page for any reason, hiding silently never happens
-  // again after the very first document-start call. This one has no
-  // precondition at all — it just runs, unconditionally, on a timer.
-  let scrollbarEnforceCount = 0;
-  const scrollbarEnforceTimer = setInterval(() => {
-    hideNativeScrollbarInline();
-    scrollbarEnforceCount++;
-    if (scrollbarEnforceCount >= 30) clearInterval(scrollbarEnforceTimer);
-  }, 500);
 }
-
-function initScrollbar() {
-  if (document.getElementById("__qs_scrollbar_host__")) return; // already built (defensive; init only ever runs once per document)
-  // Re-applied here too — belt and suspenders alongside the
-  // MutationObserver above, in case some page's own script directly
-  // overwrites html/body's whole style attribute (wiping out anything
-  // set earlier) sometime between document-start and load.
-  hideNativeScrollbarInline();
-  insertScrollbarHidingCss();
-
-  hideForeignScrollbarWidgets();
-  const target = findScrollTarget();
-  debugReport(
-    target.isDocument ? "built-document" : "built-fallback-element",
-    `${target.isDocument ? "" : describeElement(target.el) + " "}scrollHeight=${target.el.scrollHeight} clientHeight=${target.el.clientHeight}`,
-  );
-  try {
-    buildScrollbar(target);
-  } catch (err) {
-    // A page-specific quirk (a strict CSP, an unexpected DOM shape, ...)
-    // could throw partway through building the widget — without this,
-    // that silently killed the whole thing with zero indication why. Ends
-    // up in the electron:dev terminal via debugReport instead of vanishing.
-    debugReport("build-threw", String(err instanceof Error ? err.message : err));
-  }
-}
-
-// Diagnostic-only — mirrors the tab-preload-loaded ping above, one line per
-// tab load, so a report like "still ugly on youtube.com" can be checked
-// against exactly what this preload decided and why, instead of guessing.
-// Some sites build their own scrollbar as a real DOM widget (a
-// track/thumb element, not a native ::-webkit-scrollbar re-skin — those
-// are already covered by the unconditional native-hiding CSS above,
-// regardless of what class name triggers them). Ours is meant to always
-// win — hides anything matching that pattern so it doesn't stack with
-// ours instead of just avoiding it. <html>/<body> themselves are excluded:
-// a "scrollbar"-named class sitting on one of those is essentially always
-// a styling *hook* (e.g. toggling scrollbar-gutter or a
-// ::-webkit-scrollbar rule), not a separate widget — hiding either of
-// those elements would blank the whole page. data-qs-foreign-scrollbar-
-// hidden marks ones already handled so repeated calls (this runs on every
-// measure(), to catch a site's widget appearing after our first check —
-// see the SPA-routing case this was built for) don't redo the work.
-function hideForeignScrollbarWidgets() {
-  const isOurs = (el: Element) => el.id?.startsWith("__qs_") || [...el.classList].some((c) => c.startsWith("__qs_"));
-  // deepQuerySelectorAll (defined further below, alongside the password-
-  // autofill code that originally needed it), not plain
-  // document.querySelectorAll — a component-library-built page (YouTube's
-  // own UI is exactly this: Polymer/Web-Components-based, most of its
-  // actual interactive chrome lives inside open shadow roots) can render
-  // its own fake/duplicate scrollbar-looking element entirely INSIDE a
-  // shadow root, which document.querySelectorAll structurally cannot see
-  // at all — not a timing issue, there's nothing to find in the light DOM
-  // in that case no matter how many times this re-runs.
-  for (const el of deepQuerySelectorAll<HTMLElement>(document, '[class*="scrollbar" i], [id*="scrollbar" i]')) {
-    if (isOurs(el) || el === document.documentElement || el === document.body) continue;
-    if (el.dataset.qsForeignScrollbarHidden) continue;
-    el.dataset.qsForeignScrollbarHidden = "true";
-    // visibility:hidden, not display:none — this element is picked up by a
-    // blind class/id-name heuristic, so there's no way to know whether
-    // it's an absolutely-positioned widget (safe either way) or something
-    // actually contributing to the page's normal layout flow. display:none
-    // collapses its box entirely, which can reflow the rest of the page —
-    // on at least one site that visibly made things WORSE (a scrollbar
-    // came back, just the page's own default one instead of either
-    // widget). visibility:hidden hides it just as completely without
-    // touching layout at all.
-    el.style.setProperty("visibility", "hidden", "important");
-  }
-}
-
-function debugReport(status: string, detail?: string) {
-  ipcRenderer.send("__qs_debug_scrollbar", { url: location.href, status, detail });
-}
-
-function describeElement(el: HTMLElement): string {
-  const id = el.id ? `#${el.id}` : "";
-  const cls = el.className && typeof el.className === "string" ? `.${el.className.trim().split(/\s+/).slice(0, 2).join(".")}` : "";
-  return `${el.tagName.toLowerCase()}${id}${cls}`;
-}
-
-type ScrollTarget = { el: HTMLElement; isDocument: boolean };
-
-// Most sites scroll the document itself (html/body), but some keep <html>
-// fixed and scroll an internal container instead — document.scrollingElement
-// alone reports those as "not scrollable" and the widget silently never
-// appears. Falls back to the largest on-screen element that's both actually
-// overflowing its box AND deliberately scrollable (overflow-y: auto/scroll),
-// so it doesn't grab some small unrelated scrollable widget (a sidebar
-// list, a code block, ...).
-//
-// Deliberately kept simple: an earlier version tried to detect "html is
-// pinned via overflow:hidden" as a separate case and special-cased body —
-// that backfired on YouTube specifically (likely a transient overflow:
-// hidden from a dismissible banner/dialog at the moment this ran, which
-// isn't the page's real, steady-state scroll behavior) and made the widget
-// disappear entirely instead of just staying native. The plain
-// scrollHeight/clientHeight check below is less clever but far more
-// reliable — a false "scrollable" is harmless (the widget just never gets
-// anything to scroll), whereas the pinned-detection false positive above
-// was actively wrong.
-// Short human-readable identifier for a DOM element in debug logs — tag +
-// id (if any) + first couple of classes. Not meant to be a full selector,
-// just enough for a person reading the console to go find the element via
-// DevTools if they need to (e.g. to report exactly which element is
-// causing a double-scrollbar sighting).
-function describeEl(el: HTMLElement): string {
-  const id = el.id ? `#${el.id}` : "";
-  const cls = el.classList.length ? "." + [...el.classList].slice(0, 2).join(".") : "";
-  return `<${el.tagName.toLowerCase()}${id}${cls}>`;
-}
-
-function findScrollTarget(): ScrollTarget {
-  const docEl = (document.scrollingElement || document.documentElement) as HTMLElement;
-  if (docEl.scrollHeight > docEl.clientHeight + 1) {
-    debugReport("target-chosen", `document is scrollable — using ${describeEl(docEl)}`);
-    return { el: docEl, isDocument: true };
-  }
-
-  const inner = findLargestScrollableElement();
-  if (inner) {
-    debugReport("target-chosen", `document not scrollable, picked descendant ${describeEl(inner)}`);
-    return { el: inner, isDocument: false };
-  }
-  debugReport("target-chosen", "document not scrollable, no qualifying descendant found — widget will stay hidden");
-  return { el: docEl, isDocument: true };
-}
-
-// document.body itself is included as a candidate here — not just its
-// descendants — because querySelectorAll("*") on document.body only
-// returns body's CHILDREN, never body itself, which would otherwise always
-// be missed as a fallback target.
-function findLargestScrollableElement(): HTMLElement | null {
-  const vw = window.innerWidth;
-  const vh = window.innerHeight;
-  let best: HTMLElement | null = null;
-  let bestArea = 0;
-  // Every element that scrolls AND is reasonably sized, whether or not it
-  // wins — logged once below so a "double scrollbar" report has something
-  // concrete to point at: if this list has 2+ entries, whichever one we
-  // DIDN'T pick is almost certainly the other scrollbar the person is
-  // seeing (its native one, since we only ever hide the winner's).
-  const runnerUps: HTMLElement[] = [];
-
-  const candidates: HTMLElement[] = document.body ? [document.body, ...document.body.querySelectorAll<HTMLElement>("*")] : [];
-  for (const el of candidates) {
-    if (el.scrollHeight <= el.clientHeight + 1) continue;
-    const style = getComputedStyle(el);
-    // "overlay" is a legacy WebKit-only value (still used by some sites)
-    // for a scrollbar that floats over content instead of taking up layout
-    // space — functionally scrollable same as auto/scroll, just missed by
-    // a stricter check.
-    if (style.overflowY !== "auto" && style.overflowY !== "scroll" && style.overflowY !== "overlay") continue;
-
-    const rect = el.getBoundingClientRect();
-    // Only the primary content region counts — must cover a meaningful
-    // share of the viewport, or a small inner scroll box (a comment list,
-    // a code snippet) would win over the real page-level content. Width
-    // is deliberately more lenient than height (30% vs 50%) — a real
-    // content column (e.g. a menu/article list next to a sidebar) is
-    // often well under half the viewport's width while still being
-    // exactly the scrollable region the person actually needs a
-    // scrollbar for.
-    if (rect.width < vw * 0.3 || rect.height < vh * 0.5) continue;
-
-    runnerUps.push(el);
-    const visibleW = Math.max(0, Math.min(rect.right, vw) - Math.max(rect.left, 0));
-    const visibleH = Math.max(0, Math.min(rect.bottom, vh) - Math.max(rect.top, 0));
-    const area = visibleW * visibleH;
-    if (area > bestArea) {
-      bestArea = area;
-      best = el;
-    }
-  }
-  if (runnerUps.length > 1) {
-    debugReport(
-      "multiple-scrollable-found",
-      `${runnerUps.length} qualifying elements — winner: ${best ? describeEl(best) : "none"}; all: ${runnerUps.map(describeEl).join(", ")}`,
-    );
-  }
-  return best;
-}
-
-function buildScrollbar(target: ScrollTarget) {
-  const SCROLL_STEP = 120;
-  // Both mutable — see retarget() below. The scroll target chosen here is
-  // only ever a first guess: if the document itself isn't scrollable and
-  // no qualifying descendant exists YET (a common SPA pattern — the real
-  // scrollable content loads in after an API call, findScrollTarget() at
-  // build time just sees an empty shell), this used to lock in "not
-  // scrollable" forever and never look again, which is exactly why the
-  // widget stayed hidden on pages whose content shows up late.
-  let scrollEl = target.el;
-  // Document-level scroll fires "scroll" on window (not reliably on
-  // <html>/<body> across engines); an internal container fires it on
-  // itself. Both cases read/write the same scrollEl for position/size.
-  let scrollEventTarget: Window | HTMLElement = target.isDocument ? window : scrollEl;
-  let isDocumentTarget = target.isDocument;
-
-  // Always present (not just when the initial target is an element) —
-  // retarget() below can switch from the document to a real element
-  // after the fact, and needs this rule already in the page for the
-  // attribute toggle to have any effect.
-  const hideStyle = document.createElement("style");
-  hideStyle.textContent = `
-    [data-qs-hide-native-scrollbar] { scrollbar-width: none !important; }
-    [data-qs-hide-native-scrollbar]::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; }
-  `;
-  document.head.appendChild(hideStyle);
-  if (!isDocumentTarget) {
-    // The document-start CSS at the top of this file only ever hides
-    // html's own native scrollbar — when we fall back to an internal
-    // scroll container (findScrollTarget above), that container's native
-    // scrollbar was never hidden, so it kept showing right alongside (or
-    // underneath) our own widget. Scoped to this exact element via a
-    // marker attribute, since inline styles can't target the
-    // ::-webkit-scrollbar pseudo-element. The [data-qs-hide-native-
-    // scrollbar] stylesheet rule below handles the ::-webkit-scrollbar
-    // pseudo-element specifically (inline styles structurally can't);
-    // hideNativeScrollbarInline's inline scrollbar-width handles the
-    // rest, and — unlike this <style> tag — can't be beaten by any page
-    // stylesheet regardless of load order (see its own doc comment).
-    scrollEl.setAttribute("data-qs-hide-native-scrollbar", "");
-    hideNativeScrollbarInline(scrollEl);
-  }
-
-  const host = document.createElement("div");
-  host.id = "__qs_scrollbar_host__";
-  Object.assign(host.style, {
-    position: "fixed",
-    top: "0",
-    right: "0",
-    width: "14px",
-    height: "100vh",
-    zIndex: "2147483647",
-    display: "none", // shown by update() once the page turns out to scroll
-  });
-  document.documentElement.appendChild(host);
-  // Shadow DOM keeps the page's own (often very aggressive, global) CSS
-  // from leaking in and mangling our widget, and vice versa.
-  const shadow = host.attachShadow({ mode: "closed" });
-
-  // Built with createElement/appendChild rather than an innerHTML string —
-  // sites that enforce a Trusted Types CSP (YouTube among them) throw a
-  // TypeError on any raw innerHTML/outerHTML assignment, which silently
-  // killed this entire function before it ever got to wiring up update()
-  // or the event listeners. DOM construction APIs aren't subject to
-  // Trusted Types at all, so this sidesteps the restriction entirely
-  // regardless of which specific policy a page has.
-  const style = document.createElement("style");
-  style.textContent = `
-    :host { all: initial; }
-    .col { position: absolute; inset: 0; display: flex; flex-direction: column; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-    .arrow { flex-shrink: 0; height: 22px; width: 100%; display: flex; align-items: center; justify-content: center; background: transparent; border: none; padding: 0; cursor: pointer; opacity: 0.7; transition: opacity 0.12s; color: hsl(0 0% 30%); }
-    .arrow:hover:not(:disabled) { opacity: 1; }
-    .arrow:disabled { cursor: default; opacity: 0.25; }
-    .track { flex: 1; position: relative; }
-    .thumb { position: absolute; left: 3px; right: 3px; border-radius: 9999px; background: hsl(240 4% 46% / 0.35); cursor: grab; transition: background 0.12s; will-change: top, height; }
-    .thumb:hover, .thumb.dragging { background: hsl(240 4% 46% / 0.55); cursor: grabbing; }
-  `;
-  shadow.appendChild(style);
-
-  const SVG_NS = "http://www.w3.org/2000/svg";
-  function makeArrowSvg(d: string): SVGSVGElement {
-    const svg = document.createElementNS(SVG_NS, "svg");
-    svg.setAttribute("width", "12");
-    svg.setAttribute("height", "8");
-    svg.setAttribute("viewBox", "0 0 12 8");
-    svg.setAttribute("fill", "currentColor");
-    const path = document.createElementNS(SVG_NS, "path");
-    path.setAttribute("d", d);
-    svg.appendChild(path);
-    return svg;
-  }
-
-  const col = document.createElement("div");
-  col.className = "col";
-
-  const btnUp = document.createElement("button");
-  btnUp.className = "arrow";
-  btnUp.id = "qs-up";
-  btnUp.type = "button";
-  btnUp.setAttribute("aria-label", "Scroll up");
-  btnUp.appendChild(makeArrowSvg("M6 1.5C6.3 1.5 6.5 1.6 6.7 1.8L10.5 6.2C10.9 6.7 10.6 7.5 9.9 7.5H2.1C1.4 7.5 1.1 6.7 1.5 6.2L5.3 1.8C5.5 1.6 5.7 1.5 6 1.5Z"));
-
-  const track = document.createElement("div");
-  track.className = "track";
-  track.id = "qs-track";
-  const thumb = document.createElement("div");
-  thumb.className = "thumb";
-  thumb.id = "qs-thumb";
-  track.appendChild(thumb);
-
-  const btnDown = document.createElement("button");
-  btnDown.className = "arrow";
-  btnDown.id = "qs-down";
-  btnDown.type = "button";
-  btnDown.setAttribute("aria-label", "Scroll down");
-  btnDown.appendChild(makeArrowSvg("M6 6.5C5.7 6.5 5.5 6.4 5.3 6.2L1.5 1.8C1.1 1.3 1.4 0.5 2.1 0.5H9.9C10.6 0.5 10.9 1.3 10.5 1.8L6.7 6.2C6.5 6.4 6.3 6.5 6 6.5Z"));
-
-  col.appendChild(btnUp);
-  col.appendChild(track);
-  col.appendChild(btnDown);
-  shadow.appendChild(col);
-
-
-  // Split on purpose: measure() does the expensive forced-layout reads
-  // (scrollHeight/clientHeight/track height) and only needs to run when
-  // the page's actual SIZE could have changed — resize, DOM mutations,
-  // initial load. render() just repositions the thumb using scrollTop
-  // (cheap) against those already-known sizes. Plain scrolling was
-  // needlessly re-running the expensive measure() on every single frame
-  // before, forcing a full layout recalculation while the browser was
-  // simultaneously trying to paint the scroll itself — that fight is what
-  // made normal wheel-scrolling look jerky (dragging the thumb was
-  // already smooth, since that path never went through this at all).
-  let cachedTrackH = 0;
-  let cachedScrollH = 0;
-  let cachedClientH = 0;
-  let measureLogCount = 0;
-
-  // Re-runs findScrollTarget() and switches scrollEl/scrollEventTarget to
-  // whatever it finds NOW, if that's different from (and better than)
-  // what's currently set — see the comment on scrollEl's declaration
-  // above for why this needs to exist at all.
-  //
-  // BUG FIXED HERE: this used to stop running entirely the first time ANY
-  // target confirmed scrollable (a `confirmedScrollable` flag gated the
-  // call below) — reasonable-looking as a perf cap, but wrong: a page
-  // whose document itself scrolls a little on first load gets "confirmed"
-  // almost immediately, permanently locking the widget onto that target
-  // even if the page's REAL scrolling region only becomes the true
-  // scrollable one later (lazy-loaded product content, a layout shift
-  // that switches scrolling from the document to an inner container,
-  // ...). The now-real scroll container's own native scrollbar was never
-  // hidden (only whatever retarget() actually switches scrollEl TO gets
-  // data-qs-hide-native-scrollbar), so it showed up right alongside our
-  // widget — a double-scrollbar sighting on exactly this kind of page.
-  // Now unconditional: every measure() call re-checks. Bounded the same
-  // way measure() itself already is — the MutationObserver driving most
-  // measure() calls disconnects after 8s (see below), and scroll events
-  // only ever trigger the cheap render() path, not measure()/retarget()
-  // at all, so this doesn't reopen the "rescanning forever" cost the
-  // original flag was guarding against.
-  function retarget() {
-    const fresh = findScrollTarget();
-    if (fresh.el === scrollEl) return;
-    if (fresh.el.scrollHeight <= fresh.el.clientHeight + 1) return; // not actually an improvement
-    debugReport("retargeted", `switched from ${describeEl(scrollEl)} to ${describeEl(fresh.el)}`);
-    scrollEventTarget.removeEventListener("scroll", scheduleRender);
-    scrollEl = fresh.el;
-    scrollEventTarget = fresh.isDocument ? window : scrollEl;
-    isDocumentTarget = fresh.isDocument;
-    if (!isDocumentTarget) {
-      scrollEl.setAttribute("data-qs-hide-native-scrollbar", "");
-      hideNativeScrollbarInline(scrollEl);
-    }
-    scrollEventTarget.addEventListener("scroll", scheduleRender, { passive: true } as AddEventListenerOptions);
-  }
-
-  function measure() {
-    // Re-assert on every measure — cheap, and catches a page's late
-    // script overwriting html/body's (or, if isDocumentTarget is false,
-    // the actual tracked element's) style attribute after document-
-    // start/load already ran.
-    hideNativeScrollbarInline(isDocumentTarget ? null : scrollEl);
-    hideForeignScrollbarWidgets();
-    retarget();
-    cachedTrackH = track.clientHeight;
-    cachedScrollH = scrollEl.scrollHeight;
-    cachedClientH = scrollEl.clientHeight;
-
-    if (measureLogCount < 3) {
-      measureLogCount++;
-      debugReport("update", `#${measureLogCount} scrollable=${cachedScrollH > cachedClientH + 1} scrollH=${cachedScrollH} clientH=${cachedClientH}`);
-      debugReportScrollbarState(scrollEl);
-    }
-
-    render();
-  }
-
-  function render() {
-    const scrollable = cachedScrollH > cachedClientH + 1;
-    host.style.display = scrollable ? "block" : "none";
-    if (!scrollable || cachedTrackH === 0) return;
-
-    const scrollTop = scrollEl.scrollTop;
-    btnUp.disabled = scrollTop <= 1;
-    btnDown.disabled = scrollTop + cachedClientH >= cachedScrollH - 1;
-
-    const ratio = cachedClientH / cachedScrollH;
-    const h = Math.max(36, cachedTrackH * ratio);
-    const maxTop = cachedTrackH - h;
-    const top = (scrollTop / (cachedScrollH - cachedClientH)) * maxTop;
-    thumb.style.height = h + "px";
-    thumb.style.top = Math.min(Math.max(top, 0), maxTop) + "px";
-  }
-
-  // Coalesces bursts of events into at most one measure()/render() per
-  // animation frame, on top of the measure/render split above.
-  let renderScheduled = false;
-  function scheduleRender() {
-    if (renderScheduled) return;
-    renderScheduled = true;
-    requestAnimationFrame(() => {
-      renderScheduled = false;
-      render();
-    });
-  }
-  let measureScheduled = false;
-  function scheduleMeasure() {
-    if (measureScheduled) return;
-    measureScheduled = true;
-    requestAnimationFrame(() => {
-      measureScheduled = false;
-      measure();
-    });
-  }
-
-  // Listens on the actual scroll target — window for document-level scroll,
-  // the container element itself when we fell back to an internal scroll
-  // div (see findScrollTarget above). Only re-renders (cheap) — plain
-  // scrolling doesn't change the page's overall size.
-  scrollEventTarget.addEventListener("scroll", scheduleRender, { passive: true } as AddEventListenerOptions);
-  // Resizing the window can change layout enough to affect scrollHeight —
-  // needs a full re-measure.
-  window.addEventListener("resize", scheduleMeasure);
-  // Catches content that grows the page without firing scroll/resize —
-  // infinite-scroll feeds, lazy-loaded sections, late images, SPA route
-  // changes that don't reload the document. Disconnected after the page
-  // has had time to settle (see below) — a churny SPA (YouTube's
-  // recommendations, live chat, player UI, ...) keeps mutating its DOM
-  // forever, and there's rapidly diminishing value in re-measuring on
-  // every single one of those once the page's overall scrollable height
-  // has stabilized; scroll/resize still catch anything that matters after
-  // that point.
-  const mutationObserver = new MutationObserver(scheduleMeasure);
-  mutationObserver.observe(document.documentElement, { childList: true, subtree: true });
-  setTimeout(() => mutationObserver.disconnect(), 8000);
-
-  btnUp.addEventListener("mousedown", (e) => {
-    e.preventDefault();
-    scrollEl.scrollBy({ top: -SCROLL_STEP, behavior: "smooth" });
-  });
-  btnDown.addEventListener("mousedown", (e) => {
-    e.preventDefault();
-    scrollEl.scrollBy({ top: SCROLL_STEP, behavior: "smooth" });
-  });
-
-  thumb.addEventListener("mousedown", (e) => {
-    e.preventDefault();
-    thumb.classList.add("dragging");
-    const startY = e.clientY;
-    const startScroll = scrollEl.scrollTop;
-    const trackH = track.clientHeight;
-    const thumbH = thumb.offsetHeight;
-    const scrollRange = scrollEl.scrollHeight - scrollEl.clientHeight;
-    const trackRange = trackH - thumbH;
-
-    // Mousemove fires far more often than once per frame — coalescing to
-    // one rAF per frame, and moving the thumb with a direct render() call
-    // in that same frame instead of waiting on the native "scroll" event
-    // the scrollTop write triggers, keeps it visually locked to the cursor.
-    let pendingClientY: number | null = null;
-    let dragFrameScheduled = false;
-
-    function applyDrag() {
-      dragFrameScheduled = false;
-      if (pendingClientY === null) return;
-      const ratio = trackRange > 0 ? (pendingClientY - startY) / trackRange : 0;
-      scrollEl.scrollTop = Math.max(0, Math.min(scrollRange, startScroll + ratio * scrollRange));
-      render();
-    }
-
-    function onMove(ev: MouseEvent) {
-      pendingClientY = ev.clientY;
-      if (dragFrameScheduled) return;
-      dragFrameScheduled = true;
-      requestAnimationFrame(applyDrag);
-    }
-    function onUp() {
-      thumb.classList.remove("dragging");
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    }
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-  });
-
-  requestAnimationFrame(measure);
-  setTimeout(measure, 150);
-  setTimeout(measure, 1200); // one more pass for pages that keep growing after load (lazy content, web fonts reflowing layout, ...)
-  // Show it immediately, synchronously, right now — don't wait on the
-  // deferred passes above at all for the very first paint. We already know
-  // scrollEl really is scrollable at this exact moment (that's why
-  // buildScrollbar was called), so there's no reason the widget's initial
-  // visibility should depend on requestAnimationFrame or a timer firing;
-  // both can be delayed or throttled (a backgrounded/inactive tab pauses
-  // rAF entirely in Chromium), and that's exactly the kind of thing that
-  // would explain "built the widget but it never actually showed up".
-  measure();
-}
-
-// 'load' (not DOMContentLoaded) — needs every stylesheet actually fetched
-// for pageStylesOwnScrollbar() to see real rules, not an empty/half-parsed
-// sheet. The native scrollbar is already hidden from document-start above,
-// so there's no flash of Chromium's default one in the meantime either way.
-// Main-frame-only, same reasoning as the top of the file — a scrollbar
-// widget has no business appearing inside a random ad iframe.
-if (process.isMainFrame) {
-  if (document.readyState === "complete") {
-    initScrollbar();
-  } else {
-    window.addEventListener("load", initScrollbar);
-  }
-}
+insertDefaultScrollbarCss();
 
 // --- Modifier-click / middle-click links open in a new tab -----------------
 //
@@ -729,10 +133,10 @@ document.addEventListener(
 // exactly one match, fills the page's own login form with it directly. With
 // more than one match (two genuinely different saved accounts for the same
 // site), shows a small picker dropdown right under the field instead of
-// guessing — built the same way the custom scrollbar is (a Shadow DOM host
-// element injected straight into the page's own DOM), not some Electron-
-// level overlay; there's no restriction stopping this, "we can't draw over
-// the native page" was never actually the limitation.
+// guessing — built as a Shadow DOM host element injected straight into
+// the page's own DOM, not some Electron-level overlay; there's no
+// restriction stopping this, "we can't draw over the native page" was
+// never actually the limitation.
 // Two separate flags, not one — a field that came up with zero saved
 // matches should be allowed to try again later (the person might save a
 // password for this exact site moments later, in the same tab, without a

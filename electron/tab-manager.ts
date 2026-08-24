@@ -35,10 +35,9 @@ import { getRequestLog } from "./request-log-store";
 import { getAllRequestMocks, setRequestMock as storeSetRequestMock, deleteRequestMock as storeDeleteRequestMock } from "./request-mocks-store";
 import type { RequestLogEntry, CookieEntry, IndexedDbInfo, ServiceWorkerInfo, RequestMock } from "./control-center-store";
 
-// Runs at document-start in every browsed tab, injecting a small clean
-// scrollbar before first paint (see tab-preload.ts) — replaces an earlier
-// insertCSS()-on-dom-ready approach, which was late enough to flash
-// Chromium's default scrollbar for a frame or two first.
+// Injected into every browsed tab — handles password autofill/autosave and
+// modifier-click/middle-click link handling (see tab-preload.ts). Pages
+// keep their own native scrollbar untouched; nothing here overrides it.
 const TAB_PRELOAD_PATH = path.join(__dirname, "tab-preload.cjs");
 
 // Electron's default UA advertises "...Chrome/X.Y Electron/Z.W QueckSilver
@@ -855,9 +854,9 @@ export class TabManager {
       .map((e) => `[${new Date(e.timestamp).toISOString()}] ${e.level.toUpperCase()}: ${e.message}`)
       .join("\n");
     const { filePath, canceled } = await dialog.showSaveDialog({
-      title: "Console-Log exportieren",
+      title: "Export console log",
       defaultPath: path.join(app.getPath("downloads"), `console-log-${Date.now()}.txt`),
-      filters: [{ name: "Textdatei", extensions: ["txt"] }],
+      filters: [{ name: "Text file", extensions: ["txt"] }],
     });
     if (canceled || !filePath) return null;
     await fs.writeFile(filePath, text, "utf-8");
@@ -925,9 +924,9 @@ export class TabManager {
     if (!wc) return null;
     const image = await wc.capturePage();
     const { filePath, canceled } = await dialog.showSaveDialog({
-      title: "Screenshot speichern",
+      title: "Save screenshot",
       defaultPath: path.join(app.getPath("pictures"), `screenshot-${Date.now()}.png`),
-      filters: [{ name: "PNG-Bild", extensions: ["png"] }],
+      filters: [{ name: "PNG image", extensions: ["png"] }],
     });
     if (canceled || !filePath) return null;
     await fs.writeFile(filePath, image.toPNG());
@@ -965,9 +964,9 @@ export class TabManager {
     view.setBounds(originalBounds);
     if (!image) return null;
     const { filePath, canceled } = await dialog.showSaveDialog({
-      title: "Vollständigen Screenshot speichern",
+      title: "Save full-page screenshot",
       defaultPath: path.join(app.getPath("pictures"), `screenshot-full-${Date.now()}.png`),
-      filters: [{ name: "PNG-Bild", extensions: ["png"] }],
+      filters: [{ name: "PNG image", extensions: ["png"] }],
     });
     if (canceled || !filePath) return null;
     await fs.writeFile(filePath, image.toPNG());
@@ -979,9 +978,9 @@ export class TabManager {
     if (!wc) return null;
     const data = await wc.printToPDF({});
     const { filePath, canceled } = await dialog.showSaveDialog({
-      title: "Als PDF speichern",
-      defaultPath: path.join(app.getPath("documents"), `seite-${Date.now()}.pdf`),
-      filters: [{ name: "PDF-Dokument", extensions: ["pdf"] }],
+      title: "Save as PDF",
+      defaultPath: path.join(app.getPath("documents"), `page-${Date.now()}.pdf`),
+      filters: [{ name: "PDF document", extensions: ["pdf"] }],
     });
     if (canceled || !filePath) return null;
     await fs.writeFile(filePath, data);
@@ -996,9 +995,9 @@ export class TabManager {
     const wc = this.views.get(id)?.webContents;
     if (!wc) return null;
     const { filePath, canceled } = await dialog.showSaveDialog({
-      title: "Seite speichern unter",
-      defaultPath: path.join(app.getPath("downloads"), `seite-${Date.now()}.html`),
-      filters: [{ name: "Webseite, komplett", extensions: ["html"] }],
+      title: "Save page as",
+      defaultPath: path.join(app.getPath("downloads"), `page-${Date.now()}.html`),
+      filters: [{ name: "Webpage, complete", extensions: ["html"] }],
     });
     if (canceled || !filePath) return null;
     await wc.savePage(filePath, "HTMLComplete");
@@ -1011,9 +1010,9 @@ export class TabManager {
     if (!wc) return null;
     const result = await extractPageAsMarkdown(wc);
     if (!result.ok) return null;
-    const safeName = result.title.replace(/[\\/:*?"<>|]/g, "").trim().slice(0, 80) || "seite";
+    const safeName = result.title.replace(/[\\/:*?"<>|]/g, "").trim().slice(0, 80) || "page";
     const { filePath, canceled } = await dialog.showSaveDialog({
-      title: "Als Markdown exportieren",
+      title: "Export as Markdown",
       defaultPath: path.join(app.getPath("downloads"), `${safeName}.md`),
       filters: [{ name: "Markdown", extensions: ["md"] }],
     });
@@ -1333,9 +1332,9 @@ export class TabManager {
         },
       };
       const { filePath, canceled } = await dialog.showSaveDialog({
-        title: "HAR exportieren",
+        title: "Export HAR",
         defaultPath: path.join(app.getPath("downloads"), `network-${Date.now()}.har`),
-        filters: [{ name: "HAR-Datei", extensions: ["har"] }],
+        filters: [{ name: "HAR file", extensions: ["har"] }],
       });
       if (canceled || !filePath) return null;
       await fs.writeFile(filePath, JSON.stringify(har, null, 2), "utf-8");
@@ -1606,10 +1605,7 @@ export class TabManager {
         // frame — completely invisible to a login form embedded in an
         // <iframe> (Wix's sign-in widget among them), since that's a
         // fully separate document our script never got injected into at
-        // all. Password autofill/autosave now runs per-frame; the
-        // scrollbar widget stays main-frame-only (see process.isMainFrame
-        // in tab-preload.ts) so it doesn't try to attach itself to every
-        // random ad/embed iframe on a page too.
+        // all. Password autofill/autosave now runs per-frame.
         nodeIntegrationInSubFrames: true,
         // Renders PDFs inline with Chromium's built-in PDF viewer instead
         // of always forcing a download — same plugin Chrome/Edge/every
@@ -1630,8 +1626,7 @@ export class TabManager {
     // can fire but nothing visibly zooms.
     view.webContents.setVisualZoomLevelLimits(1, 3).catch(() => {});
     // Surfaces a crashing tab-preload.cjs in the electron:dev terminal
-    // instead of it failing silently — if this ever prints, that's why the
-    // scrollbar isn't showing up on a real page.
+    // instead of it failing silently.
     view.webContents.on("preload-error", (_event, preloadPath, error) => {
       console.error(`[preload-error][tab ${id}] ${preloadPath}:`, error);
     });
