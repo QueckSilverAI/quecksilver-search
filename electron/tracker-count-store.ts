@@ -13,21 +13,38 @@
 // tab-manager.ts instead reads this store keyed by its own
 // view.webContents.id, same pattern as everywhere else here.
 const trackerCounts = new Map<number, number>();
+// For Zora's list_trackers_on_page tool — same key, a capped set of the
+// distinct hostnames actually blocked (not every request; a tracker
+// pinged 40 times on one page is one name, not 40). Reset/cleared
+// alongside the count below.
+const trackerHostnames = new Map<number, Set<string>>();
+const MAX_TRACKER_NAMES = 25;
 
-export function incrementTrackerCount(webContentsId: number) {
+export function incrementTrackerCount(webContentsId: number, hostname?: string) {
   trackerCounts.set(webContentsId, (trackerCounts.get(webContentsId) ?? 0) + 1);
+  if (hostname) {
+    const names = trackerHostnames.get(webContentsId) ?? new Set<string>();
+    if (names.size < MAX_TRACKER_NAMES) names.add(hostname);
+    trackerHostnames.set(webContentsId, names);
+  }
 }
 
 export function getTrackerCount(webContentsId: number): number {
   return trackerCounts.get(webContentsId) ?? 0;
 }
 
+export function getTrackerHostnames(webContentsId: number): string[] {
+  return [...(trackerHostnames.get(webContentsId) ?? [])];
+}
+
 export function resetTrackerCount(webContentsId: number) {
   trackerCounts.set(webContentsId, 0);
+  trackerHostnames.delete(webContentsId);
 }
 
 export function clearTrackerCount(webContentsId: number) {
   trackerCounts.delete(webContentsId);
+  trackerHostnames.delete(webContentsId);
 }
 
 export function getTotalTrackerCount(): number {

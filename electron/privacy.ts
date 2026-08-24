@@ -84,6 +84,17 @@ function hostMatches(url: string): boolean {
   }
 }
 
+// For Zora's list_trackers_on_page tool — just the hostname, for a short
+// human-readable name (e.g. "doubleclick.net"), not the full blocked URL
+// with tracking params attached.
+function safeHostname(url: string): string | undefined {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return undefined;
+  }
+}
+
 // Masterplan #33 — user-supplied patterns (only "*" as a wildcard, same
 // pragmatic scope as request-mocks-store.ts's matcher), checked against
 // the full URL rather than just the hostname so a pattern like
@@ -118,7 +129,7 @@ export function applyPrivacyHardening(targetSession?: Electron.Session) {
       // needs no extra classification logic. details.webContentsId is
       // whichever tab's page issued the request, not necessarily the
       // active one.
-      incrementTrackerCount(details.webContentsId);
+      incrementTrackerCount(details.webContentsId, safeHostname(details.url));
       callback({ cancel: true });
       return;
     }

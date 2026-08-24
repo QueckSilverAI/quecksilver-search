@@ -871,6 +871,16 @@ export class TabManager {
     return filePath;
   }
 
+  // For Zora's get_console_errors tool — same consoleLogs data
+  // exportConsoleLog above writes to a file, filtered to just errors and
+  // returned as text directly instead.
+  getConsoleErrors(id: string, limit = 20): { message: string; timestamp: number }[] {
+    return (this.consoleLogs.get(id) ?? [])
+      .filter((e) => e.level === "error")
+      .slice(-limit)
+      .map((e) => ({ message: e.message, timestamp: e.timestamp }));
+  }
+
   // --- Control center: request log (masterplan #26) ------------------------
   getRequestLogForTab(id: string): RequestLogEntry[] {
     const wc = this.views.get(id)?.webContents;

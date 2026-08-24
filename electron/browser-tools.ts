@@ -16,6 +16,13 @@ import { listTopFrequentSites } from "./frequent-sites-store";
 import { getZoraSettings } from "./zora-settings-store";
 import { getActiveIdentity } from "./profile-store";
 import { sendCdpCommand } from "./cdp-client";
+import { listProfiles, setActiveProfile } from "./profile-store";
+import { getTrackerHostnames } from "./tracker-count-store";
+import {
+  getSitePermission,
+  setSitePermission,
+  type PermissionKind,
+} from "./site-permissions-store";
 
 // Every tool returns a short text result — this is what gets fed back to
 // Gemini as the functionResponse content, so keep it compact and factual,
@@ -141,6 +148,23 @@ export const BROWSER_TOOL_NAMES = new Set([
   // click_at, hover_element, select_dropdown_option and submit_form are
   // the genuinely new ones.
   "see_screen",
+  // Phase 8 — the realistically buildable slice of categories H-T (see
+  // the conversation with Juri from 2026-08-24 for the full breakdown of
+  // what's here vs. what needs new infrastructure that doesn't exist yet
+  // — TTS/read-aloud, notifications/reminders, price tracking, breach
+  // checking, and QueckSilver-account-linked features like memory/sync
+  // are NOT in this list for that reason).
+  "get_selected_text",
+  "scan_for_mixed_content",
+  "list_trackers_on_page",
+  "check_permissions_for_site",
+  "revoke_site_permission",
+  "close_duplicate_tabs",
+  "switch_profile",
+  "get_console_errors",
+  "validate_form_before_submit",
+  "start_focus_timer",
+  "undo_last_action",
   "get_clickable_elements",
   "click_at",
   "hover_element",
@@ -155,6 +179,21 @@ export const BROWSER_TOOL_NAMES = new Set([
   "run_control_center_tool",
   "apply_preset",
 ]);
+
+// undo_last_action (plan section 8, category K "Zora-eigene Werkzeuge") —
+// a lightweight, one-step-deep undo log, not a full history stack. Keyed
+// by window id since Control Center settings/focus timers are per-window
+// anyway; a real "undo the last 10 things" feature would need much more
+// bookkeeping than one tool call justifies. Tab closes don't need an
+// entry here at all — reopen_closed_tab (Phase 5) already exists as its
+// own tool the model can just call directly.
+type UndoableAction = { type: "control_center_settings"; previousValues: Partial<ControlCenterSettings> };
+const lastUndoable = new Map<number, UndoableAction>();
+// start_focus_timer's revert timer, keyed by window id — replacing a
+// running timer (calling start_focus_timer again) clears the old one
+// first rather than letting two overlapping timers race to turn focus
+// mode off.
+const focusTimers = new Map<number, ReturnType<typeof setTimeout>>();
 
 // apply_preset combos (plan section 8, category E). Deliberately NOT
 // exhaustive/aggressive — e.g. privacy_max leaves imagesDisabled off so the
@@ -200,7 +239,7 @@ export async function executeBrowserTool(
         const id = requireId(tabs, args.tab_id);
         if (!id) return noActiveTab();
         tabs.closeTab(id);
-        return { ok: true, text: `Closed tab ${id}.` };
+        return { ok: true, text: `Closed tab ${id}. (Use reopen_closed_tab to undo.)` };
       }
       case "switch_tab": {
         const id = resolveId(tabs, args.tab_id);
@@ -573,6 +612,162 @@ export async function executeBrowserTool(
           ? { ok: true, text: "Screenshot captured.", imageBase64 }
           : { ok: false, text: "Couldn't capture a screenshot." };
       }
+      case "get_selected_text": {
+        const wc = requireWebContents(tabs, args.tab_id);
+        if (!wc) return noActiveTab();
+        const selected = (await wc.executeJavaScript(
+          "window.getSelection ? window.getSelection().toString() : ''",
+          true,
+        )) as string;
+        return selected.trim()
+          ? { ok: true, text: truncate(selected) }
+          : { ok: false, text: "Nothing is currently selected on the page." };
+      }
+      case "scan_for_mixed_content": {
+        const wc = requireWebContents(tabs, args.tab_id);
+        if (!wc) return noActiveTab();
+        if (!wc.getURL().startsWith("https://")) {
+          return { ok: false, text: "This page isn't loaded over HTTPS, so mixed content doesn't apply." };
+        }
+        const insecure = (await wc.executeJavaScript(
+          `Array.from(document.querySelectorAll("img[src],script[src],link[href],iframe[src]"))
+            .map((el) => el.src || el.href)
+            .filter((url) => url && url.startsWith("http://"))
+            .slice(0, 30)`,
+          true,
+        )) as string[];
+        return insecure.length > 0
+          ? { ok: true, text: `Found ${insecure.length} insecure resource(s):\n${insecure.join("\n")}` }
+          : { ok: true, text: "No mixed content found — every resource loads over HTTPS." };
+      }
+      case "list_trackers_on_page": {
+        const wc = requireWebContents(tabs, args.tab_id);
+        if (!wc) return noActiveTab();
+        const names = getTrackerHostnames(wc.id);
+        return names.length > 0
+          ? { ok: true, text: names.join("\n") }
+          : { ok: true, text: "No trackers blocked on this page (or ad blocking is off)." };
+      }
+      case "check_permissions_for_site": {
+        const wc = requireWebContents(tabs, args.tab_id);
+        if (!wc) return noActiveTab();
+        let domain: string;
+        try {
+          domain = new URL(wc.getURL()).hostname;
+        } catch {
+          return { ok: false, text: "Couldn't determine this page's domain." };
+        }
+        const entry = getSitePermission(win.id, domain);
+        return entry
+          ? {
+              ok: true,
+              text: `${domain}: camera=${entry.camera}, microphone=${entry.microphone}, notifications=${entry.notifications}, autoDownloads=${entry.autoDownloads}`,
+            }
+          : { ok: true, text: `No permissions have been granted or explicitly blocked for ${domain} yet.` };
+      }
+      case "revoke_site_permission": {
+        const wc = requireWebContents(tabs, args.tab_id);
+        if (!wc) return noActiveTab();
+        const kind = typeof args.kind === "string" ? (args.kind as PermissionKind) : null;
+        if (!kind || !["camera", "microphone", "notifications", "autoDownloads"].includes(kind)) {
+          return { ok: false, text: "kind must be one of: camera, microphone, notifications, autoDownloads." };
+        }
+        let domain: string;
+        try {
+          domain = new URL(wc.getURL()).hostname;
+        } catch {
+          return { ok: false, text: "Couldn't determine this page's domain." };
+        }
+        setSitePermission(win.id, domain, kind, "block");
+        return { ok: true, text: `Revoked ${kind} for ${domain}.` };
+      }
+      case "close_duplicate_tabs": {
+        const { activeId, tabs: list } = tabs.listTabs();
+        const seen = new Set<string>();
+        let closed = 0;
+        for (const t of list) {
+          if (t.id === activeId) {
+            seen.add(t.url);
+            continue;
+          }
+          if (seen.has(t.url)) {
+            tabs.closeTab(t.id);
+            closed++;
+          } else {
+            seen.add(t.url);
+          }
+        }
+        return { ok: true, text: closed > 0 ? `Closed ${closed} duplicate tab${closed === 1 ? "" : "s"}.` : "No duplicate tabs found." };
+      }
+      case "switch_profile": {
+        const name = typeof args.name === "string" ? args.name.trim().toLowerCase() : "";
+        if (!name) return { ok: false, text: "Missing name." };
+        const profiles = listProfiles();
+        const profile = profiles.find((p) => p.name.toLowerCase() === name);
+        if (!profile) {
+          return { ok: false, text: `No profile named "${args.name}". Available: ${profiles.map((p) => p.name).join(", ") || "none"}.` };
+        }
+        setActiveProfile(win, profile.id);
+        return { ok: true, text: `Switched to profile "${profile.name}".` };
+      }
+      case "get_console_errors": {
+        const id = requireId(tabs, args.tab_id);
+        if (!id) return noActiveTab();
+        const errors = tabs.getConsoleErrors(id);
+        return errors.length > 0
+          ? { ok: true, text: errors.map((e) => `[${new Date(e.timestamp).toLocaleTimeString()}] ${e.message}`).join("\n") }
+          : { ok: true, text: "No console errors on this page." };
+      }
+      case "validate_form_before_submit": {
+        const wc = requireWebContents(tabs, args.tab_id);
+        if (!wc) return noActiveTab();
+        const selector = typeof args.selector === "string" ? args.selector : null;
+        if (!selector) return { ok: false, text: "Missing selector." };
+        const result = (await wc.executeJavaScript(
+          `(() => {
+            const el = document.querySelector(${JSON.stringify(selector)});
+            if (!el) return null;
+            const form = el.tagName === "FORM" ? el : el.closest("form");
+            if (!form) return null;
+            const problems = [];
+            for (const field of form.querySelectorAll("input,select,textarea")) {
+              if (field.required && !field.value) problems.push((field.name || field.id || field.type) + " is empty");
+              else if (field.type === "email" && field.value && !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(field.value)) problems.push((field.name || field.id) + " doesn't look like a valid email");
+            }
+            return problems;
+          })()`,
+          true,
+        )) as string[] | null;
+        if (result === null) return { ok: false, text: `No form found for selector ${selector}.` };
+        return result.length > 0
+          ? { ok: true, text: `Found ${result.length} issue(s): ${result.join("; ")}` }
+          : { ok: true, text: "No obvious issues found." };
+      }
+      case "start_focus_timer": {
+        const minutes = Number(args.minutes);
+        if (!Number.isFinite(minutes) || minutes <= 0) return { ok: false, text: "Missing or invalid minutes." };
+        const existing = focusTimers.get(win.id);
+        if (existing) clearTimeout(existing);
+        setControlCenterSettings({ focusMode: true, doNotDisturb: true });
+        const timer = setTimeout(() => {
+          setControlCenterSettings({ focusMode: false, doNotDisturb: false });
+          focusTimers.delete(win.id);
+        }, minutes * 60_000);
+        focusTimers.set(win.id, timer);
+        return { ok: true, text: `Focus mode on for ${minutes} minute${minutes === 1 ? "" : "s"}.` };
+      }
+      case "undo_last_action": {
+        const action = lastUndoable.get(win.id);
+        if (!action) {
+          return { ok: false, text: "Nothing to undo — either nothing's been changed yet, or it's already been undone." };
+        }
+        lastUndoable.delete(win.id);
+        setControlCenterSettings(action.previousValues);
+        return {
+          ok: true,
+          text: `Reverted: ${Object.entries(action.previousValues).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(", ")}.`,
+        };
+      }
       case "add_bookmark": {
         const label = typeof args.label === "string" ? args.label.trim() : "";
         const url = typeof args.url === "string" ? args.url.trim() : "";
@@ -616,6 +811,10 @@ export async function executeBrowserTool(
         // whenever it's opened rather than listening for a push event, so a
         // setting Zora changes shows up correctly next time it's opened —
         // no live-update channel needed here.
+        lastUndoable.set(win.id, {
+          type: "control_center_settings",
+          previousValues: { [key]: getControlCenterSettings()[key] } as Partial<ControlCenterSettings>,
+        });
         setControlCenterSettings({ [key]: coerced.value } as Partial<ControlCenterSettings>);
         return {
           ok: true,
@@ -636,6 +835,12 @@ export async function executeBrowserTool(
         if (!patch) {
           return { ok: false, text: `Unknown preset "${name}". Available: ${Object.keys(CONTROL_CENTER_PRESETS).join(", ")}.` };
         }
+        lastUndoable.set(win.id, {
+          type: "control_center_settings",
+          previousValues: Object.fromEntries(
+            Object.keys(patch).map((k) => [k, getControlCenterSettings()[k as keyof ControlCenterSettings]]),
+          ) as Partial<ControlCenterSettings>,
+        });
         setControlCenterSettings(patch);
         return { ok: true, text: `Applied preset "${name}": ${Object.entries(patch).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(", ")}.` };
       }
