@@ -9,7 +9,15 @@ import {
   cameraGloballyBlocked,
   micGloballyBlocked,
   locationGloballyBlocked,
+  imagesGloballyDisabled,
+  doNotDisturbEnabled,
+  customBlockedPatternsSetting,
+  getControlCenterSettings,
 } from "./control-center-store";
+import { incrementTrackerCount } from "./tracker-count-store";
+import { addBandwidthBytes } from "./bandwidth-store";
+import { recordRequestStart, recordRequestCompleted } from "./request-log-store";
+import { findMatchingMock } from "./request-mocks-store";
 
 // Applied once, globally, to session.defaultSession — every tab's
 // WebContentsView uses that session (no per-profile partitioning exists
@@ -76,6 +84,22 @@ function hostMatches(url: string): boolean {
   }
 }
 
+// Masterplan #33 — user-supplied patterns (only "*" as a wildcard, same
+// pragmatic scope as request-mocks-store.ts's matcher), checked against
+// the full URL rather than just the hostname so a pattern like
+// "*.example.com/api/*" can target a specific path too.
+function matchesCustomPattern(url: string): boolean {
+  const patterns = customBlockedPatternsSetting();
+  if (patterns.length === 0) return false;
+  return patterns.some((pattern) => {
+    if (!pattern.trim()) return false;
+    const regex = new RegExp(
+      "^" + pattern.split("*").map((s) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*") + "$",
+    );
+    return regex.test(url);
+  });
+}
+
 export function applyPrivacyHardening(targetSession?: Electron.Session) {
   const ses = targetSession ?? electronSession.defaultSession;
 
@@ -83,7 +107,51 @@ export function applyPrivacyHardening(targetSession?: Electron.Session) {
   // Gated by the Control center's "Add-Blocker" toggle (default on, so
   // behavior is unchanged for anyone who never opens it).
   ses.webRequest.onBeforeRequest((details, callback) => {
+    // Masterplan #26 — start time for this request's log entry (see the
+    // onCompleted hook below), recorded unconditionally so the log covers
+    // every request, not just ones any of the toggles below act on.
+    recordRequestStart(details.id, details.timestamp);
     if (adBlockEnabled() && hostMatches(details.url)) {
+      // Control center's "Tracker-Zähler" — every cancelled request here
+      // IS a blocked tracker by definition (hostMatches only matches
+      // BLOCKED_HOSTS), so counting it right at the point of cancellation
+      // needs no extra classification logic. details.webContentsId is
+      // whichever tab's page issued the request, not necessarily the
+      // active one.
+      incrementTrackerCount(details.webContentsId);
+      callback({ cancel: true });
+      return;
+    }
+    // Masterplan #33 — user-defined block patterns, same cancellation
+    // path as the built-in ad blocker above but driven by the person's
+    // own list instead of BLOCKED_HOSTS.
+    if (matchesCustomPattern(details.url)) {
+      callback({ cancel: true });
+      return;
+    }
+    // Masterplan #34 — Request-Interception/Mocking. Checked before the
+    // image-blocking/HTTPS-upgrade logic below since a mocked request
+    // should never actually go out at all. redirectURL to a data: URI is
+    // the simplest way to substitute a full response body without
+    // needing Electron's lower-level protocol.interceptBufferProtocol
+    // (which requires registering the interception at session-creation
+    // time) — sufficient for the JSON/text API-testing case this feature
+    // targets, though unlike a real interception it can't set custom
+    // response headers or an arbitrary status code on the actual network
+    // layer (the body substitution is what matters for most API mocking).
+    const mock = findMatchingMock(details.url);
+    if (mock) {
+      const dataUri = "data:application/json;charset=utf-8," + encodeURIComponent(mock.body);
+      callback({ redirectURL: dataUri });
+      return;
+    }
+    // Control center's "Bilder deaktivieren" — a plain data-saver mode,
+    // cancels every image sub-resource regardless of host. Checked here
+    // (same hook as the ad-blocker above) rather than a separate
+    // onBeforeRequest listener, since Electron dispatches multiple
+    // listeners on the same event in registration order anyway — no
+    // benefit to splitting this into its own hook.
+    if (imagesGloballyDisabled() && details.resourceType === "image") {
       callback({ cancel: true });
       return;
     }
@@ -112,6 +180,33 @@ export function applyPrivacyHardening(targetSession?: Electron.Session) {
       return;
     }
     callback({});
+  });
+
+  // --- Bandwidth counter -----------------------------------------------
+  // Control center's "Bandbreiten-Nutzung" (masterplan #10) — sums the
+  // Content-Length of every completed response per tab. Reading it off
+  // onCompleted's own responseHeaders (rather than a separate
+  // onHeadersReceived listener) keeps this to one extra hook, in the same
+  // spot every other webRequest-based counter here already lives.
+  ses.webRequest.onCompleted((details) => {
+    const headers = details.responseHeaders;
+    if (headers) {
+      // Header casing isn't guaranteed — Electron passes through whatever
+      // the server sent, so check both.
+      const raw = headers["Content-Length"] ?? headers["content-length"];
+      const value = Array.isArray(raw) ? raw[0] : raw;
+      const bytes = value ? parseInt(value, 10) : NaN;
+      if (!Number.isNaN(bytes)) addBandwidthBytes(details.webContentsId, bytes);
+    }
+    // Masterplan #26 — every completed request becomes one log entry,
+    // regardless of resourceType (mainFrame navigations included, same as
+    // a real DevTools Network panel).
+    recordRequestCompleted(details.webContentsId, details.id, {
+      url: details.url,
+      method: details.method,
+      statusCode: details.statusCode,
+      timestamp: details.timestamp,
+    });
   });
 
   // --- Do-Not-Track + trimmed cross-site Referer ----------------------
@@ -218,6 +313,14 @@ export function applyPrivacyHardening(targetSession?: Electron.Session) {
       callback(false);
       return;
     }
+    // Control center's "Nicht stören" — same hard-override shape as the
+    // camera/mic global blocks above: wins over any per-site "allow" a
+    // person may have granted earlier, rather than just changing the
+    // default for undecided sites.
+    if (kind === "notifications" && doNotDisturbEnabled()) {
+      callback(false);
+      return;
+    }
     let domain: string;
     try {
       domain = new URL(webContents.getURL()).hostname;
@@ -241,6 +344,7 @@ export function applyPrivacyHardening(targetSession?: Electron.Session) {
     if (!kind || !win) return false;
     if (kind === "camera" && cameraGloballyBlocked()) return false;
     if (kind === "microphone" && micGloballyBlocked()) return false;
+    if (kind === "notifications" && doNotDisturbEnabled()) return false;
     try {
       const domain = new URL(webContents!.getURL()).hostname;
       return getSitePermission(win.id, domain)?.[kind] === "allow";
@@ -264,6 +368,7 @@ const PERMISSION_KIND_MAP: Record<string, PermissionKind | undefined> = {
 const DOH_TEMPLATES: Record<string, string> = {
   cloudflare: "https://cloudflare-dns.com/dns-query",
   quad9: "https://dns.quad9.net/dns-query",
+  google: "https://dns.google/dns-query",
 };
 
 // Call once, at the very top of main.ts, BEFORE app.whenReady() — Chromium
@@ -275,11 +380,28 @@ const DOH_TEMPLATES: Record<string, string> = {
 // needs a restart to actually take effect (there's no live-session API
 // for this the way there is for most other things here).
 export function applyEarlyPrivacySwitches() {
-  app.commandLine.appendSwitch("force-webrtc-ip-handling-policy", "disable_non_proxied_udp");
+  // Control center's "WebRTC-Schutz" — was previously always on
+  // unconditionally; now gated by the toggle (defaults to true, so
+  // behavior is unchanged for anyone who never opens it), same
+  // "Restart" constraint as everything else in this function.
+  if (getControlCenterSettings().webrtcLeakProtection) {
+    app.commandLine.appendSwitch("force-webrtc-ip-handling-policy", "disable_non_proxied_udp");
+  }
   const provider = getPrivacySettings().dohProvider;
   if (provider !== "off" && DOH_TEMPLATES[provider]) {
     app.commandLine.appendSwitch("enable-features", "DnsOverHttps");
     app.commandLine.appendSwitch("dns-over-https-mode", "secure"); // "secure", not "automatic" — refuses to silently fall back to plain DNS if the DoH resolver is unreachable
     app.commandLine.appendSwitch("dns-over-https-templates", DOH_TEMPLATES[provider]);
+  }
+  // Control center's "Preload/Prefetch deaktivieren" — Chromium's own
+  // predictive-networking features (DNS prefetch, preconnect, prerender)
+  // are only configurable via startup switches, same constraint as the
+  // two above: a change here needs a relaunch to take effect, which is
+  // why this field carries a "Restart" badge in the UI.
+  if (getControlCenterSettings().preloadDisabled) {
+    app.commandLine.appendSwitch(
+      "disable-features",
+      "NetworkPrediction,PreloadDnsHttpsRecords,PrerenderCore",
+    );
   }
 }

@@ -39,6 +39,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useBrowserApi, HOME_URL, SETTINGS_URL } from "@/hooks/use-browser-api";
 import { useControlCenter } from "@/hooks/use-control-center";
+import type {
+  PageMetadata,
+  RequestLogEntry,
+  CookieEntry,
+  IndexedDbInfo,
+  ServiceWorkerInfo,
+  RequestMock,
+} from "@/hooks/use-control-center";
 import { useBookmarks } from "@/hooks/use-bookmarks";
 import { useHeaderFavorites } from "@/hooks/use-header-favorites";
 import { useDownloads } from "@/hooks/use-downloads";
@@ -151,6 +159,11 @@ function Index() {
     update: updateControlCenter,
     runAction: runControlCenterAction,
     getConsoleErrorTotal,
+    getTrackerCountForActiveTab,
+    getCurrentSiteSafety,
+    getBandwidthForActiveTab,
+    getResourceUsageForActiveTab,
+    getCustomCssForActiveTab,
   } = useControlCenter();
   // Cheap in-memory read on the main process side, polled only while
   // something might be showing it (the Control center dropdown) — a
@@ -163,6 +176,85 @@ function Index() {
     }, 3000);
     return () => clearInterval(interval);
   }, [getConsoleErrorTotal]);
+  // Same polling shape as consoleErrorTotal above — Control center's
+  // "Tracker blockiert" line (masterplan #5), scoped to the active tab.
+  const [trackerCountForActiveTab, setTrackerCountForActiveTab] = useState(0);
+  useEffect(() => {
+    const interval = setInterval(() => {
+      void getTrackerCountForActiveTab().then(setTrackerCountForActiveTab);
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [getTrackerCountForActiveTab]);
+  // Same polling shape again — Control center's "Site-Sicherheitscheck
+  // sichtbar" (masterplan #4), scoped to the active tab.
+  const [currentSiteSafety, setCurrentSiteSafety] = useState<"safe" | "suspicious" | "unknown">(
+    "unknown",
+  );
+  useEffect(() => {
+    const interval = setInterval(() => {
+      void getCurrentSiteSafety().then(setCurrentSiteSafety);
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [getCurrentSiteSafety]);
+  // Control center's "Bandbreiten-Nutzung" (masterplan #10) — same
+  // polling shape as the counters above, in bytes for the active tab.
+  const [bandwidthForActiveTab, setBandwidthForActiveTab] = useState(0);
+  useEffect(() => {
+    const interval = setInterval(() => {
+      void getBandwidthForActiveTab().then(setBandwidthForActiveTab);
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [getBandwidthForActiveTab]);
+  // Control center's "Live RAM/CPU-Anzeige" (masterplan #11) — same
+  // polling shape again; null while unavailable (e.g. no active tab yet).
+  const [resourceUsageForActiveTab, setResourceUsageForActiveTab] = useState<{
+    cpuPercent: number;
+    ramMb: number;
+  } | null>(null);
+  useEffect(() => {
+    const interval = setInterval(() => {
+      void getResourceUsageForActiveTab().then(setResourceUsageForActiveTab);
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [getResourceUsageForActiveTab]);
+  // Custom CSS pro Domain (masterplan #16) — same polling shape, re-fetched
+  // whenever the active tab/domain changes too since it depends on activeId.
+  const [customCssForActiveTab, setCustomCssForActiveTab] = useState<{
+    domain: string;
+    css: string;
+  } | null>(null);
+  useEffect(() => {
+    const interval = setInterval(() => {
+      void getCustomCssForActiveTab().then(setCustomCssForActiveTab);
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [getCustomCssForActiveTab]);
+  // Seiten-Metadaten-Check (masterplan #22) — unlike everything else
+  // polled here, this ISN'T re-fetched on an interval; it only changes
+  // when the person actually clicks the button, which the "cc:action"
+  // handler above sets directly.
+  const [pageMetadataResult, setPageMetadataResult] = useState<PageMetadata | null>(null);
+  // Stale metadata from a previous page shouldn't linger once the person
+  // switches tabs — cleared, then re-fetched fresh on the next click.
+  useEffect(() => {
+    setPageMetadataResult(null);
+  }, [activeId]);
+  // Same lazy fetch-on-click pattern as pageMetadataResult above, one
+  // state slot per DevTools panel (masterplan #26/#29/#30/#31/#34) — none
+  // of these are polled on an interval, since (unlike bandwidth/RAM)
+  // they'd mean constant CDP/executeJavaScript calls even while their
+  // panel isn't open.
+  const [requestLogResult, setRequestLogResult] = useState<RequestLogEntry[] | null>(null);
+  const [cookiesResult, setCookiesResult] = useState<CookieEntry[] | null>(null);
+  const [indexedDbResult, setIndexedDbResult] = useState<IndexedDbInfo | null>(null);
+  const [serviceWorkerResult, setServiceWorkerResult] = useState<ServiceWorkerInfo | null>(null);
+  const [requestMocksResult, setRequestMocksResult] = useState<RequestMock[] | null>(null);
+  useEffect(() => {
+    setRequestLogResult(null);
+    setCookiesResult(null);
+    setIndexedDbResult(null);
+    setServiceWorkerResult(null);
+  }, [activeId]);
   const { bookmarks, setBookmarks } = useBookmarks();
   const {
     favorites: headerFavorites,
@@ -541,7 +633,61 @@ function Index() {
         } else if (action.type === "cc:set") {
           void updateControlCenter(action.patch);
         } else if (action.type === "cc:action") {
-          void runControlCenterAction(action.request);
+          // Every Control center action whose whole point is the
+          // returned data (not a side effect) is captured here and
+          // pushed back out through the same overlay.update payload the
+          // rest of this effect already sends, since the overlay itself
+          // has no direct IPC return path (see ControlCenterContent.tsx's
+          // own header comment). Mutating actions that a panel needs to
+          // reflect immediately (cookie/mock edits) re-fetch their list
+          // right after, instead of waiting for the person to close and
+          // reopen the panel.
+          const req = action.request;
+          if (req.type === "getPageMetadata") {
+            void runControlCenterAction(req)?.then((result) => {
+              setPageMetadataResult(result as PageMetadata | null);
+            });
+          } else if (req.type === "getRequestLog") {
+            void runControlCenterAction(req)?.then((result) => {
+              setRequestLogResult(result as RequestLogEntry[]);
+            });
+          } else if (req.type === "getCookiesForTab") {
+            void runControlCenterAction(req)?.then((result) => {
+              setCookiesResult(result as CookieEntry[]);
+            });
+          } else if (req.type === "setCookie" || req.type === "deleteCookie") {
+            void runControlCenterAction(req)?.then(() => {
+              void runControlCenterAction({ type: "getCookiesForTab" })?.then((result) => {
+                setCookiesResult(result as CookieEntry[]);
+              });
+            });
+          } else if (req.type === "getIndexedDbInfo") {
+            void runControlCenterAction(req)?.then((result) => {
+              setIndexedDbResult(result as IndexedDbInfo);
+            });
+          } else if (req.type === "getServiceWorkerStatus") {
+            void runControlCenterAction(req)?.then((result) => {
+              setServiceWorkerResult(result as ServiceWorkerInfo);
+            });
+          } else if (req.type === "unregisterServiceWorkers") {
+            void runControlCenterAction(req)?.then(() => {
+              void runControlCenterAction({ type: "getServiceWorkerStatus" })?.then((result) => {
+                setServiceWorkerResult(result as ServiceWorkerInfo);
+              });
+            });
+          } else if (req.type === "getRequestMocks") {
+            void runControlCenterAction(req)?.then((result) => {
+              setRequestMocksResult(result as RequestMock[]);
+            });
+          } else if (req.type === "setRequestMock" || req.type === "deleteRequestMock") {
+            void runControlCenterAction(req)?.then(() => {
+              void runControlCenterAction({ type: "getRequestMocks" })?.then((result) => {
+                setRequestMocksResult(result as RequestMock[]);
+              });
+            });
+          } else {
+            void runControlCenterAction(req);
+          }
         }
         return;
       }
@@ -764,6 +910,17 @@ function Index() {
       recentlyClosed,
       controlCenter: controlCenterSettings,
       consoleErrorTotal,
+      trackerCountForActiveTab,
+      currentSiteSafety,
+      bandwidthForActiveTab,
+      resourceUsageForActiveTab,
+      customCssForActiveTab,
+      pageMetadataResult,
+      requestLogResult,
+      cookiesResult,
+      indexedDbResult,
+      serviceWorkerResult,
+      requestMocksResult,
     });
   }, [
     tabs,
@@ -772,6 +929,17 @@ function Index() {
     recentlyClosed,
     controlCenterSettings,
     consoleErrorTotal,
+    trackerCountForActiveTab,
+    currentSiteSafety,
+    bandwidthForActiveTab,
+    resourceUsageForActiveTab,
+    customCssForActiveTab,
+    pageMetadataResult,
+    requestLogResult,
+    cookiesResult,
+    indexedDbResult,
+    serviceWorkerResult,
+    requestMocksResult,
   ]);
   // Right-click on an image/link/selection inside a tab now opens the
   // native overlay window directly from the main process — see
@@ -1511,6 +1679,17 @@ function Index() {
                 recentlyClosed,
                 controlCenter: controlCenterSettings,
                 consoleErrorTotal,
+                trackerCountForActiveTab,
+                currentSiteSafety,
+                bandwidthForActiveTab,
+                resourceUsageForActiveTab,
+                customCssForActiveTab,
+                pageMetadataResult,
+                requestLogResult,
+                cookiesResult,
+                indexedDbResult,
+                serviceWorkerResult,
+                requestMocksResult,
               },
               rect,
             )
@@ -1546,31 +1725,31 @@ function Index() {
       {/* Toolbar — back/forward/reload, url bar, right-side icons + sign in.
           Hidden in fullscreen (F11) — only the page itself shows then. */}
       {!chromeHidden && (
-        <div className="relative flex shrink-0 items-center gap-2.5 bg-background px-3 py-1.5">
+        <div className="relative flex shrink-0 items-center gap-2.5 bg-background px-3 py-[6px]">
           <button
             onClick={() => activeId && goBack(activeId)}
             disabled={!activeTab?.canGoBack}
-            className="flex h-[30px] w-[30px] items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-foreground/5 disabled:opacity-30"
+            className="flex h-[28px] w-[28px] items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-foreground/5 disabled:opacity-30"
           >
             <ArrowLeft className="h-[17px] w-[17px]" />
           </button>
           <button
             onClick={() => activeId && goForward(activeId)}
             disabled={!activeTab?.canGoForward}
-            className="flex h-[30px] w-[30px] items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-foreground/5 disabled:opacity-30"
+            className="flex h-[28px] w-[28px] items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-foreground/5 disabled:opacity-30"
           >
             <ArrowRight className="h-[17px] w-[17px]" />
           </button>
           <button
             onClick={() => activeId && reload(activeId)}
-            className="flex h-[30px] w-[30px] items-center justify-center rounded-lg text-foreground transition-colors hover:bg-foreground/5"
+            className="flex h-[28px] w-[28px] items-center justify-center rounded-lg text-foreground transition-colors hover:bg-foreground/5"
           >
             <RotateCw className="h-4 w-4" />
           </button>
 
           <div className="relative max-w-[900px] flex-1">
             <div
-              className={`flex items-center gap-2.5 rounded-full py-[6px] pl-4 pr-2.5 transition-shadow ${editingUrl ? "ring-2 ring-[var(--brand)]" : ""}`}
+              className={`flex items-center gap-2.5 rounded-full py-[4px] pl-4 pr-2.5 transition-shadow ${editingUrl ? "ring-2 ring-[var(--brand)]" : ""}`}
               style={{ background: "var(--chrome-field)" }}
             >
               {activeTab?.isHome ? (
@@ -2130,6 +2309,17 @@ function Index() {
                   recentlyClosed,
                   controlCenter: controlCenterSettings,
                   consoleErrorTotal,
+                  trackerCountForActiveTab,
+                  currentSiteSafety,
+                  bandwidthForActiveTab,
+                  resourceUsageForActiveTab,
+                  customCssForActiveTab,
+                  pageMetadataResult,
+                  requestLogResult,
+                  cookiesResult,
+                  indexedDbResult,
+                  serviceWorkerResult,
+                  requestMocksResult,
                 },
                 rect,
               )
@@ -2148,7 +2338,7 @@ function Index() {
               it exactly like it blocks the page instead of floating
               above it across the sidebar's own column too. */}
           {!chromeHidden && !isGuest && headerFavoritesBarVisible && headerFavorites.length > 0 && (
-            <div className="flex shrink-0 items-center bg-background px-3 pb-1.5 pt-0">
+            <div className="flex shrink-0 items-center bg-background px-3 pb-1 pt-0">
               <HeaderFavoritesBar
                 favorites={headerFavorites}
                 onOpen={openBookmark}

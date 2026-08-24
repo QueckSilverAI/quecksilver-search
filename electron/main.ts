@@ -134,6 +134,7 @@ import { existsSync, rmSync, promises as fsPromises } from "node:fs";
 import { OverlayWindowManager, registerOverlayIpc } from "./overlay-window";
 import type { OverlayAction } from "./overlay-types";
 import { translatePageInPlace } from "./translate-injector";
+import { toggleReaderMode } from "./reader-mode-injector";
 
 app.name = "QueckSilver Arch";
 // No File/Edit/View/Window/Help bar — this app is deliberately chrome-free
@@ -573,14 +574,36 @@ async function createTorWindow(): Promise<BrowserWindow> {
   const win = createWindow({ activeProfileId: null, guestMode: true, windowMode: "tor" });
   const ctx = windows.get(win.id);
   await startTor(getPrivacySettings().torBinaryPath || null);
+  // Control center's "VPN-Kill-Switch" (masterplan #6) — once this window
+  // has been genuinely routed through Tor at least once, any LATER status
+  // that isn't "ready" (Tor crashed, was killed externally, ...) means
+  // traffic would otherwise silently keep using whatever proxy was last
+  // set — which, since Electron never resets it on its own, is the dead
+  // SOCKS port, so requests just hang rather than actually leaking. The
+  // kill switch makes that explicit and immediate instead of relying on
+  // that as an accident: point the session at an address nothing listens
+  // on, so every request fails fast, and tell the connecting screen why.
+  let wasConnected = false;
   const unsubscribe = onTorStatusChange((status) => {
-    win.webContents.send("tor:statusChanged", status);
+    const killSwitchTriggered =
+      status.state !== "ready" && wasConnected && getControlCenterSettings().vpnKillSwitch;
+    win.webContents.send(
+      "tor:statusChanged",
+      killSwitchTriggered
+        ? { state: "error", message: "Verbindung unterbrochen — Traffic blockiert (Kill-Switch aktiv)" }
+        : status,
+    );
     if (status.state === "ready" && ctx?.contentSession) {
+      wasConnected = true;
       // The CONTENT session (what every tab's WebContentsView actually
       // uses) — not the chrome UI's own webContents.session, which only
       // ever loads this app's own local assets and has no reason to go
       // through Tor at all.
       ctx.contentSession.setProxy({ proxyRules: getSocksProxyRule() }).catch(() => {});
+    } else if (killSwitchTriggered && ctx?.contentSession) {
+      // Port 1 — nothing binds to it, so every request fails immediately
+      // instead of hanging or (worse) ever reaching the network directly.
+      ctx.contentSession.setProxy({ proxyRules: "socks5://127.0.0.1:1" }).catch(() => {});
     }
   });
   win.on("closed", () => {
@@ -1175,11 +1198,36 @@ function registerIpc() {
     }
 
     // DNS-over-HTTPS toggle is an alias for the existing privacy-settings
-    // store's dohProvider (off <-> cloudflare) — one on/off switch here
-    // instead of the full provider picker that already lives in Settings.
+    // store's dohProvider — uses whichever provider is currently selected
+    // via dnsOverHttpsProvider (defaults to cloudflare) instead of always
+    // hardcoding cloudflare.
     if (patch.dnsOverHttpsEnabled !== undefined) {
-      setPrivacySettings({ dohProvider: patch.dnsOverHttpsEnabled ? "cloudflare" : "off" });
+      const provider = patch.dnsOverHttpsProvider ?? next.dnsOverHttpsProvider;
+      setPrivacySettings({ dohProvider: patch.dnsOverHttpsEnabled ? provider : "off" });
+    } else if (patch.dnsOverHttpsProvider !== undefined && next.dnsOverHttpsEnabled) {
+      // Provider changed while DoH was already on — re-point immediately
+      // instead of waiting for the enabled flag to be toggled again.
+      setPrivacySettings({ dohProvider: patch.dnsOverHttpsProvider });
     }
+
+    // HTTPS-Only toggle is an alias for the existing privacy-settings
+    // store's httpsOnly (same "control center pushes into the real
+    // setting" pattern as dnsOverHttpsEnabled above) — the actual hard-
+    // block behavior already lives in tab-manager.ts's did-fail-load
+    // handler, this only flips the flag it reads.
+    if (patch.httpsOnlyEnforced !== undefined) {
+      setPrivacySettings({ httpsOnly: patch.httpsOnlyEnforced });
+    }
+
+    if (patch.visionFilter !== undefined) await ctx?.tabs.setVisionFilter(patch.visionFilter);
+    if (patch.cursorSize !== undefined) await ctx?.tabs.setCursorSize(patch.cursorSize);
+    if (patch.gridOverlayEnabled !== undefined) await ctx?.tabs.setGridOverlay(patch.gridOverlayEnabled);
+    if (patch.userAgentPreset !== undefined) ctx?.tabs.setUserAgentPreset(patch.userAgentPreset);
+    // Battery saver is a UI-level preset (see ControlCenterContent.tsx's
+    // onChange for this field, which patches backgroundTabsThrottled +
+    // unloadBackgroundTabsOnIdle in the SAME request) — nothing extra to
+    // apply here beyond persisting the flag itself, already done by
+    // setControlCenterSettings(patch) above.
 
     return next;
   });
@@ -1225,9 +1273,81 @@ function registerIpc() {
         return tabId ? ctx.tabs.unloadTab(tabId) : false;
       case "unloadAllBackgroundTabs":
         return ctx.tabs.unloadAllBackgroundTabs();
+      case "forcePip":
+        return tabId ? await ctx.tabs.togglePictureInPicture(tabId) : "no-video";
       case "setNetworkThrottle":
-        if (tabId) await ctx.tabs.setNetworkThrottle(tabId, action.preset);
+        if (tabId) {
+          // Masterplan #35 — "custom" needs the three free-form values,
+          // which live in settings (not on the action itself, since the
+          // Control center's cc:set already persists them separately from
+          // picking the preset).
+          const cc = getControlCenterSettings();
+          await ctx.tabs.setNetworkThrottle(
+            tabId,
+            action.preset,
+            action.preset === "custom"
+              ? {
+                  downloadKbps: cc.customDownloadKbps,
+                  uploadKbps: cc.customUploadKbps,
+                  latencyMs: cc.customLatencyMs,
+                }
+              : undefined,
+          );
+        }
         return null;
+      case "pauseAllMedia":
+        await ctx.tabs.pauseAllMedia();
+        return null;
+      case "muteAllMedia":
+        await ctx.tabs.muteAllMedia(action.muted);
+        return null;
+      case "toggleReaderMode": {
+        // Reader/Leseansicht (masterplan #15) — see reader-mode-injector.ts.
+        const wc = tabId ? ctx.tabs.getWebContents(tabId) : null;
+        return wc ? await toggleReaderMode(wc) : "error";
+      }
+      case "setCustomCss":
+        // Custom CSS pro Domain (masterplan #16) — persists + re-applies
+        // immediately to every open tab on that domain, see
+        // TabManager.setCustomCssForDomain.
+        await ctx.tabs.setCustomCssForDomain(action.domain, action.css);
+        return null;
+      case "fullPageScreenshot":
+        return tabId ? await ctx.tabs.captureFullPageScreenshot(tabId) : null;
+      case "exportPageAsMarkdown":
+        return tabId ? await ctx.tabs.exportPageAsMarkdown(tabId) : null;
+      case "getPageMetadata":
+        return tabId ? await ctx.tabs.getPageMetadata(tabId) : null;
+      case "setDeviceEmulation":
+        return tabId ? await ctx.tabs.setDeviceEmulation(tabId, action.preset) : false;
+      case "startElementPicker":
+        return tabId ? await ctx.tabs.startElementPicker(tabId) : false;
+      case "getRequestLog":
+        return tabId ? ctx.tabs.getRequestLogForTab(tabId) : [];
+      case "exportConsoleLog":
+        return tabId ? await ctx.tabs.exportConsoleLog(tabId) : null;
+      case "getCookiesForTab":
+        return tabId ? await ctx.tabs.getCookiesForTab(tabId) : [];
+      case "setCookie":
+        return tabId ? await ctx.tabs.setCookieForTab(tabId, action.name, action.value) : false;
+      case "deleteCookie":
+        return tabId ? await ctx.tabs.deleteCookieForTab(tabId, action.name) : false;
+      case "getIndexedDbInfo":
+        return tabId ? await ctx.tabs.getIndexedDbInfo(tabId) : { databases: [] };
+      case "getServiceWorkerStatus":
+        return tabId ? await ctx.tabs.getServiceWorkerStatus(tabId) : { registrations: [] };
+      case "unregisterServiceWorkers":
+        return tabId ? await ctx.tabs.unregisterServiceWorkers(tabId) : 0;
+      case "toggleHarRecording":
+        return tabId ? await ctx.tabs.toggleHarRecording(tabId) : null;
+      case "setRequestMock":
+        ctx.tabs.setRequestMockEntry(action.pattern, action.status, action.body);
+        return null;
+      case "deleteRequestMock":
+        ctx.tabs.deleteRequestMockEntry(action.pattern);
+        return null;
+      case "getRequestMocks":
+        return ctx.tabs.getRequestMocks();
       default:
         return null;
     }
@@ -1236,6 +1356,36 @@ function registerIpc() {
     "controlCenter:consoleErrorTotal",
     (e) => contextFor(e)?.tabs.getTotalConsoleErrorCount() ?? 0,
   );
+  ipcMain.handle("controlCenter:trackerCountForActiveTab", (e) => {
+    const ctx = contextFor(e);
+    const activeId = ctx?.tabs.getActiveId();
+    return activeId ? ctx.tabs.getTrackerCountForTab(activeId) : 0;
+  });
+  // Control center's "Bandbreiten-Nutzung" (masterplan #10) — same
+  // polling shape as the tracker counter above.
+  ipcMain.handle("controlCenter:bandwidthForActiveTab", (e) => {
+    const ctx = contextFor(e);
+    const activeId = ctx?.tabs.getActiveId();
+    return activeId ? ctx.tabs.getBandwidthForTab(activeId) : 0;
+  });
+  // Control center's "Live RAM/CPU-Anzeige" (masterplan #11).
+  ipcMain.handle("controlCenter:resourceUsageForActiveTab", (e) => {
+    const ctx = contextFor(e);
+    const activeId = ctx?.tabs.getActiveId();
+    return activeId ? ctx.tabs.getResourceUsageForTab(activeId) : null;
+  });
+  // Custom CSS pro Domain (masterplan #16) — pre-fills the Tools editor
+  // with whatever's already saved for the active tab's domain.
+  ipcMain.handle("controlCenter:customCssForActiveTab", (e) => {
+    const ctx = contextFor(e);
+    const activeId = ctx?.tabs.getActiveId();
+    return activeId ? ctx.tabs.getCustomCssForTab(activeId) : null;
+  });
+  ipcMain.handle("controlCenter:currentSiteSafety", (e) => {
+    const ctx = contextFor(e);
+    const activeId = ctx?.tabs.getActiveId();
+    return activeId ? ctx.tabs.getSiteSafetyForTab(activeId) : "unknown";
+  });
 
   ipcMain.handle("bookmarks:list", (e) => listBookmarks(contextFor(e)?.win.id ?? -1));
   ipcMain.handle("bookmarks:save", (e, bookmarks: Bookmark[]) => {

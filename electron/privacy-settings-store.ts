@@ -1,6 +1,6 @@
 import { JsonStore } from "./json-store";
 
-export type DohProvider = "off" | "cloudflare" | "quad9";
+export type DohProvider = "off" | "cloudflare" | "quad9" | "google";
 
 export type PrivacySettings = {
   removeTrackingParams: boolean;

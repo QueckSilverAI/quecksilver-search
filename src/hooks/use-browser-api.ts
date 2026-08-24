@@ -245,6 +245,11 @@ type BrowserAPI = {
     ) => Promise<import("@/hooks/use-control-center").ControlCenterSettings>;
     action: (request: import("@/hooks/use-control-center").ControlCenterActionRequest) => Promise<unknown>;
     getConsoleErrorTotal: () => Promise<number>;
+    getTrackerCountForActiveTab: () => Promise<number>;
+    getCurrentSiteSafety: () => Promise<"safe" | "suspicious" | "unknown">;
+    getBandwidthForActiveTab: () => Promise<number>;
+    getResourceUsageForActiveTab: () => Promise<{ cpuPercent: number; ramMb: number } | null>;
+    getCustomCssForActiveTab: () => Promise<{ domain: string; css: string } | null>;
   };
   tor: {
     getStatus: () => Promise<

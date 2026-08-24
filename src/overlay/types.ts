@@ -259,7 +259,11 @@ export type FavoriteFolderOverlayAction =
 // Renderer-side copy of electron/control-center-store.ts's types — same
 // reasoning as use-privacy-settings.ts's own hand-duplicated PrivacySettings:
 // the renderer never imports electron/ code directly.
-export type NetworkThrottlePreset = "off" | "slow3g" | "fast3g" | "offline";
+export type NetworkThrottlePreset = "off" | "slow3g" | "fast3g" | "offline" | "custom";
+export type DohProviderChoice = "cloudflare" | "quad9" | "google";
+export type VisionFilter = "none" | "high-contrast" | "protanopia" | "deuteranopia" | "tritanopia";
+export type CursorSize = "default" | "large" | "xlarge";
+export type UserAgentPreset = "default" | "chrome-win" | "safari-ios" | "firefox-linux";
 
 export type ControlCenterSettings = {
   adBlockEnabled: boolean;
@@ -269,19 +273,76 @@ export type ControlCenterSettings = {
   autoplayBlock: boolean;
   popupBlock: boolean;
   networkThrottle: NetworkThrottlePreset;
+  customDownloadKbps: number;
+  customUploadKbps: number;
+  customLatencyMs: number;
   dnsOverHttpsEnabled: boolean;
+  dnsOverHttpsProvider: DohProviderChoice;
+  customBlockedPatterns: string[];
   cameraGlobalBlock: boolean;
   micGlobalBlock: boolean;
   locationGlobalBlock: boolean;
   vpnEnabled: boolean;
+  vpnKillSwitch: boolean;
   unloadBackgroundTabsOnIdle: boolean;
+  autoSuspendMinutes: number;
   backgroundTabsThrottled: boolean;
   hardwareAcceleration: boolean;
+  imagesDisabled: boolean;
+  preloadDisabled: boolean;
+  batterySaverMode: boolean;
   masterMute: boolean;
   darkModeForced: boolean;
   globalZoomFactor: number;
+  visionFilter: VisionFilter;
+  cursorSize: CursorSize;
+  gridOverlayEnabled: boolean;
   focusMode: boolean;
+  doNotDisturb: boolean;
+  userAgentPreset: UserAgentPreset;
+  webrtcLeakProtection: boolean;
+  httpsOnlyEnforced: boolean;
+  cookieAutoDelete: boolean;
+  jsErrorOverlayEnabled: boolean;
 };
+
+export type DeviceEmulationPreset = "off" | "iphone14" | "ipad" | "desktop-sm";
+
+export type PageMetadata = {
+  title: string;
+  titleLength: number;
+  description: string | null;
+  canonicalUrl: string | null;
+  ogTags: { property: string; content: string }[];
+};
+
+export type RequestLogEntry = {
+  url: string;
+  method: string;
+  statusCode: number;
+  durationMs: number;
+  timestamp: number;
+};
+
+export type CookieEntry = {
+  name: string;
+  value: string;
+  domain: string;
+  path: string;
+  secure: boolean;
+  httpOnly: boolean;
+  expirationDate: number | null;
+};
+
+export type IndexedDbInfo = {
+  databases: { name: string; objectStores: string[] }[];
+};
+
+export type ServiceWorkerInfo = {
+  registrations: { scope: string; scriptURL: string; active: boolean }[];
+};
+
+export type RequestMock = { pattern: string; status: number; body: string };
 
 export type ControlCenterActionType =
   | "openDevTools"
@@ -294,15 +355,55 @@ export type ControlCenterActionType =
   | "unloadAllBackgroundTabs"
   | "setNetworkThrottle"
   | "savePageAs"
-  | "translatePage";
+  | "translatePage"
+  | "forcePip"
+  | "pauseAllMedia"
+  | "muteAllMedia"
+  | "toggleReaderMode"
+  | "setCustomCss"
+  | "fullPageScreenshot"
+  | "exportPageAsMarkdown"
+  | "getPageMetadata"
+  | "setDeviceEmulation"
+  | "startElementPicker"
+  | "getRequestLog"
+  | "exportConsoleLog"
+  | "getCookiesForTab"
+  | "setCookie"
+  | "deleteCookie"
+  | "getIndexedDbInfo"
+  | "getServiceWorkerStatus"
+  | "unregisterServiceWorkers"
+  | "toggleHarRecording"
+  | "setRequestMock"
+  | "deleteRequestMock"
+  | "getRequestMocks";
 
 export type ControlCenterActionRequest =
   | {
-      type: Exclude<ControlCenterActionType, "setNetworkThrottle" | "translatePage">;
+      type: Exclude<
+        ControlCenterActionType,
+        | "setNetworkThrottle"
+        | "translatePage"
+        | "muteAllMedia"
+        | "setCustomCss"
+        | "setDeviceEmulation"
+        | "setCookie"
+        | "deleteCookie"
+        | "setRequestMock"
+        | "deleteRequestMock"
+      >;
       tabId?: string;
     }
   | { type: "setNetworkThrottle"; tabId?: string; preset: NetworkThrottlePreset }
-  | { type: "translatePage"; tabId?: string; langCode: string };
+  | { type: "translatePage"; tabId?: string; langCode: string }
+  | { type: "muteAllMedia"; muted: boolean }
+  | { type: "setCustomCss"; tabId?: string; domain: string; css: string }
+  | { type: "setDeviceEmulation"; tabId?: string; preset: DeviceEmulationPreset }
+  | { type: "setCookie"; tabId?: string; name: string; value: string }
+  | { type: "deleteCookie"; tabId?: string; name: string }
+  | { type: "setRequestMock"; pattern: string; status: number; body: string }
+  | { type: "deleteRequestMock"; pattern: string };
 
 // --- Tabs menu (belowRight placement) ---------------------------------------
 // Opened from the Control center button at the top-left of TabStrip (see
@@ -334,6 +435,33 @@ export type TabsMenuOverlayPayload = {
   }[];
   controlCenter: ControlCenterSettings;
   consoleErrorTotal: number;
+  trackerCountForActiveTab: number;
+  // Control center's "Site-Sicherheitscheck sichtbar" (masterplan #4) —
+  // last check-url-safety verdict for the active tab. "unknown" until a
+  // navigation has actually run the check (only happens while phishing
+  // protection is on, see tab-manager.ts).
+  currentSiteSafety: "safe" | "suspicious" | "unknown";
+  // Control center's "Bandbreiten-Nutzung" (masterplan #10) — bytes
+  // loaded by the active tab since its last navigation.
+  bandwidthForActiveTab: number;
+  // Control center's "Live RAM/CPU-Anzeige" (masterplan #11) — null while
+  // unavailable (e.g. no active tab, or its process metrics not found).
+  resourceUsageForActiveTab: { cpuPercent: number; ramMb: number } | null;
+  // Custom CSS pro Domain (masterplan #16) — the active tab's domain and
+  // whatever CSS is currently saved for it (empty string if none), null
+  // when there's no real domain to target (home/settings tabs).
+  customCssForActiveTab: { domain: string; css: string } | null;
+  // Seiten-Metadaten-Check (masterplan #22) — null until the person
+  // actually clicks the button (not polled), see routes/index.tsx's
+  // "cc:action" handler.
+  pageMetadataResult: PageMetadata | null;
+  // Same lazy fetch-on-click shape as pageMetadataResult, one per
+  // DevTools panel (masterplan #26/#29/#30/#31/#34).
+  requestLogResult: RequestLogEntry[] | null;
+  cookiesResult: CookieEntry[] | null;
+  indexedDbResult: IndexedDbInfo | null;
+  serviceWorkerResult: ServiceWorkerInfo | null;
+  requestMocksResult: RequestMock[] | null;
 };
 
 export type TabsMenuOverlayAction =

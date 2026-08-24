@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, WebContentsView } from "electron";
+import { app, BrowserWindow, dialog, session as electronSession, WebContentsView } from "electron";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import fs from "node:fs/promises";
@@ -20,7 +20,20 @@ import {
 } from "./privacy-settings-store";
 import { checkUrlSafety } from "./phishing-guard";
 import { getOriginalHttpUrl, allowHttpOnce } from "./https-upgrade-tracker";
-import { popupBlockEnabled } from "./control-center-store";
+import { popupBlockEnabled, cookieAutoDeleteEnabled, autoSuspendMinutesSetting, jsErrorOverlayEnabled, type VisionFilter, type CursorSize, type UserAgentPreset, type DeviceEmulationPreset, type PageMetadata } from "./control-center-store";
+import { sendCdpCommand, detachDebugger } from "./cdp-client";
+import {
+  getTrackerCount,
+  getTotalTrackerCount as getTotalTrackerCountFromStore,
+  resetTrackerCount,
+  clearTrackerCount,
+} from "./tracker-count-store";
+import { getBandwidthBytes, resetBandwidthBytes, clearBandwidthBytes } from "./bandwidth-store";
+import { getCustomCssForDomain, setCustomCssForDomain } from "./custom-css-store";
+import { extractPageAsMarkdown } from "./markdown-export-injector";
+import { getRequestLog } from "./request-log-store";
+import { getAllRequestMocks, setRequestMock as storeSetRequestMock, deleteRequestMock as storeDeleteRequestMock } from "./request-mocks-store";
+import type { RequestLogEntry, CookieEntry, IndexedDbInfo, ServiceWorkerInfo, RequestMock } from "./control-center-store";
 
 // Runs at document-start in every browsed tab, injecting a small clean
 // scrollbar before first paint (see tab-preload.ts) — replaces an earlier
@@ -112,6 +125,14 @@ export class TabManager {
   private audibleTabs = new Set<string>();
   // id -> creation timestamp (ms since epoch) — see TabState.openedAt.
   private openedAt = new Map<string, number>();
+  // Control center's "Auto-Suspend" (masterplan #12) — id -> timestamp a
+  // background tab was last the active one. Absent entry means either the
+  // tab IS currently active, or it's still unloaded/gone (both cases the
+  // periodic check below skips). Set in switchTab() whenever a tab stops
+  // being active, cleared again the moment it becomes active once more —
+  // so the idle clock restarts every time someone actually looks at it.
+  private lastActiveAt = new Map<string, number>();
+  private autoSuspendInterval: NodeJS.Timeout | null = null;
   // id -> url to skip the Safe Browsing check for, once. Set right before
   // showing the warning page for that url, from EITHER navigate() (typed
   // URL/bookmark/favorite) or the will-navigate handler (in-page link
@@ -187,6 +208,12 @@ export class TabManager {
     this.onContextMenuRequest = onContextMenuRequest ?? null;
     this.contentSession = contentSession ?? null;
     this.createTab(HOME_URL);
+    // Control center's "Auto-Suspend" (masterplan #12) — checked every 30s
+    // rather than a per-tab setTimeout, since the threshold
+    // (autoSuspendMinutes) can change at any time via the toggle; a plain
+    // recurring sweep just reads whatever it currently is on each tick
+    // instead of needing every timer rescheduled on a setting change.
+    this.autoSuspendInterval = setInterval(() => this.checkAutoSuspend(), 30_000);
   }
 
   // --- public API (called from IPC handlers in main.ts) ---------------
@@ -307,6 +334,29 @@ export class TabManager {
     }
   }
 
+  // --- Control center: central media control ------------------------------
+  // Pause or mute every playing <video>/<audio> across ALL open tabs at
+  // once (masterplan #48) — no dedicated Electron event for "media started
+  // playing" exists, so this takes the same pragmatic executeJavaScript
+  // route togglePictureInPicture already uses above: query the DOM
+  // directly in each tab's own page context. Best-effort per tab (one
+  // crashed/unresponsive webContents shouldn't stop the others), so
+  // failures are swallowed individually rather than aborting the whole
+  // loop.
+  async pauseAllMedia() {
+    const script = `document.querySelectorAll("video,audio").forEach((el) => el.pause())`;
+    await Promise.all(
+      [...this.views.values()].map((v) => v.webContents.executeJavaScript(script, true).catch(() => {})),
+    );
+  }
+
+  async muteAllMedia(muted: boolean) {
+    const script = `document.querySelectorAll("video,audio").forEach((el) => { el.muted = ${muted}; })`;
+    await Promise.all(
+      [...this.views.values()].map((v) => v.webContents.executeJavaScript(script, true).catch(() => {})),
+    );
+  }
+
   // --- Night mode (per tab, not global) ---------------------------------
   // Filter-based, not a real dark theme — a genuine "read every site's own
   // CSS variables and re-theme them" approach isn't something a browser
@@ -375,6 +425,241 @@ export class TabManager {
     wc.insertCSS(this.GLOBAL_DARK_CSS)
       .then((key) => this.globalDarkModeKeys.set(id, key))
       .catch(() => {});
+  }
+
+  // --- Control center: vision filter (contrast / color-blindness) --------
+  // Same shape as global dark mode above (one CSS key per tab, remembered
+  // so a newly opened tab picks up whatever's currently active, and so
+  // switching filters cleanly removes the old one first). High-contrast
+  // is a plain CSS filter; the three color-blindness modes use the
+  // standard feColorMatrix coefficients for simulating/correcting
+  // protanopia/deuteranopia/tritanopia (the same values browser DevTools'
+  // own "emulate vision deficiencies" feature uses), delivered as a data-
+  // URI SVG filter since CSS alone can't express a color matrix.
+  private visionFilterEnabled: VisionFilter = "none";
+  private readonly visionFilterKeys = new Map<string, string>();
+
+  private static readonly VISION_FILTER_CSS: Record<Exclude<VisionFilter, "none">, string> = {
+    "high-contrast": `html { filter: contrast(1.5) saturate(1.15) !important; }`,
+    protanopia: `html { filter: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg"><filter id="f"><feColorMatrix type="matrix" values="0.567 0.433 0 0 0  0.558 0.442 0 0 0  0 0.242 0.758 0 0  0 0 0 1 0"/></filter></svg>#f') !important; }`,
+    deuteranopia: `html { filter: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg"><filter id="f"><feColorMatrix type="matrix" values="0.625 0.375 0 0 0  0.7 0.3 0 0 0  0 0.3 0.7 0 0  0 0 0 1 0"/></filter></svg>#f') !important; }`,
+    tritanopia: `html { filter: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg"><filter id="f"><feColorMatrix type="matrix" values="0.95 0.05 0 0 0  0 0.433 0.567 0 0  0 0.475 0.525 0 0  0 0 0 1 0"/></filter></svg>#f') !important; }`,
+  };
+
+  async setVisionFilter(filter: VisionFilter) {
+    this.visionFilterEnabled = filter;
+    for (const [id, view] of this.views) {
+      const wc = view.webContents;
+      const existingKey = this.visionFilterKeys.get(id);
+      if (existingKey) {
+        await wc.removeInsertedCSS(existingKey).catch(() => {});
+        this.visionFilterKeys.delete(id);
+      }
+      if (filter !== "none") {
+        const key = await wc
+          .insertCSS(TabManager.VISION_FILTER_CSS[filter])
+          .catch(() => null);
+        if (key) this.visionFilterKeys.set(id, key);
+      }
+    }
+  }
+
+  private applyVisionFilterTo(id: string, wc: Electron.WebContents) {
+    if (this.visionFilterEnabled === "none") return;
+    wc.insertCSS(TabManager.VISION_FILTER_CSS[this.visionFilterEnabled])
+      .then((key) => this.visionFilterKeys.set(id, key))
+      .catch(() => {});
+  }
+
+  // --- Control center: grid overlay ----------------------------------------
+  // Layout-alignment aid (masterplan #37) — a fixed, click-through grid
+  // drawn over every tab so spacing/alignment can be eyeballed against it,
+  // same one-CSS-key-per-tab bookkeeping as global dark mode/vision filter
+  // above (remembered so a tab opened after the toggle was flipped on
+  // still gets it, and so switching it off cleanly removes exactly the
+  // rule that was inserted).
+  private gridOverlayEnabled = false;
+  private readonly gridOverlayKeys = new Map<string, string>();
+
+  private static readonly GRID_OVERLAY_CSS = `
+    html::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      z-index: 2147483647;
+      pointer-events: none;
+      background-image:
+        repeating-linear-gradient(to right, rgba(255,0,128,0.18) 0 1px, transparent 1px 8px),
+        repeating-linear-gradient(to bottom, rgba(255,0,128,0.18) 0 1px, transparent 1px 8px);
+    }
+  `;
+
+  async setGridOverlay(enabled: boolean) {
+    this.gridOverlayEnabled = enabled;
+    for (const [id, view] of this.views) {
+      const wc = view.webContents;
+      const existingKey = this.gridOverlayKeys.get(id);
+      if (existingKey) {
+        await wc.removeInsertedCSS(existingKey).catch(() => {});
+        this.gridOverlayKeys.delete(id);
+      }
+      if (enabled) {
+        const key = await wc.insertCSS(TabManager.GRID_OVERLAY_CSS).catch(() => null);
+        if (key) this.gridOverlayKeys.set(id, key);
+      }
+    }
+  }
+
+  private applyGridOverlayTo(id: string, wc: Electron.WebContents) {
+    if (!this.gridOverlayEnabled) return;
+    wc.insertCSS(TabManager.GRID_OVERLAY_CSS)
+      .then((key) => this.gridOverlayKeys.set(id, key))
+      .catch(() => {});
+  }
+
+  // --- Control center: user-agent switcher ---------------------------------
+  // Spoofs the User-Agent string sent on every request AND read via
+  // navigator.userAgent (webContents.setUserAgent() covers both — unlike
+  // just rewriting the header in privacy.ts's webRequest hook, which would
+  // leave JS-side feature/browser detection still seeing the real UA).
+  // Applied per-webContents rather than session-wide so this app's own
+  // internal chrome pages are unaffected — only browsed tabs ever call
+  // this.
+  private userAgentPresetEnabled: UserAgentPreset = "default";
+
+  private static readonly USER_AGENT_STRINGS: Record<Exclude<UserAgentPreset, "default">, string> = {
+    "chrome-win":
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+    "safari-ios":
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
+    "firefox-linux": "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0",
+  };
+
+  setUserAgentPreset(preset: UserAgentPreset) {
+    this.userAgentPresetEnabled = preset;
+    for (const view of this.views.values()) {
+      this.applyUserAgentPresetTo(view.webContents);
+    }
+  }
+
+  private applyUserAgentPresetTo(wc: Electron.WebContents) {
+    if (this.userAgentPresetEnabled === "default") {
+      wc.setUserAgent(wc.session.getUserAgent());
+      return;
+    }
+    wc.setUserAgent(TabManager.USER_AGENT_STRINGS[this.userAgentPresetEnabled]);
+  }
+
+  // --- Control center: cursor size ----------------------------------------
+  // Plain CSS cursor override — a scaled arrow SVG as a data-URI cursor
+  // image, same injection shape as the vision filter above. The 0 0
+  // hotspot keeps the pointer tip at the cursor's top-left corner, same
+  // as the native default arrow.
+  private cursorSizeEnabled: CursorSize = "default";
+  private readonly cursorSizeKeys = new Map<string, string>();
+
+  private static cursorCss(size: Exclude<CursorSize, "default">): string {
+    const px = size === "large" ? 48 : 64;
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${px}" height="${px}" viewBox="0 0 24 24"><path d="M2 2 L2 20 L7 16 L10 22 L13 21 L10 15 L16 15 Z" fill="black" stroke="white" stroke-width="1.5"/></svg>`;
+    const dataUri = `data:image/svg+xml;utf8,${svg}`;
+    return `html, html * { cursor: url('${dataUri}') 2 2, auto !important; }`;
+  }
+
+  async setCursorSize(size: CursorSize) {
+    this.cursorSizeEnabled = size;
+    for (const [id, view] of this.views) {
+      const wc = view.webContents;
+      const existingKey = this.cursorSizeKeys.get(id);
+      if (existingKey) {
+        await wc.removeInsertedCSS(existingKey).catch(() => {});
+        this.cursorSizeKeys.delete(id);
+      }
+      if (size !== "default") {
+        const key = await wc.insertCSS(TabManager.cursorCss(size)).catch(() => null);
+        if (key) this.cursorSizeKeys.set(id, key);
+      }
+    }
+  }
+
+  private applyCursorSizeTo(id: string, wc: Electron.WebContents) {
+    if (this.cursorSizeEnabled === "default") return;
+    wc.insertCSS(TabManager.cursorCss(this.cursorSizeEnabled))
+      .then((key) => this.cursorSizeKeys.set(id, key))
+      .catch(() => {});
+  }
+
+  // --- Control center: custom CSS per domain (masterplan #16) -------------
+  // Unlike the global filters above (one setting for every tab), this is
+  // keyed by domain and read from its own store (custom-css-store.ts) —
+  // re-resolved on every real navigation (see the did-navigate hook in
+  // createTab below) rather than only once at tab creation, since the
+  // whole point is a domain-specific rule that should still apply after
+  // navigating to a different page on the SAME site, and should stop
+  // applying once the tab navigates to a different domain.
+  private readonly customCssKeys = new Map<string, string>();
+
+  private async applyCustomCssForTab(id: string, wc: Electron.WebContents) {
+    const existingKey = this.customCssKeys.get(id);
+    if (existingKey) {
+      await wc.removeInsertedCSS(existingKey).catch(() => {});
+      this.customCssKeys.delete(id);
+    }
+    let domain: string;
+    try {
+      domain = new URL(wc.getURL()).hostname;
+    } catch {
+      return;
+    }
+    if (!domain) return;
+    const css = getCustomCssForDomain(domain);
+    if (!css.trim()) return;
+    const key = await wc.insertCSS(css).catch(() => null);
+    if (key) this.customCssKeys.set(id, key);
+  }
+
+  // Persists the CSS for a domain, then re-applies it immediately to every
+  // currently open tab on that domain (not just the one the editor was
+  // opened from — the same site could be open in more than one tab).
+  async setCustomCssForDomain(domain: string, css: string) {
+    setCustomCssForDomain(domain, css);
+    const target = domain.trim().toLowerCase().replace(/^www\./, "");
+    for (const [id, view] of this.views) {
+      let tabDomain: string;
+      try {
+        tabDomain = new URL(view.webContents.getURL()).hostname.replace(/^www\./, "");
+      } catch {
+        continue;
+      }
+      if (tabDomain === target) await this.applyCustomCssForTab(id, view.webContents);
+    }
+  }
+
+  // Backs the Tools editor's pre-fill — the domain + whatever CSS is
+  // currently saved for it (empty string if none yet).
+  getCustomCssForTab(id: string): { domain: string; css: string } | null {
+    const wc = this.views.get(id)?.webContents;
+    if (!wc) return null;
+    let domain: string;
+    try {
+      domain = new URL(wc.getURL()).hostname;
+    } catch {
+      return null;
+    }
+    if (!domain) return null;
+    return { domain, css: getCustomCssForDomain(domain) };
+  }
+
+  // --- Control center: request mocking (masterplan #34) --------------------
+  // Thin pass-through to request-mocks-store.ts — global (not per-tab),
+  // see that file's own header comment for why.
+  getRequestMocks(): RequestMock[] {
+    return getAllRequestMocks();
+  }
+  setRequestMockEntry(pattern: string, status: number, body: string) {
+    storeSetRequestMock(pattern, status, body);
+  }
+  deleteRequestMockEntry(pattern: string) {
+    storeDeleteRequestMock(pattern);
   }
 
   // --- Control center: master mute ---------------------------------------
@@ -447,17 +732,32 @@ export class TabManager {
     offline: { offline: true, latency: 0, downloadThroughput: 0, uploadThroughput: 0 },
   };
 
-  async setNetworkThrottle(id: string, preset: "off" | "slow3g" | "fast3g" | "offline") {
+  async setNetworkThrottle(
+    id: string,
+    preset: "off" | "slow3g" | "fast3g" | "offline" | "custom",
+    custom?: { downloadKbps: number; uploadKbps: number; latencyMs: number },
+  ) {
     const wc = this.views.get(id)?.webContents;
     if (!wc) return;
     try {
-      if (!wc.debugger.isAttached()) wc.debugger.attach("1.3");
-      await wc.debugger.sendCommand("Network.enable");
-      const conditions = this.THROTTLE_PRESETS[preset];
-      await wc.debugger.sendCommand(
-        "Network.emulateNetworkConditions",
-        conditions ?? { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 },
-      );
+      await sendCdpCommand(wc, "Network.enable");
+      // Masterplan #35 — "custom" reads the three free-form values passed
+      // in from the Control center instead of a fixed preset.
+      const conditions =
+        preset === "custom" && custom
+          ? {
+              offline: false,
+              latency: custom.latencyMs,
+              downloadThroughput: (custom.downloadKbps * 1024) / 8,
+              uploadThroughput: (custom.uploadKbps * 1024) / 8,
+            }
+          : this.THROTTLE_PRESETS[preset];
+      await sendCdpCommand(wc, "Network.emulateNetworkConditions", (conditions ?? {
+        offline: false,
+        latency: 0,
+        downloadThroughput: -1,
+        uploadThroughput: -1,
+      }) as unknown as Record<string, unknown>);
     } catch {
       /* best-effort, see applyJsToggle */
     }
@@ -465,16 +765,76 @@ export class TabManager {
 
   // --- Control center: console error counter ------------------------------
   private consoleErrorCounts = new Map<string, number>();
+  // Masterplan #27 — full console log per tab (not just the error count
+  // above), capped the same way the request log is, backing "Console-Log
+  // Export". Every level is kept (not just errors) since an export is
+  // meant to be a complete session record, same as a real DevTools
+  // console's own "Save as..." would give you.
+  private readonly consoleLogs = new Map<
+    string,
+    { level: string; message: string; timestamp: number }[]
+  >();
+  private static readonly MAX_CONSOLE_LOG = 500;
+  private static readonly CONSOLE_LEVELS = ["verbose", "info", "warning", "error"];
+  // Control center's "Site-Sicherheitscheck sichtbar" (masterplan #4) —
+  // last check-url-safety verdict per tab, set alongside the existing
+  // checks in will-navigate/navigate() below. "unknown" (i.e. absent)
+  // until a navigation has actually run the check.
+  private siteSafetyByTab = new Map<string, "safe" | "suspicious" | "unknown">();
 
   private trackConsoleErrors(id: string, wc: Electron.WebContents) {
     wc.on("console-message", (event) => {
+      const level = TabManager.CONSOLE_LEVELS[event.level] ?? "info";
+      const list = this.consoleLogs.get(id) ?? [];
+      list.push({ level, message: event.message, timestamp: Date.now() });
+      if (list.length > TabManager.MAX_CONSOLE_LOG) list.shift();
+      this.consoleLogs.set(id, list);
       // level 2 === "error" in Electron's console-message event
       if (event.level === 2) {
         this.consoleErrorCounts.set(id, (this.consoleErrorCounts.get(id) ?? 0) + 1);
         this.emitChange();
+        // Masterplan #28 — on-page red error banner, gated by its own
+        // toggle since not everyone wants this permanently on.
+        if (jsErrorOverlayEnabled()) void this.showJsErrorOverlay(wc, event.message);
       }
     });
-    wc.on("did-navigate", () => this.consoleErrorCounts.set(id, 0));
+    wc.on("did-navigate", () => {
+      this.consoleErrorCounts.set(id, 0);
+      this.consoleLogs.delete(id);
+      // Control center's tracker counter resets per navigation too — "12
+      // Tracker auf dieser Seite" should describe the page currently
+      // showing, not accumulate across everywhere that tab has ever been.
+      resetTrackerCount(wc.id);
+      // Same reasoning for the bandwidth counter (masterplan #10) — bytes
+      // loaded should describe the current page, not accumulate across
+      // this tab's whole history.
+      resetBandwidthBytes(wc.id);
+    });
+  }
+
+  // Small floating banner, auto-dismissing after 8s — same injection
+  // technique as the grid overlay/vision filter CSS, plus a tiny bit of
+  // executeJavaScript to actually append/remove the element (insertCSS
+  // alone can't create DOM nodes).
+  private async showJsErrorOverlay(wc: Electron.WebContents, message: string) {
+    const safeMessage = JSON.stringify(message.slice(0, 300));
+    const script = `
+      (() => {
+        let el = document.getElementById("qs-js-error-overlay");
+        if (!el) {
+          el = document.createElement("div");
+          el.id = "qs-js-error-overlay";
+          el.style.cssText = "position:fixed;bottom:16px;left:16px;right:16px;z-index:2147483647;background:#dc2626;color:#fff;padding:10px 14px;border-radius:8px;font:12px/1.4 -apple-system,sans-serif;box-shadow:0 4px 16px rgba(0,0,0,0.3);max-height:120px;overflow-y:auto;";
+          document.body.appendChild(el);
+        }
+        const line = document.createElement("div");
+        line.textContent = ${safeMessage};
+        el.appendChild(line);
+        clearTimeout(el.__qsHideTimer);
+        el.__qsHideTimer = setTimeout(() => el.remove(), 8000);
+      })();
+    `;
+    await wc.executeJavaScript(script, true).catch(() => {});
   }
 
   getConsoleErrorCount(id: string): number {
@@ -487,6 +847,78 @@ export class TabManager {
     return total;
   }
 
+  // --- Control center: console log export (masterplan #27) ----------------
+  async exportConsoleLog(id: string): Promise<string | null> {
+    const entries = this.consoleLogs.get(id) ?? [];
+    if (entries.length === 0) return null;
+    const text = entries
+      .map((e) => `[${new Date(e.timestamp).toISOString()}] ${e.level.toUpperCase()}: ${e.message}`)
+      .join("\n");
+    const { filePath, canceled } = await dialog.showSaveDialog({
+      title: "Console-Log exportieren",
+      defaultPath: path.join(app.getPath("downloads"), `console-log-${Date.now()}.txt`),
+      filters: [{ name: "Textdatei", extensions: ["txt"] }],
+    });
+    if (canceled || !filePath) return null;
+    await fs.writeFile(filePath, text, "utf-8");
+    return filePath;
+  }
+
+  // --- Control center: request log (masterplan #26) ------------------------
+  getRequestLogForTab(id: string): RequestLogEntry[] {
+    const wc = this.views.get(id)?.webContents;
+    return wc ? getRequestLog(wc.id) : [];
+  }
+
+  // --- Control center: tracker counter -------------------------------------
+  // Reads tracker-count-store.ts, which privacy.ts's global webRequest
+  // hook writes to (keyed by the numeric webContents.id, since that's all
+  // that hook ever sees) — this just resolves this app's own string tabId
+  // to that number via the same views map everything else here uses.
+  getTrackerCountForTab(id: string): number {
+    const wc = this.views.get(id)?.webContents;
+    return wc ? getTrackerCount(wc.id) : 0;
+  }
+
+  getTotalTrackerCount(): number {
+    return getTotalTrackerCountFromStore();
+  }
+
+  // --- Control center: bandwidth counter ------------------------------------
+  // Same resolve-string-id-to-webContents.id shape as getTrackerCountForTab
+  // above — reads bandwidth-store.ts, which privacy.ts's onCompleted hook
+  // writes to.
+  getBandwidthForTab(id: string): number {
+    const wc = this.views.get(id)?.webContents;
+    return wc ? getBandwidthBytes(wc.id) : 0;
+  }
+
+  // --- Control center: live RAM/CPU (masterplan #11) ------------------------
+  // app.getAppMetrics() is synchronous and cheap (no IPC/disk involved) —
+  // called fresh on each poll rather than kept in a running cache, since
+  // this is already only queried while the Control center panel is open
+  // (same "cheap in-memory read, polled on demand" reasoning as the
+  // console-error/tracker counters above). Each browsed tab is its own
+  // renderer process, resolved via getOSProcessId() against the metrics
+  // list's pid field.
+  getResourceUsageForTab(id: string): { cpuPercent: number; ramMb: number } | null {
+    const wc = this.views.get(id)?.webContents;
+    if (!wc || wc.isDestroyed()) return null;
+    const pid = wc.getOSProcessId();
+    const entry = app.getAppMetrics().find((m) => m.pid === pid);
+    if (!entry) return null;
+    return {
+      cpuPercent: Math.round(entry.cpu.percentCPUUsage * 10) / 10,
+      // workingSetSize is reported in KB across platforms.
+      ramMb: Math.round(entry.memory.workingSetSize / 1024),
+    };
+  }
+
+  // --- Control center: site safety badge -----------------------------------
+  getSiteSafetyForTab(id: string): "safe" | "suspicious" | "unknown" {
+    return this.siteSafetyByTab.get(id) ?? "unknown";
+  }
+
   // --- Control center: screenshot + print/save-as-PDF ---------------------
   async captureScreenshot(id: string): Promise<string | null> {
     const wc = this.views.get(id)?.webContents;
@@ -495,6 +927,46 @@ export class TabManager {
     const { filePath, canceled } = await dialog.showSaveDialog({
       title: "Screenshot speichern",
       defaultPath: path.join(app.getPath("pictures"), `screenshot-${Date.now()}.png`),
+      filters: [{ name: "PNG-Bild", extensions: ["png"] }],
+    });
+    if (canceled || !filePath) return null;
+    await fs.writeFile(filePath, image.toPNG());
+    return filePath;
+  }
+
+  // --- Control center: full-page screenshot (masterplan #19) --------------
+  // Temporarily grows the tab's own WebContentsView past the window's
+  // visible bounds to the page's real scrollHeight, captures it in one
+  // shot, then restores the normal bounds — simpler than a scroll-and-
+  // stitch approach, and the view is an independent layer so growing it
+  // taller than the window for a moment doesn't affect anything else on
+  // screen. Capped at 20000px to keep an accidentally-infinite-scroll
+  // page from trying to allocate an enormous bitmap.
+  async captureFullPageScreenshot(id: string): Promise<string | null> {
+    const view = this.views.get(id);
+    const wc = view?.webContents;
+    if (!view || !wc) return null;
+    const originalBounds = { ...this.bounds };
+    let scrollHeight: number;
+    try {
+      scrollHeight = await wc.executeJavaScript(
+        "Math.max(document.body ? document.body.scrollHeight : 0, document.documentElement.scrollHeight)",
+        true,
+      );
+    } catch {
+      return null;
+    }
+    const height = Math.min(Math.max(scrollHeight, originalBounds.height), 20_000);
+    view.setBounds({ ...originalBounds, height });
+    // Layout/paint needs a beat to catch up with the resize before
+    // capturePage reads the current frame.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const image = await wc.capturePage().catch(() => null);
+    view.setBounds(originalBounds);
+    if (!image) return null;
+    const { filePath, canceled } = await dialog.showSaveDialog({
+      title: "Vollständigen Screenshot speichern",
+      defaultPath: path.join(app.getPath("pictures"), `screenshot-full-${Date.now()}.png`),
       filters: [{ name: "PNG-Bild", extensions: ["png"] }],
     });
     if (canceled || !filePath) return null;
@@ -531,6 +1003,383 @@ export class TabManager {
     if (canceled || !filePath) return null;
     await wc.savePage(filePath, "HTMLComplete");
     return filePath;
+  }
+
+  // --- Control center: export page as Markdown (masterplan #21) -----------
+  async exportPageAsMarkdown(id: string): Promise<string | null> {
+    const wc = this.views.get(id)?.webContents;
+    if (!wc) return null;
+    const result = await extractPageAsMarkdown(wc);
+    if (!result.ok) return null;
+    const safeName = result.title.replace(/[\\/:*?"<>|]/g, "").trim().slice(0, 80) || "seite";
+    const { filePath, canceled } = await dialog.showSaveDialog({
+      title: "Als Markdown exportieren",
+      defaultPath: path.join(app.getPath("downloads"), `${safeName}.md`),
+      filters: [{ name: "Markdown", extensions: ["md"] }],
+    });
+    if (canceled || !filePath) return null;
+    await fs.writeFile(filePath, result.markdown, "utf-8");
+    return filePath;
+  }
+
+  // --- Control center: page metadata check (masterplan #22) ---------------
+  // Unlike every fire-and-forget action above, this one's whole point is
+  // the returned data — read synchronously in the UI's own popover, not
+  // saved to disk or applied to the page.
+  async getPageMetadata(id: string): Promise<PageMetadata | null> {
+    const wc = this.views.get(id)?.webContents;
+    if (!wc) return null;
+    const script = `
+      (() => {
+        const title = document.title || "";
+        const description = document.querySelector('meta[name="description"]')?.getAttribute("content") || null;
+        const canonicalUrl = document.querySelector('link[rel="canonical"]')?.getAttribute("href") || null;
+        const ogTags = [...document.querySelectorAll('meta[property^="og:"]')].map((el) => ({
+          property: el.getAttribute("property") || "",
+          content: el.getAttribute("content") || "",
+        }));
+        return { title, titleLength: title.length, description, canonicalUrl, ogTags };
+      })();
+    `;
+    try {
+      return await wc.executeJavaScript(script, true);
+    } catch {
+      return null;
+    }
+  }
+
+  // --- Control center: device emulation (masterplan #24) ------------------
+  // CDP Emulation.setDeviceMetricsOverride via the shared debugger session
+  // (see cdp-client.ts) — the same mechanism real Chrome DevTools' device
+  // toolbar uses. "off" clears the override instead of setting one.
+  private static readonly DEVICE_PRESETS: Record<
+    Exclude<DeviceEmulationPreset, "off">,
+    { width: number; height: number; deviceScaleFactor: number; mobile: boolean }
+  > = {
+    iphone14: { width: 390, height: 844, deviceScaleFactor: 3, mobile: true },
+    ipad: { width: 820, height: 1180, deviceScaleFactor: 2, mobile: true },
+    "desktop-sm": { width: 1366, height: 768, deviceScaleFactor: 1, mobile: false },
+  };
+
+  async setDeviceEmulation(id: string, preset: DeviceEmulationPreset): Promise<boolean> {
+    const wc = this.views.get(id)?.webContents;
+    if (!wc) return false;
+    try {
+      if (preset === "off") {
+        await sendCdpCommand(wc, "Emulation.clearDeviceMetricsOverride");
+        return true;
+      }
+      const p = TabManager.DEVICE_PRESETS[preset];
+      await sendCdpCommand(wc, "Emulation.setDeviceMetricsOverride", {
+        width: p.width,
+        height: p.height,
+        deviceScaleFactor: p.deviceScaleFactor,
+        mobile: p.mobile,
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // --- Control center: element picker (masterplan #25) ---------------------
+  // Overlay.setInspectMode is CDP's current home for this (DOM.setInspectMode,
+  // named in the masterplan, was folded into the Overlay domain some
+  // versions ago) — same "click a page element, land on it in DevTools"
+  // flow as Chrome's own Inspect Element tool. Shares the debugger
+  // attach with setDeviceEmulation above via cdp-client.ts.
+  async startElementPicker(id: string): Promise<boolean> {
+    const wc = this.views.get(id)?.webContents;
+    if (!wc) return false;
+    try {
+      await sendCdpCommand(wc, "DOM.enable");
+      await sendCdpCommand(wc, "Overlay.enable");
+      await sendCdpCommand(wc, "Overlay.setInspectMode", {
+        mode: "searchForNode",
+        highlightConfig: {
+          showInfo: true,
+          contentColor: { r: 111, g: 168, b: 220, a: 0.35 },
+          borderColor: { r: 76, g: 122, b: 168, a: 0.7 },
+        },
+      });
+      wc.openDevTools({ mode: "right" });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // --- Control center: cookie viewer & editor (masterplan #29) ------------
+  // session.defaultSession.cookies is a direct Electron API — no
+  // injection or CDP needed, unlike most of the DevTools-category
+  // features above.
+  async getCookiesForTab(id: string): Promise<CookieEntry[]> {
+    const wc = this.views.get(id)?.webContents;
+    if (!wc || !this.contentSessionOrDefault()) return [];
+    let url: string;
+    try {
+      url = wc.getURL();
+      if (!url) return [];
+    } catch {
+      return [];
+    }
+    const cookies = await this.contentSessionOrDefault().cookies.get({ url }).catch(() => []);
+    return cookies.map((c) => ({
+      name: c.name,
+      value: c.value,
+      domain: c.domain ?? "",
+      path: c.path ?? "/",
+      secure: Boolean(c.secure),
+      httpOnly: Boolean(c.httpOnly),
+      expirationDate: c.expirationDate ?? null,
+    }));
+  }
+
+  async setCookieForTab(id: string, name: string, value: string): Promise<boolean> {
+    const wc = this.views.get(id)?.webContents;
+    if (!wc) return false;
+    let url: string;
+    try {
+      url = wc.getURL();
+      if (!url) return false;
+    } catch {
+      return false;
+    }
+    try {
+      await this.contentSessionOrDefault().cookies.set({ url, name, value });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async deleteCookieForTab(id: string, name: string): Promise<boolean> {
+    const wc = this.views.get(id)?.webContents;
+    if (!wc) return false;
+    let url: string;
+    try {
+      url = wc.getURL();
+      if (!url) return false;
+    } catch {
+      return false;
+    }
+    try {
+      await this.contentSessionOrDefault().cookies.remove(url, name);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private contentSessionOrDefault(): Electron.Session {
+    return this.contentSession ?? electronSession.defaultSession;
+  }
+
+  // --- Control center: IndexedDB browser (masterplan #30) ------------------
+  // CDP-only — there's no plain DOM API to list a page's IndexedDB
+  // databases from outside a script running IN that page's own origin.
+  // Scoped intentionally to just database + object-store NAMES (not
+  // browsing actual row data) — the plan itself flags this as the
+  // heaviest UI lift in its category; a name-level overview is still the
+  // useful "does this site even use IndexedDB, and what's in it" answer
+  // for the common case, without building a full data-browsing tree.
+  async getIndexedDbInfo(id: string): Promise<IndexedDbInfo> {
+    const wc = this.views.get(id)?.webContents;
+    if (!wc) return { databases: [] };
+    try {
+      let origin: string;
+      try {
+        origin = new URL(wc.getURL()).origin;
+      } catch {
+        return { databases: [] };
+      }
+      await sendCdpCommand(wc, "IndexedDB.enable");
+      const result = await sendCdpCommand<{ databaseNames: string[] }>(
+        wc,
+        "IndexedDB.requestDatabaseNames",
+        { securityOrigin: origin },
+      );
+      const databases: { name: string; objectStores: string[] }[] = [];
+      for (const name of result.databaseNames ?? []) {
+        try {
+          const structure = await sendCdpCommand<{
+            databaseWithObjectStores: { objectStores: { name: string }[] };
+          }>(wc, "IndexedDB.requestDatabase", { securityOrigin: origin, databaseName: name });
+          databases.push({
+            name,
+            objectStores: (structure.databaseWithObjectStores?.objectStores ?? []).map((s) => s.name),
+          });
+        } catch {
+          databases.push({ name, objectStores: [] });
+        }
+      }
+      return { databases };
+    } catch {
+      return { databases: [] };
+    }
+  }
+
+  // --- Control center: Service Worker status (masterplan #31) --------------
+  // Plain executeJavaScript is enough here (no CDP attach needed) — the
+  // page's own navigator.serviceWorker API already exposes read +
+  // unregister.
+  async getServiceWorkerStatus(id: string): Promise<ServiceWorkerInfo> {
+    const wc = this.views.get(id)?.webContents;
+    if (!wc) return { registrations: [] };
+    const script = `
+      (async () => {
+        if (!("serviceWorker" in navigator)) return { registrations: [] };
+        const regs = await navigator.serviceWorker.getRegistrations();
+        return {
+          registrations: regs.map((r) => ({
+            scope: r.scope,
+            scriptURL: (r.active || r.waiting || r.installing)?.scriptURL || "",
+            active: Boolean(r.active),
+          })),
+        };
+      })();
+    `;
+    try {
+      return await wc.executeJavaScript(script, true);
+    } catch {
+      return { registrations: [] };
+    }
+  }
+
+  async unregisterServiceWorkers(id: string): Promise<number> {
+    const wc = this.views.get(id)?.webContents;
+    if (!wc) return 0;
+    const script = `
+      (async () => {
+        if (!("serviceWorker" in navigator)) return 0;
+        const regs = await navigator.serviceWorker.getRegistrations();
+        let count = 0;
+        for (const r of regs) { if (await r.unregister()) count++; }
+        return count;
+      })();
+    `;
+    try {
+      return await wc.executeJavaScript(script, true);
+    } catch {
+      return 0;
+    }
+  }
+
+  // --- Control center: HAR export (masterplan #32) -------------------------
+  // webRequest (what the request log/#26 uses) doesn't expose full
+  // headers/timings the HAR format needs — this uses CDP's Network domain
+  // directly, same as the throttling/device-emulation features above,
+  // collecting events into a minimal-but-valid HAR 1.2 log while
+  // recording, written out as one .har file on stop.
+  private readonly harRecordings = new Map<
+    string,
+    { requestId: string; url: string; method: string; startedAt: string; status: number; mimeType: string; headers: Record<string, string> }[]
+  >();
+  // The actual function reference wc.debugger.on("message", ...) was
+  // given — kept so stop can removeListener() the exact same reference
+  // (an inline arrow function passed to .on() can't be removed by any
+  // other means, .off() needs the identical function object back).
+  private readonly harListeners = new Map<
+    string,
+    (event: Electron.Event, method: string, params: unknown) => void
+  >();
+
+  isHarRecording(id: string): boolean {
+    return this.harListeners.has(id);
+  }
+
+  async toggleHarRecording(id: string): Promise<"started" | "stopped-empty" | string | null> {
+    const wc = this.views.get(id)?.webContents;
+    if (!wc) return null;
+    if (this.harListeners.has(id)) {
+      // Stop + export.
+      const listener = this.harListeners.get(id)!;
+      wc.debugger.removeListener("message", listener);
+      this.harListeners.delete(id);
+      const entries = this.harRecordings.get(id) ?? [];
+      this.harRecordings.delete(id);
+      if (entries.length === 0) return "stopped-empty";
+      const har = {
+        log: {
+          version: "1.2",
+          creator: { name: "QueckSilver Arch", version: "1.0" },
+          entries: entries.map((e) => ({
+            startedDateTime: e.startedAt,
+            time: 0,
+            request: {
+              method: e.method,
+              url: e.url,
+              httpVersion: "HTTP/1.1",
+              headers: [],
+              queryString: [],
+              cookies: [],
+              headersSize: -1,
+              bodySize: -1,
+            },
+            response: {
+              status: e.status,
+              statusText: "",
+              httpVersion: "HTTP/1.1",
+              headers: Object.entries(e.headers).map(([name, value]) => ({ name, value })),
+              cookies: [],
+              content: { size: 0, mimeType: e.mimeType || "application/octet-stream" },
+              redirectURL: "",
+              headersSize: -1,
+              bodySize: -1,
+            },
+            cache: {},
+            timings: { send: 0, wait: 0, receive: 0 },
+          })),
+        },
+      };
+      const { filePath, canceled } = await dialog.showSaveDialog({
+        title: "HAR exportieren",
+        defaultPath: path.join(app.getPath("downloads"), `network-${Date.now()}.har`),
+        filters: [{ name: "HAR-Datei", extensions: ["har"] }],
+      });
+      if (canceled || !filePath) return null;
+      await fs.writeFile(filePath, JSON.stringify(har, null, 2), "utf-8");
+      return filePath;
+    }
+    // Start recording.
+    try {
+      await sendCdpCommand(wc, "Network.enable");
+      const pending = new Map<string, { url: string; method: string; startedAt: string }>();
+      const onMessage = (_event: Electron.Event, method: string, params: unknown) => {
+        const p = params as Record<string, unknown>;
+        if (method === "Network.requestWillBeSent") {
+          const requestId = String(p.requestId);
+          const request = p.request as { url: string; method: string };
+          pending.set(requestId, {
+            url: request.url,
+            method: request.method,
+            startedAt: new Date().toISOString(),
+          });
+        } else if (method === "Network.responseReceived") {
+          const requestId = String(p.requestId);
+          const info = pending.get(requestId);
+          if (!info) return;
+          const response = p.response as { status: number; mimeType: string; headers: Record<string, string> };
+          const list = this.harRecordings.get(id) ?? [];
+          list.push({
+            requestId,
+            url: info.url,
+            method: info.method,
+            startedAt: info.startedAt,
+            status: response.status,
+            mimeType: response.mimeType,
+            headers: response.headers ?? {},
+          });
+          this.harRecordings.set(id, list);
+        }
+      };
+      wc.debugger.on("message", onMessage);
+      this.harListeners.set(id, onMessage);
+      this.harRecordings.set(id, []);
+      return "started";
+    } catch {
+      return null;
+    }
   }
 
   openDevTools(id: string) {
@@ -583,6 +1432,23 @@ export class TabManager {
       if (this.unloadTab(id)) count++;
     }
     return count;
+  }
+
+  // --- Control center: auto-suspend (masterplan #12) -----------------------
+  // Runs every 30s (see the interval started in the constructor). Unloads
+  // any background tab that's been idle at least autoSuspendMinutes,
+  // reusing the exact same unloadTab() a person clicking "Unload tab"
+  // themselves goes through — same active/secondary guard, same discard-
+  // and-remember-the-URL behavior.
+  private checkAutoSuspend() {
+    const minutes = autoSuspendMinutesSetting();
+    if (minutes <= 0) return;
+    const thresholdMs = minutes * 60_000;
+    const now = Date.now();
+    for (const [id, idleSince] of this.lastActiveAt) {
+      if (now - idleSince < thresholdMs) continue;
+      if (this.unloadTab(id)) this.lastActiveAt.delete(id);
+    }
   }
 
   // --- Control center: background-tab throttling --------------------------
@@ -849,6 +1715,10 @@ export class TabManager {
     // just the ones open when the toggle was flipped.
     this.applyMasterMuteTo(view.webContents);
     this.applyGlobalDarkModeTo(id, view.webContents);
+    this.applyVisionFilterTo(id, view.webContents);
+    this.applyCursorSizeTo(id, view.webContents);
+    this.applyGridOverlayTo(id, view.webContents);
+    this.applyUserAgentPresetTo(view.webContents);
     if (this.javascriptGloballyDisabled) void this.applyJsToggle(view.webContents, true);
     this.trackConsoleErrors(id, view.webContents);
     this.applyBackgroundThrottleTo(id, view.webContents);
@@ -917,6 +1787,7 @@ export class TabManager {
         this.bypassPhishingCheckFor.delete(id);
         if (phishingProtectionEnabled() && !skipPhishingCheck) {
           const safety = await checkUrlSafety(targetUrl);
+          this.siteSafetyByTab.set(id, safety.safe ? "safe" : "suspicious");
           if (!safety.safe) {
             this.bypassPhishingCheckFor.set(id, targetUrl);
             finalUrl = phishingWarningPage(targetUrl, safety.threatType);
@@ -962,6 +1833,10 @@ export class TabManager {
       view.webContents.setVisualZoomLevelLimits(1, 3).catch(() => {});
       if (!this.homeTabs.has(id) && !this.settingsTabs.has(id))
         this.onNavigate?.(view.webContents.getURL());
+      // Control center's "Custom CSS pro Domain" (masterplan #16) — must
+      // be re-resolved on every real navigation, not just applied once at
+      // tab creation (see applyCustomCssForTab's own comment above).
+      void this.applyCustomCssForTab(id, view.webContents);
       emit();
     });
     view.webContents.on("did-navigate-in-page", emit);
@@ -1026,6 +1901,20 @@ export class TabManager {
       if (this.closedTabs.length > 15) this.closedTabs.shift();
     }
 
+    // Control center's "Cookie-Autodelete" — captured BEFORE the tab is
+    // torn down below (this.stateFor(id) needs the still-live view), then
+    // actually cleared AFTER this.views.delete(id) so the "any other open
+    // tab on this domain?" check below doesn't see the tab being closed
+    // as still open.
+    let cookieAutoDeleteDomain: string | null = null;
+    if (cookieAutoDeleteEnabled() && this.contentSession) {
+      try {
+        cookieAutoDeleteDomain = new URL(this.stateFor(id).url).hostname || null;
+      } catch {
+        cookieAutoDeleteDomain = null;
+      }
+    }
+
     // Detach regardless of which slot it was in — a tab being closed is
     // always currently attached (either as the sole active view or as one
     // half of a split), never just sitting inactive in the background.
@@ -1041,7 +1930,21 @@ export class TabManager {
     if (view.webContents && !view.webContents.isDestroyed()) view.webContents.close();
     this.views.delete(id);
     this.globalDarkModeKeys.delete(id);
+    this.gridOverlayKeys.delete(id);
+    this.cursorSizeKeys.delete(id);
+    this.customCssKeys.delete(id);
     this.consoleErrorCounts.delete(id);
+    this.consoleLogs.delete(id);
+    this.harListeners.delete(id);
+    this.harRecordings.delete(id);
+    this.siteSafetyByTab.delete(id);
+    if (view.webContents) {
+      clearTrackerCount(view.webContents.id);
+      clearBandwidthBytes(view.webContents.id);
+      // Masterplan #24/#25 (CDP-based) — no dangling debugger session
+      // left attached once the tab itself is gone.
+      detachDebugger(view.webContents);
+    }
     this.unloadedTabUrls.delete(id);
     this.homeTabs.delete(id);
     this.settingsTabs.delete(id);
@@ -1050,9 +1953,40 @@ export class TabManager {
     this.mutedTabs.delete(id);
     this.audibleTabs.delete(id);
     this.openedAt.delete(id);
+    this.lastActiveAt.delete(id);
     this.tabGroupOf.delete(id);
     this.order = this.order.filter((tabId) => tabId !== id);
     this.pruneEmptyGroups();
+
+    // Control center's "Cookie-Autodelete" — only actually clears once no
+    // OTHER open tab still has this domain loaded (this.views/order are
+    // already updated above, so this check reflects the state right after
+    // this tab left).
+    if (cookieAutoDeleteDomain) {
+      const domain = cookieAutoDeleteDomain;
+      const stillOpenElsewhere = this.order.some((tabId) => {
+        try {
+          return new URL(this.stateFor(tabId).url).hostname === domain;
+        } catch {
+          return false;
+        }
+      });
+      if (!stillOpenElsewhere) {
+        this.contentSession
+          ?.cookies.get({ domain })
+          .then((cookies) =>
+            Promise.all(
+              cookies.map((cookie) =>
+                this.contentSession!.cookies.remove(
+                  `http${cookie.secure ? "s" : ""}://${cookie.domain?.replace(/^\./, "")}${cookie.path}`,
+                  cookie.name,
+                ),
+              ),
+            ),
+          )
+          .catch(() => {});
+      }
+    }
 
     // Closing the last open tab closes the whole browser window, same as a
     // normal desktop browser — no "no tabs" limbo state.
@@ -1099,9 +2033,15 @@ export class TabManager {
     if (this.activeId) {
       const prev = this.views.get(this.activeId);
       if (prev) this.win.contentView.removeChildView(prev);
+      // Control center's "Auto-Suspend" (masterplan #12) — the tab we're
+      // switching AWAY from starts its idle clock now.
+      this.lastActiveAt.set(this.activeId, Date.now());
     }
 
     this.activeId = id;
+    // The tab we're switching TO is no longer idle — clears any clock
+    // started the last time it was backgrounded.
+    this.lastActiveAt.delete(id);
     // If id happened to be the current right-hand tab, split no longer
     // makes sense (both sides would show the same tab) — fold back to a
     // single view instead of leaving a duplicate.
@@ -1179,6 +2119,7 @@ export class TabManager {
     this.bypassPhishingCheckFor.delete(id);
     if (phishingProtectionEnabled() && !skipPhishingCheck) {
       const safety = await checkUrlSafety(target);
+      this.siteSafetyByTab.set(id, safety.safe ? "safe" : "suspicious");
       if (!safety.safe) {
         this.bypassPhishingCheckFor.set(id, target);
         target = phishingWarningPage(target, safety.threatType);
@@ -1386,6 +2327,10 @@ export class TabManager {
   }
 
   destroy() {
+    if (this.autoSuspendInterval) {
+      clearInterval(this.autoSuspendInterval);
+      this.autoSuspendInterval = null;
+    }
     for (const view of this.views.values()) {
       // Defensive: a view's webContents can already be gone by the time
       // this runs (e.g. a tab that crashed, or a window torn down in an

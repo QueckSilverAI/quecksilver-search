@@ -213,6 +213,16 @@ const controlCenter = {
   action: (request: ControlCenterActionRequest): Promise<unknown> =>
     ipcRenderer.invoke("controlCenter:action", request),
   getConsoleErrorTotal: (): Promise<number> => ipcRenderer.invoke("controlCenter:consoleErrorTotal"),
+  getTrackerCountForActiveTab: (): Promise<number> =>
+    ipcRenderer.invoke("controlCenter:trackerCountForActiveTab"),
+  getCurrentSiteSafety: (): Promise<"safe" | "suspicious" | "unknown"> =>
+    ipcRenderer.invoke("controlCenter:currentSiteSafety"),
+  getBandwidthForActiveTab: (): Promise<number> =>
+    ipcRenderer.invoke("controlCenter:bandwidthForActiveTab"),
+  getResourceUsageForActiveTab: (): Promise<{ cpuPercent: number; ramMb: number } | null> =>
+    ipcRenderer.invoke("controlCenter:resourceUsageForActiveTab"),
+  getCustomCssForActiveTab: (): Promise<{ domain: string; css: string } | null> =>
+    ipcRenderer.invoke("controlCenter:customCssForActiveTab"),
 };
 type TorStatus =
   | { state: "stopped" }
