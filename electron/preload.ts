@@ -18,6 +18,7 @@ import type { ControlCenterSettings, ControlCenterActionRequest } from "./contro
 import type { AppContext } from "./build-app-context";
 import type { ZoraSettings, ZoraPreset, ToolPermissionMode } from "./zora-settings-store";
 import type { ZoraToolCatalogEntry } from "./zora-tool-catalog";
+import type { AuditLogEntry } from "./browser-tools";
 
 const tabs = {
   new: (url?: string): Promise<string> => ipcRenderer.invoke("tabs:new", url),
@@ -278,6 +279,17 @@ const zora = {
   // See electron/build-app-context.ts — called once per send() by
   // use-zora-chat.ts and attached to the request as `appContext`.
   getAppContext: (): Promise<AppContext | null> => ipcRenderer.invoke("zora:getAppContext"),
+  // For read_page_aloud/stop_reading (electron/browser-tools.ts) — the
+  // audio itself travels back as part of the normal tools:execute result
+  // (see ToolResult's audioBase64), played locally by the renderer; this
+  // is just the "stop now" signal going the other way, since stop_reading
+  // runs in the main process and has no direct handle on the renderer's
+  // <audio> element.
+  onStopReading: (cb: () => void): (() => void) => {
+    const handler = () => cb();
+    ipcRenderer.on("zora:stopReading", handler);
+    return () => ipcRenderer.removeListener("zora:stopReading", handler);
+  },
   // Permission model (electron/zora-settings-store.ts /
   // zora-tool-catalog.ts) — used by both the Settings UI and
   // use-zora-chat.ts's per-tool gating.
@@ -290,6 +302,26 @@ const zora = {
   getEffectivePermissions: (): Promise<Record<string, ToolPermissionMode>> =>
     ipcRenderer.invoke("zora:getEffectivePermissions"),
   getToolCatalog: (): Promise<Record<string, ZoraToolCatalogEntry>> => ipcRenderer.invoke("zora:getToolCatalog"),
+  getAuditLog: (): Promise<AuditLogEntry[]> => ipcRenderer.invoke("zora:getAuditLog"),
+  clearAuditLog: (): Promise<void> => ipcRenderer.invoke("zora:clearAuditLog"),
+};
+const searchEngine = {
+  get: (): Promise<string> => ipcRenderer.invoke("searchEngine:get"),
+  set: (engine: string): Promise<void> => ipcRenderer.invoke("searchEngine:set", engine),
+  onChanged: (cb: (engine: string) => void): (() => void) => {
+    const handler = (_e: unknown, engine: string) => cb(engine);
+    ipcRenderer.on("searchEngine:changed", handler);
+    return () => ipcRenderer.removeListener("searchEngine:changed", handler);
+  },
+};
+const onionize = {
+  get: (): Promise<boolean> => ipcRenderer.invoke("onionize:get"),
+  set: (enabled: boolean): Promise<void> => ipcRenderer.invoke("onionize:set", enabled),
+  onChanged: (cb: (enabled: boolean) => void): (() => void) => {
+    const handler = (_e: unknown, enabled: boolean) => cb(enabled);
+    ipcRenderer.on("onionize:changed", handler);
+    return () => ipcRenderer.removeListener("onionize:changed", handler);
+  },
 };
 
 const windowControls = {
@@ -405,6 +437,8 @@ contextBridge.exposeInMainWorld("browserAPI", {
   window: windowControls,
   overlay,
   zora,
+  searchEngine,
+  onionize,
 });
 contextBridge.exposeInMainWorld("platformInfo", { platform: process.platform });
 
@@ -429,4 +463,6 @@ export type BrowserAPI = {
   window: typeof windowControls;
   overlay: typeof overlay;
   zora: typeof zora;
+  searchEngine: typeof searchEngine;
+  onionize: typeof onionize;
 };

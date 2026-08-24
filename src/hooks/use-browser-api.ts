@@ -74,6 +74,7 @@ export type ZoraPreset = "autonomous" | "balanced" | "cautious";
 export type ToolPermissionMode = "auto" | "ask";
 export type ZoraSettings = { preset: ZoraPreset; toolPermissions: Record<string, ToolPermissionMode>; screenShareEnabled: boolean };
 export type ZoraToolCatalogEntry = { category: string; tier: "read" | "write"; description: string };
+export type AuditLogEntry = { time: number; name: string; args: Record<string, unknown>; ok: boolean; text: string };
 
 type BrowserAPI = {
   tabs: {
@@ -153,12 +154,25 @@ type BrowserAPI = {
   };
   zora: {
     getAppContext: () => Promise<AppContext | null>;
+    onStopReading: (cb: () => void) => () => void;
     getSettings: () => Promise<ZoraSettings>;
     setPreset: (preset: ZoraPreset) => Promise<ZoraSettings>;
     setToolPermission: (toolName: string, mode: ToolPermissionMode | null) => Promise<ZoraSettings>;
     setScreenShareEnabled: (enabled: boolean) => Promise<ZoraSettings>;
     getEffectivePermissions: () => Promise<Record<string, ToolPermissionMode>>;
     getToolCatalog: () => Promise<Record<string, ZoraToolCatalogEntry>>;
+    getAuditLog: () => Promise<AuditLogEntry[]>;
+    clearAuditLog: () => Promise<void>;
+  };
+  searchEngine: {
+    get: () => Promise<string>;
+    set: (engine: string) => Promise<void>;
+    onChanged: (cb: (engine: string) => void) => () => void;
+  };
+  onionize: {
+    get: () => Promise<boolean>;
+    set: (enabled: boolean) => Promise<void>;
+    onChanged: (cb: (enabled: boolean) => void) => () => void;
   };
   downloads: {
     list: () => Promise<DownloadItem[]>;

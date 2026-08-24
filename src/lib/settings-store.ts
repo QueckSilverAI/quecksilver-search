@@ -1,54 +1,96 @@
 import { useCallback, useEffect, useState } from "react";
+import { SEARCH_ENGINES, type SearchEngine } from "../../shared/search-engines";
+
+export { SEARCH_ENGINES, type SearchEngine };
 
 // Small localStorage-backed settings — genuinely persisted, no Electron
 // round-trip needed for plain UI preferences like these.
-export type SearchEngine =
-  | "google"
-  | "bing"
-  | "duckduckgo"
-  | "startpage"
-  | "mojeek"
-  | "ecosia"
-  | "brave"
-  | "yahoo"
-  | "yandex"
-  | "qwant"
-  | "swisscows"
-  | "presearch"
-  | "you"
-  | "perplexity";
 
-export const SEARCH_ENGINES: { id: SearchEngine; label: string; domain: string; buildUrl: (q: string) => string }[] = [
-  { id: "google", label: "Google", domain: "google.com", buildUrl: (q) => `https://www.google.com/search?q=${encodeURIComponent(q)}` },
-  { id: "bing", label: "Bing", domain: "bing.com", buildUrl: (q) => `https://www.bing.com/search?q=${encodeURIComponent(q)}` },
-  { id: "duckduckgo", label: "DuckDuckGo", domain: "duckduckgo.com", buildUrl: (q) => `https://duckduckgo.com/?q=${encodeURIComponent(q)}` },
-  { id: "startpage", label: "Startpage", domain: "startpage.com", buildUrl: (q) => `https://www.startpage.com/sp/search?query=${encodeURIComponent(q)}` },
-  { id: "brave", label: "Brave Search", domain: "search.brave.com", buildUrl: (q) => `https://search.brave.com/search?q=${encodeURIComponent(q)}` },
-  { id: "mojeek", label: "Mojeek", domain: "mojeek.com", buildUrl: (q) => `https://www.mojeek.com/search?q=${encodeURIComponent(q)}` },
-  { id: "ecosia", label: "Ecosia", domain: "ecosia.org", buildUrl: (q) => `https://www.ecosia.org/search?q=${encodeURIComponent(q)}` },
-  { id: "qwant", label: "Qwant", domain: "qwant.com", buildUrl: (q) => `https://www.qwant.com/?q=${encodeURIComponent(q)}` },
-  { id: "swisscows", label: "Swisscows", domain: "swisscows.com", buildUrl: (q) => `https://swisscows.com/en/web?query=${encodeURIComponent(q)}` },
-  { id: "yahoo", label: "Yahoo", domain: "yahoo.com", buildUrl: (q) => `https://search.yahoo.com/search?p=${encodeURIComponent(q)}` },
-  { id: "yandex", label: "Yandex", domain: "yandex.com", buildUrl: (q) => `https://yandex.com/search/?text=${encodeURIComponent(q)}` },
-  { id: "you", label: "You.com", domain: "you.com", buildUrl: (q) => `https://you.com/search?q=${encodeURIComponent(q)}` },
-  { id: "presearch", label: "Presearch", domain: "presearch.com", buildUrl: (q) => `https://presearch.com/search?q=${encodeURIComponent(q)}` },
-  { id: "perplexity", label: "Perplexity", domain: "perplexity.ai", buildUrl: (q) => `https://www.perplexity.ai/search?q=${encodeURIComponent(q)}` },
-];
+const DEFAULT_SEARCH_ENGINE: SearchEngine = "duckduckgo";
 
-const SEARCH_ENGINE_KEY = "qs-search-engine";
+// Backed by the main process (electron/search-engine-store.ts), NOT
+// localStorage — this used to be a plain localStorage read/write, but
+// quecksilver://newtab and quecksilver://settings turned out to be
+// different origins, so a choice made in the Settings tab's own
+// localStorage never reached anywhere that actually builds a search URL
+// (still holding whatever the hardcoded default was). Every other
+// persisted setting in this app already goes through the main process
+// for exactly this reason — this just brings the search engine in line.
+//
+// getSearchEngine() below still needs to be callable synchronously
+// (url-bar.ts resolves a typed query into a URL on every keystroke, not
+// as an async flow) — so this keeps a plain in-memory mirror of the
+// real value, seeded by one async IPC fetch on module load and kept
+// current for the lifetime of this window/tab by a push event from main
+// whenever ANY window changes it, not just this one.
+let cachedEngine: SearchEngine = DEFAULT_SEARCH_ENGINE;
+const engineListeners = new Set<(engine: SearchEngine) => void>();
+
+function setCachedEngine(engine: SearchEngine) {
+  cachedEngine = engine;
+  engineListeners.forEach((listener) => listener(engine));
+}
+
+if (typeof window !== "undefined" && window.browserAPI) {
+  window.browserAPI.searchEngine.get().then((e) => setCachedEngine((e as SearchEngine) || DEFAULT_SEARCH_ENGINE));
+  window.browserAPI.searchEngine.onChanged((e) => setCachedEngine((e as SearchEngine) || DEFAULT_SEARCH_ENGINE));
+}
 
 export function getSearchEngine(): SearchEngine {
-  if (typeof window === "undefined") return "google";
-  return (window.localStorage.getItem(SEARCH_ENGINE_KEY) as SearchEngine) || "google";
+  return cachedEngine;
 }
 
 export function useSearchEngine() {
-  const [engine, setEngineState] = useState<SearchEngine>(getSearchEngine());
+  const [engine, setEngineState] = useState<SearchEngine>(cachedEngine);
+  useEffect(() => {
+    engineListeners.add(setEngineState);
+    return () => {
+      engineListeners.delete(setEngineState);
+    };
+  }, []);
   const setEngine = useCallback((id: SearchEngine) => {
-    setEngineState(id);
-    window.localStorage.setItem(SEARCH_ENGINE_KEY, id);
+    setCachedEngine(id); // optimistic — feels instant, matches every other setting in this app
+    window.browserAPI?.searchEngine.set(id);
   }, []);
   return { engine, setEngine };
+}
+
+// "Onionize" — same synchronous-cache-plus-push-sync pattern as the
+// engine above, its own tiny IPC channel (electron/search-engine-store.ts
+// stores them together, but they change independently and don't need to
+// share a listener set). Only meaningful when engine is "duckduckgo" and
+// the window is on Tor — see url-bar.ts for where it's actually applied,
+// and HomeContent.tsx for where the toggle itself lives.
+let cachedOnionize = false;
+const onionizeListeners = new Set<(enabled: boolean) => void>();
+
+function setCachedOnionize(enabled: boolean) {
+  cachedOnionize = enabled;
+  onionizeListeners.forEach((listener) => listener(enabled));
+}
+
+if (typeof window !== "undefined" && window.browserAPI) {
+  window.browserAPI.onionize.get().then(setCachedOnionize);
+  window.browserAPI.onionize.onChanged(setCachedOnionize);
+}
+
+export function getOnionize(): boolean {
+  return cachedOnionize;
+}
+
+export function useOnionize() {
+  const [onionize, setOnionizeState] = useState<boolean>(cachedOnionize);
+  useEffect(() => {
+    onionizeListeners.add(setOnionizeState);
+    return () => {
+      onionizeListeners.delete(setOnionizeState);
+    };
+  }, []);
+  const setOnionize = useCallback((enabled: boolean) => {
+    setCachedOnionize(enabled);
+    window.browserAPI?.onionize.set(enabled);
+  }, []);
+  return { onionize, setOnionize };
 }
 
 // Order of the Edit/Settings/Download/Split toolbar icons — draggable to

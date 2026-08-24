@@ -8,6 +8,7 @@ import { ZoraMessage } from "./ZoraMessage";
 import { ZoraChatInput } from "./ZoraChatInput";
 import { ZoraModelSelector } from "./ZoraModelSelector";
 import { ZoraToolApprovalCard } from "./ZoraToolApprovalCard";
+import { ZoraAuditLog } from "./ZoraAuditLog";
 
 type Props = { onClose: () => void };
 
@@ -81,6 +82,7 @@ export function ZoraSidebar({ onClose }: Props) {
             <ScreenShare className="h-3.5 w-3.5 shrink-0" />
             {zoraSettings.screenShareEnabled ? "Sharing" : "Share screen"}
           </button>
+          <ZoraAuditLog />
           <button
             onClick={onClose}
             aria-label="Close sidebar"

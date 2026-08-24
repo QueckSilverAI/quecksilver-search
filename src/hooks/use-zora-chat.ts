@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { SEARCH_CHAT_URL, SUPABASE_ANON_KEY } from "@/lib/supabase-config";
 
 export type ZoraMessage = {
@@ -19,6 +19,10 @@ type SearchChatResponse =
 type ToolPermissionMode = "auto" | "ask";
 
 const MAX_CLIENT_HOPS = 20;
+
+// Resolved entirely server-side — see the comment at the call site in
+// send() below and supabase/functions/search-chat/index.ts.
+const SERVER_RESOLVED_TOOLS = new Set(["web_search", "remember_preference", "fact_check", "find_coupon_codes"]);
 
 function statusFor(name: string, args: Record<string, unknown>): string {
   if (name === "web_search") return `Searching the web for "${String(args["query"] ?? "")}"...`;
@@ -94,6 +98,17 @@ export function useZoraChat(accessToken: string | null) {
   const nextId = () => `m${++idRef.current}`;
   const approvalResolveRef = useRef<((approved: boolean) => void) | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  // read_page_aloud/stop_reading (Phase N) — the one tool result that's
+  // played locally instead of being sent back to Gemini as input, see the
+  // result-handling branch inside send() below.
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    return window.browserAPI?.zora.onStopReading(() => {
+      audioRef.current?.pause();
+      audioRef.current = null;
+    });
+  }, []);
 
   const applyMessages = useCallback((updater: (prev: ZoraMessage[]) => ZoraMessage[]) => {
     setMessages((prev) => {
@@ -188,13 +203,19 @@ export function useZoraChat(accessToken: string | null) {
           hops++;
           const { name, args } = response.toolCall;
 
-          let result: { ok: boolean; text: string; imageBase64?: string };
+          let result: { ok: boolean; text: string; imageBase64?: string; audioBase64?: string; audioMimeType?: string };
+          // These three are resolved entirely server-side (web_search via
+          // Gemini grounding; remember_preference/fact_check/find_coupon_codes
+          // the same way, see supabase/functions/search-chat/index.ts) —
+          // the client never actually executes them, just bounces an empty
+          // placeholder so the loop continues.
+          const isServerResolved = SERVER_RESOLVED_TOOLS.has(name);
           if (requiresApproval(name, permissions, appContext?.activeTabDomain)) {
             setStatusText(null);
             const approved = await waitForApproval({ name, args });
             if (abort.signal.aborted) break;
             result = approved
-              ? name === "web_search"
+              ? isServerResolved
                 ? { ok: true, text: "" }
                 : window.browserAPI
                   ? await window.browserAPI.tools.execute(name, args)
@@ -202,12 +223,21 @@ export function useZoraChat(accessToken: string | null) {
               : { ok: false, text: "The person declined to run this tool. Don't retry it — ask what they'd like instead." };
           } else {
             setStatusText(statusFor(name, args));
-            result =
-              name === "web_search"
-                ? { ok: true, text: "" } // server redoes the real search itself, see postJson comment above
-                : window.browserAPI
-                  ? await window.browserAPI.tools.execute(name, args)
-                  : { ok: false, text: "Browser tools aren't available outside the desktop app." };
+            result = isServerResolved
+              ? { ok: true, text: "" } // server redoes the real thing itself, see postJson comment above
+              : window.browserAPI
+                ? await window.browserAPI.tools.execute(name, args)
+                : { ok: false, text: "Browser tools aren't available outside the desktop app." };
+          }
+
+          // read_page_aloud's audio is for the person to actually hear —
+          // played locally right here, never forwarded to Gemini (unlike
+          // imageBase64, which the server turns into real model input).
+          if (result.audioBase64) {
+            audioRef.current?.pause();
+            const audio = new Audio(`data:${result.audioMimeType ?? "audio/wav"};base64,${result.audioBase64}`);
+            audioRef.current = audio;
+            void audio.play().catch(() => {});
           }
 
           response = await postJson(
@@ -256,6 +286,8 @@ export function useZoraChat(accessToken: string | null) {
     approvalResolveRef.current?.(false);
     approvalResolveRef.current = null;
     setPendingToolCall(null);
+    audioRef.current?.pause();
+    audioRef.current = null;
     abortRef.current?.abort();
   }, []);
 

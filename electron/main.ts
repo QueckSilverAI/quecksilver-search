@@ -77,7 +77,7 @@ import {
   overwriteHeaderFavorites,
 } from "./favorites-store";
 import { getSession, logout, startLoginFlow, cancelLoginFlow } from "./auth";
-import { BROWSER_TOOL_NAMES, executeBrowserTool } from "./browser-tools";
+import { BROWSER_TOOL_NAMES, executeBrowserTool, getAuditLog, clearAuditLog } from "./browser-tools";
 import {
   listDownloads,
   getDownloadsFolder,
@@ -174,6 +174,7 @@ import {
   type ToolPermissionMode,
 } from "./zora-settings-store";
 import { resolveAllToolPermissions, ZORA_TOOL_CATALOG } from "./zora-tool-catalog";
+import { getSearchEngineSetting, setSearchEngineSetting, getOnionizeSetting, setOnionizeSetting } from "./search-engine-store";
 
 app.name = "QueckSilver Arch";
 // No File/Edit/View/Window/Help bar — this app is deliberately chrome-free
@@ -1732,6 +1733,34 @@ function registerIpc() {
   // tool call).
   ipcMain.handle("zora:getEffectivePermissions", () => resolveAllToolPermissions(getZoraSettings()));
   ipcMain.handle("zora:getToolCatalog", () => ZORA_TOOL_CATALOG);
+  // Audit log (zora-browser-integration-plan.md section 6) — every tool
+  // call Zora has made in this window, success or failure.
+  ipcMain.handle("zora:getAuditLog", (e) => {
+    const ctx = contextFor(e);
+    return ctx ? getAuditLog(ctx.win.id) : [];
+  });
+  ipcMain.handle("zora:clearAuditLog", (e) => {
+    const ctx = contextFor(e);
+    if (ctx) clearAuditLog(ctx.win.id);
+  });
+  // Not window-scoped, same as the rest of Settings — one search engine
+  // choice across every window/tab. Was localStorage before (see
+  // src/lib/settings-store.ts's comment): quecksilver://newtab and
+  // quecksilver://settings turned out to be different origins, so a
+  // choice made in the Settings tab's own localStorage never reached
+  // anywhere that actually reads it to build a search URL. Pushed to
+  // every open window on change so an already-open tab picks it up
+  // immediately too, not just on its next load.
+  ipcMain.handle("searchEngine:get", () => getSearchEngineSetting());
+  ipcMain.handle("searchEngine:set", (_e, engine: string) => {
+    setSearchEngineSetting(engine);
+    for (const { win } of windows.values()) win.webContents.send("searchEngine:changed", engine);
+  });
+  ipcMain.handle("onionize:get", () => getOnionizeSetting());
+  ipcMain.handle("onionize:set", (_e, enabled: boolean) => {
+    setOnionizeSetting(enabled);
+    for (const { win } of windows.values()) win.webContents.send("onionize:changed", enabled);
+  });
 
   ipcMain.handle("window:minimize", (e) => contextFor(e)?.win.minimize());
   ipcMain.handle("window:toggleMaximize", (e) => {

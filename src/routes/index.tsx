@@ -29,6 +29,7 @@ import { TabStrip } from "@/components/TabStrip";
 import { SearchEngineChooser } from "@/components/SearchEngineChooser";
 import { HeaderFavoritesBar } from "@/components/HeaderFavoritesBar";
 import { SettingsView } from "@/components/SettingsView";
+import { ZoraSidebar } from "@/components/zora/ZoraSidebar";
 import { FavIcon } from "@/components/FavIcon";
 import { HomeContent } from "@/components/HomeContent";
 import { ZoomedContent } from "@/components/ZoomedContent";
@@ -56,6 +57,7 @@ import {
   useVerticalTabsEnabled,
   useVerticalTabsPinned,
   useSearchEngine,
+  useOnionize,
   SEARCH_ENGINES,
   type ToolbarIconId,
 } from "@/lib/settings-store";
@@ -297,9 +299,11 @@ function Index() {
   const activeDownloadCount = downloadItems.filter((d) => d.state === "progressing").length;
   const { order: toolbarIconOrder, moveIcon: moveToolbarIcon } = useToolbarIconOrder();
   const { engine, setEngine } = useSearchEngine();
+  const { onionize, setOnionize } = useOnionize();
   const currentEngine = SEARCH_ENGINES.find((e) => e.id === engine) ?? SEARCH_ENGINES[0]!;
   const { style: toolbarStyle } = useToolbarStyle();
   const [draggedIcon, setDraggedIcon] = useState<ToolbarIconId | null>(null);
+  const [zoraOpen, setZoraOpen] = useState(false);
   const { level: zoomLevel } = useZoomLevel();
   // Settings → Zoom is just the default for pages that haven't been
   // manually zoomed — pushed once per change, not reapplied on every tab
@@ -1386,8 +1390,12 @@ function Index() {
   };
 
   const autoSavedPillTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Chat pill (next to the profile button) — briefly shows "Coming soon"
-  // on click, then reverts on its own, same timer pattern as autoSavedPill.
+  // TEMPORARY: Zora sidebar disabled for this release (real bugs found —
+  // chat input width, dropdown clipping, an instant "Something went
+  // wrong" error — see the conversation with Juri from 2026-08-24). Kept
+  // right here, not ripped out, so re-enabling is just flipping the
+  // button below back — zoraOpen/ZoraSidebar's actual rendering further
+  // down is untouched.
   const [chatComingSoon, setChatComingSoon] = useState(false);
   const chatComingSoonTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
@@ -1541,7 +1549,7 @@ function Index() {
   };
 
   const submitUrl = (raw: string) => {
-    const target = parseUrlBarInput(raw);
+    const target = parseUrlBarInput(raw, isTorWindow);
     if (!target) {
       notifyError("Enter a valid URL");
       return;
@@ -2246,10 +2254,11 @@ function Index() {
                   </button>
                 )}
                 {/* Chat pill — same pill design as the profile button (bg-card,
-                  h-8, matching shadow). Product isn't live yet, so the click
-                  is just a brief "Coming soon" flip instead of navigating
-                  anywhere — chatComingSoon reverts on its own timer, same
-                  pattern as autoSavedPill above. */}
+                  h-8, matching shadow). TEMPORARILY back to "Coming soon"
+                  for this release — see the state comment above. The real
+                  onClick (setZoraOpen) and the whole sidebar are still
+                  right here in the codebase, just not wired to this
+                  button for now. */}
                 <button
                   onClick={() => {
                     setChatComingSoon(true);
@@ -2411,7 +2420,22 @@ function Index() {
             }
           >
             <div className="flex h-full flex-col bg-white">
-              <div ref={contentRef} className="relative flex h-full w-full flex-1 overflow-hidden">
+              {/* Row wrapper: content on the left (shrinks via flex-1),
+                  Zora sidebar as a fixed-width sibling on the right when
+                  open. contentRef's own rect (used by the ResizeObserver
+                  above to report native content bounds to the backend)
+                  now only covers its own flex-1 share, so opening the
+                  sidebar automatically shrinks where the real browsed
+                  page renders — no separate bounds-adjustment IPC call
+                  needed, the existing ResizeObserver mechanism already
+                  reacts to any layout change here. Zora has to be a
+                  sibling OUTSIDE contentRef, not inside it — a real
+                  browsed page's native WebContentsView always paints
+                  above this window's own DOM content regardless of
+                  z-index, so if the sidebar were inside contentRef's
+                  bounds it would just be invisible, covered by the page. */}
+              <div className="relative flex h-full w-full flex-1 overflow-hidden">
+                <div ref={contentRef} className="relative flex h-full flex-1 overflow-hidden">
                 {secondaryId ? (
                   <ResizablePanelGroup orientation="horizontal">
                     <ResizablePanel
@@ -2444,6 +2468,9 @@ function Index() {
                             onOpenSlot={openSlot}
                             onRemoveSlot={remove}
                             privacyMode={homePrivacyMode}
+                            searchEngineId={engine}
+                            onionize={onionize}
+                            onToggleOnionize={setOnionize}
                           />
                         )}
                         {isSettings && <SettingsView nightModeTabId={lastBrowsedTabRef.current} />}
@@ -2463,7 +2490,7 @@ function Index() {
                             urlDraft={secondaryHomeUrlDraft}
                             onUrlDraftChange={setSecondaryHomeUrlDraft}
                             onSubmit={(raw) => {
-                              const target = parseUrlBarInput(raw);
+                              const target = parseUrlBarInput(raw, isTorWindow);
                               if (target && secondaryId) navigate(secondaryId, target);
                             }}
                             bookmarks={bookmarks}
@@ -2471,6 +2498,9 @@ function Index() {
                             onOpenSlot={openSlot}
                             onRemoveSlot={remove}
                             privacyMode={homePrivacyMode}
+                            searchEngineId={engine}
+                            onionize={onionize}
+                            onToggleOnionize={setOnionize}
                           />
                         )}
                         {/* Neither home nor settings — a real page, shown by the
@@ -2494,11 +2524,20 @@ function Index() {
                         onOpenSlot={openSlot}
                         onRemoveSlot={remove}
                         privacyMode={homePrivacyMode}
+                        searchEngineId={engine}
+                        onionize={onionize}
+                        onToggleOnionize={setOnionize}
                       />
                     )}
                     {isSettings && <SettingsView nightModeTabId={lastBrowsedTabRef.current} />}
                   </ZoomedContent>
                 )}
+              </div>
+              {zoraOpen && (
+                <div className="flex h-full w-[380px] shrink-0 flex-col border-l border-[var(--chrome-border)] bg-background p-2">
+                  <ZoraSidebar onClose={() => setZoraOpen(false)} />
+                </div>
+              )}
               </div>
             </div>
           </div>

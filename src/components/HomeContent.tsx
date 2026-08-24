@@ -3,6 +3,7 @@ import { TorOnionLogo } from "@/components/TorOnionLogo";
 import { QueckSilverLogo } from "@/components/QueckSilverLogo";
 import { Wordmark } from "@/components/QueckSilverMarks";
 import { FavIcon } from "@/components/FavIcon";
+import { Switch } from "@/components/ui/switch";
 
 export type Bookmark = { label: string; url: string } | null;
 export const SLOT_COUNT = 5;
@@ -24,6 +25,13 @@ type Props = {
   // typed into an empty slot here would survive the window closing anyway.
   // Swapped for a short "what's saved, what isn't" explainer instead.
   privacyMode?: PrivacyMode;
+  // "Onionize" toggle — only rendered when privacyMode is "tor" AND the
+  // engine is DuckDuckGo (the only one with a real onion service, see
+  // url-bar.ts). Omitted entirely (not just hidden) outside a Tor window
+  // since there's nothing meaningful to route .onion traffic through.
+  searchEngineId?: string;
+  onionize?: boolean;
+  onToggleOnionize?: (enabled: boolean) => void;
 };
 
 // One row of the privacy explainer below - a small icon (do/don't) plus a
@@ -44,7 +52,8 @@ function PrivacyRow({ saved, children }: { saved: boolean; children: React.React
 // so it can render identically whether it's the primary tab's content or
 // the secondary (right) side of split view. Previously split view showed
 // just a small placeholder there instead of the real thing.
-export function HomeContent({ urlDraft, onUrlDraftChange, onSubmit, bookmarks, onOpenBookmark, onOpenSlot, onRemoveSlot, inputRef, privacyMode = null }: Props) {
+export function HomeContent({ urlDraft, onUrlDraftChange, onSubmit, bookmarks, onOpenBookmark, onOpenSlot, onRemoveSlot, inputRef, privacyMode = null, searchEngineId, onionize = false, onToggleOnionize }: Props) {
+  const showOnionizeToggle = privacyMode === "tor" && searchEngineId === "duckduckgo" && !!onToggleOnionize;
   return (
     <div className="flex flex-1 flex-col items-center justify-center px-10 py-6 -translate-y-12 bg-white">
       <div className="flex w-full max-w-[700px] flex-col items-center gap-6">
@@ -65,6 +74,12 @@ export function HomeContent({ urlDraft, onUrlDraftChange, onSubmit, bookmarks, o
             className="min-w-0 flex-1 bg-transparent text-base text-foreground outline-none"
             placeholder="Search the web"
           />
+          {showOnionizeToggle && (
+            <label className="flex shrink-0 items-center gap-2 pl-2 text-[13px] font-medium text-[#6b3fa0]">
+              Onionize
+              <Switch checked={onionize} onCheckedChange={onToggleOnionize} />
+            </label>
+          )}
         </div>
 
         {privacyMode ? (
