@@ -60,6 +60,10 @@ function requiresApproval(
   permissions: Record<string, ToolPermissionMode>,
   activeTabDomain: string | null | undefined,
 ): boolean {
+  // submit_form always asks, no matter the preset or a per-tool override —
+  // called out specifically in zora-browser-integration-plan.md's
+  // category D table as needing that (unlike the rest of the category).
+  if (name === "submit_form") return true;
   if ((name === "click_element" || name === "type_text") && isSensitiveDomain(activeTabDomain)) return true;
   return permissions[name] === "ask";
 }
@@ -161,12 +165,14 @@ export function useZoraChat(accessToken: string | null) {
         // AppContext travels over the wire; see AppContextPayload in
         // supabase/functions/search-chat/index.ts for which fields it reads.
         const fullAppContext = window.browserAPI ? await window.browserAPI.zora.getAppContext() : null;
+        const zoraSettings = window.browserAPI ? await window.browserAPI.zora.getSettings() : null;
         const appContext = fullAppContext
           ? {
               controlCenterSettings: fullAppContext.controlCenterSettings,
               openTabs: fullAppContext.openTabs,
               windowMode: fullAppContext.windowMode,
               activeTabDomain: fullAppContext.activeTabDomain,
+              screenShareEnabled: zoraSettings?.screenShareEnabled === true,
             }
           : null;
         // Resolved once per turn too (preset + overrides collapsed into
@@ -182,7 +188,7 @@ export function useZoraChat(accessToken: string | null) {
           hops++;
           const { name, args } = response.toolCall;
 
-          let result: { ok: boolean; text: string };
+          let result: { ok: boolean; text: string; imageBase64?: string };
           if (requiresApproval(name, permissions, appContext?.activeTabDomain)) {
             setStatusText(null);
             const approved = await waitForApproval({ name, args });
@@ -205,7 +211,7 @@ export function useZoraChat(accessToken: string | null) {
           }
 
           response = await postJson(
-            { contents: response.contents, toolResult: { name, response: result.text } },
+            { contents: response.contents, toolResult: { name, response: result.text, imageBase64: result.imageBase64 } },
             appContext,
             abort.signal,
           );

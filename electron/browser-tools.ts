@@ -28,6 +28,59 @@ import { sendCdpCommand } from "./cdp-client";
 export type ToolResult = { ok: boolean; text: string; imageBase64?: string };
 
 const MAX_TEXT_CHARS = 6000;
+
+// zora-browser-integration-plan.md section 5 — get_clickable_elements
+// scans the page for interactive elements and returns a computed CSS
+// selector per element (not a numeric "ref" the plan describes; see the
+// comment on get_clickable_elements/click_element/type_text in
+// BROWSER_TOOL_NAMES above for why), plus its role, visible text, and
+// center coordinates as a click_at fallback. Deliberately capped at 60
+// elements and viewport-visible only — a full-page scan of everything
+// interactive on a long page would be mostly noise for the model to sift
+// through, and be hopelessly slow.
+type ClickableElement = { selector: string; role: string; text: string; x: number; y: number };
+
+const GET_CLICKABLE_ELEMENTS_SCRIPT = `(() => {
+  const SEL = 'a[href], button, input, select, textarea, [role="button"], [role="link"], [role="checkbox"], [role="tab"], [onclick], [tabindex]:not([tabindex="-1"])';
+  function cssPath(el) {
+    if (el.id) return "#" + CSS.escape(el.id);
+    const testId = el.getAttribute("data-testid");
+    if (testId) return \`[data-testid="\${testId}"]\`;
+    const ariaLabel = el.getAttribute("aria-label");
+    if (ariaLabel) return \`[aria-label="\${ariaLabel}"]\`;
+    const path = [];
+    let node = el;
+    for (let i = 0; i < 4 && node && node !== document.body; i++) {
+      let part = node.tagName.toLowerCase();
+      if (typeof node.className === "string" && node.className.trim()) {
+        const cls = node.className.trim().split(/\\s+/).slice(0, 2).join(".");
+        if (cls) part += "." + cls;
+      }
+      const siblings = node.parentElement ? Array.from(node.parentElement.children).filter((c) => c.tagName === node.tagName) : [];
+      if (siblings.length > 1) part += \`:nth-of-type(\${siblings.indexOf(node) + 1})\`;
+      path.unshift(part);
+      node = node.parentElement;
+    }
+    return path.join(" > ");
+  }
+  return Array.from(document.querySelectorAll(SEL))
+    .filter((el) => {
+      const r = el.getBoundingClientRect();
+      return r.width > 0 && r.height > 0 && r.top < window.innerHeight && r.bottom > 0;
+    })
+    .slice(0, 60)
+    .map((el) => {
+      const r = el.getBoundingClientRect();
+      const text = (el.innerText || el.value || el.getAttribute("aria-label") || el.getAttribute("placeholder") || "").trim().slice(0, 60);
+      return {
+        selector: cssPath(el),
+        role: el.getAttribute("role") || el.tagName.toLowerCase(),
+        text,
+        x: Math.round(r.left + r.width / 2),
+        y: Math.round(r.top + r.height / 2),
+      };
+    });
+})()`;
 const MAX_LINKS = 40;
 
 // Which tool names this dispatcher understands. Kept as a Set (not just
@@ -419,6 +472,106 @@ export async function executeBrowserTool(
         const sites = listTopFrequentSites(win.id);
         const lines = sites.map((s) => `${s.domain} (visited ${s.visitCount}x)`);
         return { ok: true, text: lines.join("\n") || "Not enough browsing yet to have frequent sites." };
+      }
+      case "get_clickable_elements": {
+        const wc = requireWebContents(tabs, args.tab_id);
+        if (!wc) return noActiveTab();
+        const elements = (await wc.executeJavaScript(GET_CLICKABLE_ELEMENTS_SCRIPT, true)) as ClickableElement[];
+        return elements.length > 0
+          ? { ok: true, text: truncate(JSON.stringify(elements)) }
+          : { ok: false, text: "No clickable elements found on the visible part of this page." };
+      }
+      case "click_at": {
+        const wc = requireWebContents(tabs, args.tab_id);
+        if (!wc) return noActiveTab();
+        const x = Number(args.x);
+        const y = Number(args.y);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return { ok: false, text: "Missing or invalid x/y." };
+        await sendCdpCommand(wc, "Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
+        await sendCdpCommand(wc, "Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
+        await sendCdpCommand(wc, "Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
+        return { ok: true, text: `Clicked at (${x}, ${y}).` };
+      }
+      case "hover_element": {
+        const wc = requireWebContents(tabs, args.tab_id);
+        if (!wc) return noActiveTab();
+        const selector = typeof args.selector === "string" ? args.selector : null;
+        if (!selector) return { ok: false, text: "Missing selector." };
+        const hovered = (await wc.executeJavaScript(
+          `(() => {
+            const el = document.querySelector(${JSON.stringify(selector)});
+            if (!el) return false;
+            el.scrollIntoView({ block: "center" });
+            const r = el.getBoundingClientRect();
+            const opts = { bubbles: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 };
+            el.dispatchEvent(new MouseEvent("mouseover", opts));
+            el.dispatchEvent(new MouseEvent("mouseenter", opts));
+            el.dispatchEvent(new MouseEvent("mousemove", opts));
+            return true;
+          })()`,
+          true,
+        )) as boolean;
+        return hovered ? { ok: true, text: `Hovered ${selector}.` } : { ok: false, text: `No element matched selector ${selector}.` };
+      }
+      case "select_dropdown_option": {
+        const wc = requireWebContents(tabs, args.tab_id);
+        if (!wc) return noActiveTab();
+        const selector = typeof args.selector === "string" ? args.selector : null;
+        const value = typeof args.value === "string" ? args.value : null;
+        if (!selector || value === null) return { ok: false, text: "Missing selector or value." };
+        const selected = (await wc.executeJavaScript(
+          `(() => {
+            const el = document.querySelector(${JSON.stringify(selector)});
+            if (!el || el.tagName !== "SELECT") return false;
+            el.value = ${JSON.stringify(value)};
+            el.dispatchEvent(new Event("change", { bubbles: true }));
+            el.dispatchEvent(new Event("input", { bubbles: true }));
+            return el.value === ${JSON.stringify(value)};
+          })()`,
+          true,
+        )) as boolean;
+        return selected
+          ? { ok: true, text: `Selected "${value}" in ${selector}.` }
+          : { ok: false, text: `Couldn't select "${value}" in ${selector} — check the selector and that the value exists as an <option>.` };
+      }
+      case "submit_form": {
+        // Always asks for confirmation regardless of preset/override — see
+        // requiresApproval() in src/hooks/use-zora-chat.ts. Called out
+        // specifically in zora-browser-integration-plan.md's category D
+        // table as needing that, unlike the rest of this category.
+        const wc = requireWebContents(tabs, args.tab_id);
+        if (!wc) return noActiveTab();
+        const selector = typeof args.selector === "string" ? args.selector : null;
+        if (!selector) return { ok: false, text: "Missing selector." };
+        const submitted = (await wc.executeJavaScript(
+          `(() => {
+            const el = document.querySelector(${JSON.stringify(selector)});
+            if (!el) return false;
+            const form = el.tagName === "FORM" ? el : el.closest("form");
+            if (!form) return false;
+            if (form.requestSubmit) form.requestSubmit(); else form.submit();
+            return true;
+          })()`,
+          true,
+        )) as boolean;
+        return submitted ? { ok: true, text: "Submitted the form." } : { ok: false, text: `No form found for selector ${selector}.` };
+      }
+      case "see_screen": {
+        const settings = getZoraSettings();
+        if (!settings.screenShareEnabled) {
+          return { ok: false, text: "Screen sharing is off — the person needs to turn it on in the Zora sidebar before I can see a screenshot." };
+        }
+        // Tor windows never allow screenshots, regardless of the toggle —
+        // zora-browser-integration-plan.md section 6's extra safety layer.
+        if (getActiveIdentity(win.id).windowMode === "tor") {
+          return { ok: false, text: "Screenshots are disabled in Tor windows." };
+        }
+        const id = requireId(tabs, args.tab_id);
+        if (!id) return noActiveTab();
+        const imageBase64 = await tabs.captureScreenshotBase64(id);
+        return imageBase64
+          ? { ok: true, text: "Screenshot captured.", imageBase64 }
+          : { ok: false, text: "Couldn't capture a screenshot." };
       }
       case "add_bookmark": {
         const label = typeof args.label === "string" ? args.label.trim() : "";

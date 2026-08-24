@@ -42,7 +42,7 @@ export type HeaderFavorite = {
   parentId?: string | null;
 };
 export type AuthSession = { accessToken: string; userId: string | null; email: string | null; obtainedAt: number } | null;
-export type ToolResult = { ok: boolean; text: string };
+export type ToolResult = { ok: boolean; text: string; imageBase64?: string };
 export type ProfileKind = "quecksilver" | "simple";
 export type Profile = { id: string; kind: ProfileKind; name: string; email: string | null; createdAt: number };
 export type ActiveIdentity = { activeProfileId: string | null; guestMode: boolean; windowMode?: "normal" | "incognito" | "tor" };
@@ -72,7 +72,7 @@ export type AppContext = {
 };
 export type ZoraPreset = "autonomous" | "balanced" | "cautious";
 export type ToolPermissionMode = "auto" | "ask";
-export type ZoraSettings = { preset: ZoraPreset; toolPermissions: Record<string, ToolPermissionMode> };
+export type ZoraSettings = { preset: ZoraPreset; toolPermissions: Record<string, ToolPermissionMode>; screenShareEnabled: boolean };
 export type ZoraToolCatalogEntry = { category: string; tier: "read" | "write"; description: string };
 
 type BrowserAPI = {
@@ -156,6 +156,7 @@ type BrowserAPI = {
     getSettings: () => Promise<ZoraSettings>;
     setPreset: (preset: ZoraPreset) => Promise<ZoraSettings>;
     setToolPermission: (toolName: string, mode: ToolPermissionMode | null) => Promise<ZoraSettings>;
+    setScreenShareEnabled: (enabled: boolean) => Promise<ZoraSettings>;
     getEffectivePermissions: () => Promise<Record<string, ToolPermissionMode>>;
     getToolCatalog: () => Promise<Record<string, ZoraToolCatalogEntry>>;
   };

@@ -281,7 +281,7 @@ const USER_AGENT_OPTIONS: { id: ControlCenterSettings["userAgentPreset"]; label:
 ];
 
 const DEVICE_PRESET_OPTIONS: { id: DeviceEmulationPreset; label: string }[] = [
-  { id: "off", label: "Aus" },
+  { id: "off", label: "Off" },
   { id: "iphone14", label: "iPhone 14" },
   { id: "ipad", label: "iPad" },
   { id: "desktop-sm", label: "Desktop" },
@@ -314,10 +314,6 @@ export function ControlCenterContent({
     if (!showCustomCss) setCssInput(customCssTarget?.css ?? "");
   }, [customCssTarget, showCustomCss]);
   const [showMetadata, setShowMetadata] = useState(false);
-  // Local-only, not persisted or synced from the backend — a per-session
-  // debugging preset (masterplan #24), same reasoning as showQr/showJwt
-  // above rather than a real Control center setting.
-  const [devicePreset, setDevicePreset] = useState<DeviceEmulationPreset>("off");
   const [showBlockedPatterns, setShowBlockedPatterns] = useState(false);
   const [blockedPatternsInput, setBlockedPatternsInput] = useState("");
   // DevTools panels (masterplan #26/#29/#30/#31/#32/#34) — each toggled
@@ -333,10 +329,14 @@ export function ControlCenterContent({
   const [mockPattern, setMockPattern] = useState("");
   const [mockStatus, setMockStatus] = useState("200");
   const [mockBody, setMockBody] = useState("");
-  // HAR recording (masterplan #32) is local-only UI state, same reasoning
-  // as devicePreset above — the actual recording lives in tab-manager.ts,
-  // this just tracks what the button should say/do next.
+  // HAR recording (masterplan #32) is local-only UI state — the actual
+  // recording lives in tab-manager.ts, this just tracks what the button
+  // should say/do next.
   const [harRecording, setHarRecording] = useState(false);
+  // Not part of ControlCenterSettings (cc) — device emulation is per-tab,
+  // ephemeral state tracked in TabManager itself, not a persisted
+  // setting, so it's tracked locally here rather than read off cc.
+  const [devicePreset, setDevicePreset] = useState<DeviceEmulationPreset>("off");
   const [langQuery, setLangQuery] = useState("");
   const lq = langQuery.trim().toLowerCase();
   const filteredLanguages = lq

@@ -103,6 +103,14 @@ export class TabManager {
   // resizable panels in QueckSilver AI's code workspace.
   private splitRatio = 0.5;
   private bounds: ContentBounds = { x: 0, y: 0, width: 0, height: 0 };
+  // Active device-emulation preset per tab id (see setDeviceEmulation and
+  // boundsFor below) — resizing the tab's own WebContentsView to the
+  // device's logical pixel size instead of CDP's Emulation domain, which
+  // was confirmed to hard-crash the whole process for this app's
+  // WebContentsView setup. A real (smaller) rendered viewport means CSS
+  // media queries respond correctly, same as the CDP version would have
+  // given, just without touching CDP at all.
+  private deviceEmulation = new Map<string, Exclude<DeviceEmulationPreset, "off">>();
   private contentVisible = true;
   // Explicitly tracked rather than inferred from wc.getURL() — after
   // navigate(id, HOME_URL) loads "about:blank" to clear the page, getURL()
@@ -959,7 +967,12 @@ export class TabManager {
     const view = this.views.get(id);
     const wc = view?.webContents;
     if (!view || !wc) return null;
-    const originalBounds = { ...this.bounds };
+    // If device emulation is active for this tab, grow from its
+    // letterboxed size (not the full window) — otherwise this would
+    // temporarily blow the emulated viewport back out to full window
+    // width for the capture, defeating the point of emulating a device
+    // in the first place.
+    const restoreBounds = this.boundsFor(id, this.bounds);
     let scrollHeight: number;
     try {
       scrollHeight = await wc.executeJavaScript(
@@ -969,13 +982,13 @@ export class TabManager {
     } catch {
       return null;
     }
-    const height = Math.min(Math.max(scrollHeight, originalBounds.height), 20_000);
-    view.setBounds({ ...originalBounds, height });
+    const height = Math.min(Math.max(scrollHeight, restoreBounds.height), 20_000);
+    view.setBounds({ ...restoreBounds, height });
     // Layout/paint needs a beat to catch up with the resize before
     // capturePage reads the current frame.
     await new Promise((resolve) => setTimeout(resolve, 200));
     const image = await wc.capturePage().catch(() => null);
-    view.setBounds(originalBounds);
+    view.setBounds(restoreBounds);
     if (!image) return null;
     const { filePath, canceled } = await dialog.showSaveDialog({
       title: "Save full-page screenshot",
@@ -1062,37 +1075,75 @@ export class TabManager {
   }
 
   // --- Control center: device emulation (masterplan #24) ------------------
-  // CDP Emulation.setDeviceMetricsOverride via the shared debugger session
-  // (see cdp-client.ts) — the same mechanism real Chrome DevTools' device
-  // toolbar uses. "off" clears the override instead of setting one.
+  // Target logical-pixel sizes per preset. Real viewport resize (see
+  // boundsFor below), not CDP's Emulation domain — deviceScaleFactor is
+  // therefore approximate (applied as this tab's zoom factor, not a true
+  // separate device pixel ratio) and touch-event simulation isn't
+  // included, but the actual thing that matters for responsive-design
+  // checking — real CSS media queries responding to a real smaller
+  // viewport — works correctly, without CDP.
   private static readonly DEVICE_PRESETS: Record<
     Exclude<DeviceEmulationPreset, "off">,
-    { width: number; height: number; deviceScaleFactor: number; mobile: boolean }
+    { width: number; height: number; zoomFactor: number }
   > = {
-    iphone14: { width: 390, height: 844, deviceScaleFactor: 3, mobile: true },
-    ipad: { width: 820, height: 1180, deviceScaleFactor: 2, mobile: true },
-    "desktop-sm": { width: 1366, height: 768, deviceScaleFactor: 1, mobile: false },
+    iphone14: { width: 390, height: 844, zoomFactor: 1 },
+    ipad: { width: 820, height: 1180, zoomFactor: 1 },
+    "desktop-sm": { width: 1366, height: 768, zoomFactor: 1 },
   };
 
+  // Letterboxes the device's logical size within whatever rect the tab
+  // would otherwise fill (this.bounds normally, or a split-view half) —
+  // centered, capped to that rect so a device preset never overflows a
+  // smaller window. Plain passthrough when this tab has no emulation
+  // active. Every setBounds(this.bounds)-style call site for an
+  // individual tab in this file goes through here now instead of using
+  // the raw rect directly, so switching tabs, resizing the window,
+  // entering/exiting split view etc. all keep respecting an active
+  // emulation instead of silently clearing it back to full-size.
+  private boundsFor(id: string | null, base: ContentBounds): ContentBounds {
+    const preset = id ? this.deviceEmulation.get(id) : undefined;
+    if (!preset) return base;
+    const { width: targetWidth, height: targetHeight } = TabManager.DEVICE_PRESETS[preset];
+    const width = Math.min(targetWidth, base.width);
+    const height = Math.min(targetHeight, base.height);
+    return {
+      x: base.x + Math.floor((base.width - width) / 2),
+      y: base.y + Math.floor((base.height - height) / 2),
+      width,
+      height,
+    };
+  }
+
   async setDeviceEmulation(id: string, preset: DeviceEmulationPreset): Promise<boolean> {
-    const wc = this.views.get(id)?.webContents;
-    if (!wc) return false;
-    try {
-      if (preset === "off") {
-        await sendCdpCommand(wc, "Emulation.clearDeviceMetricsOverride");
-        return true;
-      }
-      const p = TabManager.DEVICE_PRESETS[preset];
-      await sendCdpCommand(wc, "Emulation.setDeviceMetricsOverride", {
-        width: p.width,
-        height: p.height,
-        deviceScaleFactor: p.deviceScaleFactor,
-        mobile: p.mobile,
-      });
-      return true;
-    } catch {
-      return false;
+    const view = this.views.get(id);
+    if (!view) return false;
+    if (preset === "off") {
+      this.deviceEmulation.delete(id);
+      view.webContents.setZoomFactor(this.defaultZoomFactor);
+    } else {
+      this.deviceEmulation.set(id, preset);
+      view.webContents.setZoomFactor(TabManager.DEVICE_PRESETS[preset].zoomFactor);
     }
+    // Re-applies bounds right now if this tab is actually visible —
+    // otherwise the resize would only take effect the next time
+    // switchTab/applySplitLayout/etc. happens to run for it.
+    if (this.contentVisible) {
+      if (this.secondaryId === id || this.activeId === id) this.applySplitLayoutOrSingle();
+    }
+    return true;
+  }
+
+  // Shared by setDeviceEmulation above and anywhere else that just needs
+  // "reapply whatever bounds the active/secondary tab(s) should currently
+  // have" without duplicating the split-vs-single branch.
+  private applySplitLayoutOrSingle() {
+    if (this.secondaryId) {
+      this.applySplitLayout();
+      return;
+    }
+    const id = this.activeId;
+    const view = id ? this.views.get(id) : null;
+    view?.setBounds(this.boundsFor(id, this.bounds));
   }
 
   // --- Control center: element picker (masterplan #25) ---------------------
@@ -1723,6 +1774,17 @@ export class TabManager {
     view.webContents.on("did-create-window", (popup) => {
       popup.webContents.setUserAgent(TAB_USER_AGENT);
     });
+    // A genuine native renderer crash (a real one — a bad CDP interaction,
+    // a GPU-compositing bug, an out-of-memory page) previously had no
+    // handler at all here: the tab would just go blank/unresponsive with
+    // no way to tell what happened and no way back short of restarting
+    // the whole app — easy to mistake for "the app closed". Reloads the
+    // tab automatically instead, and logs clearly so a real crash is
+    // actually diagnosable next time rather than silently eaten.
+    view.webContents.on("render-process-gone", (_e, details) => {
+      console.error(`[tab-manager] renderer gone (${details.reason}) for ${view.webContents.getURL()} — reloading`);
+      if (details.reason !== "clean-exit") view.webContents.reload();
+    });
     // Right-click on an image, a link, or actual selected text — see
     // main.ts's onContextMenuRequest wiring (showContextMenu) for the full
     // reasoning: this opens a native overlay window (a React-rendered
@@ -1976,6 +2038,7 @@ export class TabManager {
     this.openedAt.delete(id);
     this.lastActiveAt.delete(id);
     this.tabGroupOf.delete(id);
+    this.deviceEmulation.delete(id);
     this.order = this.order.filter((tabId) => tabId !== id);
     this.pruneEmptyGroups();
 
@@ -2025,7 +2088,7 @@ export class TabManager {
       // needs to go from half-width back to filling the whole area now
       // that split is over.
       const left = this.activeId ? this.views.get(this.activeId) : null;
-      left?.setBounds(this.bounds);
+      left?.setBounds(this.boundsFor(this.activeId, this.bounds));
     }
 
     this.emitChange();
@@ -2082,7 +2145,7 @@ export class TabManager {
       if (this.secondaryId) {
         this.applySplitLayout();
       } else {
-        view.setBounds(this.bounds);
+        view.setBounds(this.boundsFor(id, this.bounds));
         this.win.contentView.addChildView(view);
       }
     } else if (newIsInternal) {
@@ -2237,12 +2300,12 @@ export class TabManager {
     if (leftView && !leftInternal) {
       if (!this.win.contentView.children.includes(leftView))
         this.win.contentView.addChildView(leftView);
-      leftView.setBounds(this.splitBoundsFor("left"));
+      leftView.setBounds(this.boundsFor(this.activeId, this.splitBoundsFor("left")));
     }
     if (rightView && !rightInternal) {
       if (!this.win.contentView.children.includes(rightView))
         this.win.contentView.addChildView(rightView);
-      rightView.setBounds(this.splitBoundsFor("right"));
+      rightView.setBounds(this.boundsFor(this.secondaryId, this.splitBoundsFor("right")));
     }
   }
 
@@ -2263,7 +2326,7 @@ export class TabManager {
     this.secondaryId = null;
     // Restore the active tab back to filling the whole content area.
     const left = this.activeId ? this.views.get(this.activeId) : null;
-    if (left && this.contentVisible) left.setBounds(this.bounds);
+    if (left && this.contentVisible) left.setBounds(this.boundsFor(this.activeId, this.bounds));
     this.emitChange();
   }
 
@@ -2300,7 +2363,7 @@ export class TabManager {
       return;
     }
     const active = this.activeId ? this.views.get(this.activeId) : null;
-    active?.setBounds(bounds);
+    active?.setBounds(this.boundsFor(this.activeId, bounds));
   }
 
   // Hidden while the active tab is an internal page (home/settings) or a
@@ -2329,7 +2392,7 @@ export class TabManager {
     const active = this.activeId ? this.views.get(this.activeId) : null;
     if (!active) return;
     if (visible) {
-      active.setBounds(this.bounds);
+      active.setBounds(this.boundsFor(this.activeId, this.bounds));
       this.win.contentView.addChildView(active);
     } else {
       // Resized to nothing rather than removeChildView() — worth trying

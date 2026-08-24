@@ -88,6 +88,14 @@ export function HomeContent({ urlDraft, onUrlDraftChange, onSubmit, bookmarks, o
                 ? "Your traffic is routed through Tor, hiding your IP address from the sites you visit."
                 : "This won't hide your activity from your employer, school, or internet provider."}
             </p>
+            {privacyMode === "tor" && (
+              <button
+                onClick={() => onOpenBookmark("https://check.torproject.org")}
+                className="mt-1 rounded-full bg-blue-600 px-4 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-blue-700"
+              >
+                Check Connection
+              </button>
+            )}
           </div>
         ) : (
           <div className="flex gap-7">

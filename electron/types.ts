@@ -155,4 +155,4 @@ export type DownloadItem = {
   startedAt: number;
 };
 
-export type ToolResult = { ok: boolean; text: string };
+export type ToolResult = { ok: boolean; text: string; imageBase64?: string };

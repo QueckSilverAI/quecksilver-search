@@ -2,10 +2,10 @@ import { useCallback, useEffect, useState } from "react";
 
 export type ZoraPreset = "autonomous" | "balanced" | "cautious";
 export type ToolPermissionMode = "auto" | "ask";
-export type ZoraSettings = { preset: ZoraPreset; toolPermissions: Record<string, ToolPermissionMode> };
+export type ZoraSettings = { preset: ZoraPreset; toolPermissions: Record<string, ToolPermissionMode>; screenShareEnabled: boolean };
 export type ZoraToolCatalogEntry = { category: string; tier: "read" | "write"; description: string };
 
-const DEFAULT_SETTINGS: ZoraSettings = { preset: "autonomous", toolPermissions: {} };
+const DEFAULT_SETTINGS: ZoraSettings = { preset: "autonomous", toolPermissions: {}, screenShareEnabled: false };
 
 // Mirrors electron/zora-tool-catalog.ts's ZORA_PRESET_LABELS — kept as a
 // small duplicate here (not fetched over IPC) since it's static copy, same
@@ -55,5 +55,15 @@ export function useZoraSettings() {
     [api, refresh],
   );
 
-  return { settings, effective, catalog, setPreset, setToolPermission };
+  const setScreenShareEnabled = useCallback(
+    async (enabled: boolean) => {
+      if (!api) return;
+      setSettings((prev) => ({ ...prev, screenShareEnabled: enabled })); // optimistic, same as setPreset
+      await api.setScreenShareEnabled(enabled);
+      await refresh();
+    },
+    [api, refresh],
+  );
+
+  return { settings, effective, catalog, setPreset, setToolPermission, setScreenShareEnabled };
 }

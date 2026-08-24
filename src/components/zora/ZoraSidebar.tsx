@@ -1,7 +1,8 @@
-import { useEffect, useRef } from "react";
-import { Bookmark, Globe, MousePointerClick, PanelRightClose, SearchCheck, Square } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Bookmark, Globe, Info, MousePointerClick, PanelRightClose, ScreenShare, SearchCheck, Square } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useZoraChat } from "@/hooks/use-zora-chat";
+import { useZoraSettings } from "@/hooks/use-zora-settings";
 import { ZoraMascot } from "@/components/QueckSilverMarks";
 import { ZoraMessage } from "./ZoraMessage";
 import { ZoraChatInput } from "./ZoraChatInput";
@@ -30,7 +31,9 @@ export function ZoraSidebar({ onClose }: Props) {
     approveToolCall,
     denyToolCall,
   } = useZoraChat(session?.accessToken ?? null);
+  const { settings: zoraSettings, setScreenShareEnabled } = useZoraSettings();
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [showScreenShareInfo, setShowScreenShareInfo] = useState(false);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -42,13 +45,50 @@ export function ZoraSidebar({ onClose }: Props) {
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between px-1 pb-2">
         <ZoraModelSelector />
-        <button
-          onClick={onClose}
-          aria-label="Close sidebar"
-          className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-        >
-          <PanelRightClose className="h-4 w-4" />
-        </button>
+        <div className="flex items-center gap-1">
+          {/* zora-browser-integration-plan.md section 5 — off by default,
+              gates only the see_screen tool. The visibility indicator
+              (green dot) is deliberately always next to this exact
+              toggle, not tucked away in Settings, so it can't go unnoticed
+              while it's on. */}
+          <div className="relative flex items-center">
+            <button
+              onClick={() => setShowScreenShareInfo((v) => !v)}
+              aria-label="About screen sharing"
+              className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <Info className="h-3.5 w-3.5" />
+            </button>
+            {showScreenShareInfo && (
+              <div className="absolute right-0 top-7 z-10 w-56 rounded-xl border border-border bg-popover p-3 text-xs leading-relaxed text-muted-foreground shadow-lg">
+                When on, Zora can take screenshots of this page to actually see it — useful for anything text alone
+                can't tell it (layout, images, a canvas or video). This uses more usage (image tokens) than normal
+                chat.
+              </div>
+            )}
+          </div>
+          <button
+            onClick={() => void setScreenShareEnabled(!zoraSettings.screenShareEnabled)}
+            aria-pressed={zoraSettings.screenShareEnabled}
+            title={zoraSettings.screenShareEnabled ? "Screen sharing on — click to turn off" : "Screen sharing off — click to turn on"}
+            className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors ${
+              zoraSettings.screenShareEnabled
+                ? "bg-emerald-500/15 text-emerald-600"
+                : "text-muted-foreground hover:bg-muted hover:text-foreground"
+            }`}
+          >
+            {zoraSettings.screenShareEnabled && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />}
+            <ScreenShare className="h-3.5 w-3.5 shrink-0" />
+            {zoraSettings.screenShareEnabled ? "Sharing" : "Share screen"}
+          </button>
+          <button
+            onClick={onClose}
+            aria-label="Close sidebar"
+            className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <PanelRightClose className="h-4 w-4" />
+          </button>
+        </div>
       </div>
 
       <div ref={scrollRef} className="thin-scrollbar flex-1 space-y-4 overflow-y-auto px-1 py-2">
