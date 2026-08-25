@@ -1,16 +1,19 @@
 import { useEffect, useRef, useState } from "react";
-import { Bookmark, Globe, Info, MousePointerClick, PanelRightClose, ScreenShare, SearchCheck, Square } from "lucide-react";
+import { Bookmark, Globe, MousePointerClick, ScreenShare, SearchCheck } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useZoraChat } from "@/hooks/use-zora-chat";
 import { useZoraSettings } from "@/hooks/use-zora-settings";
 import { ZoraMascot } from "@/components/QueckSilverMarks";
 import { ZoraMessage } from "./ZoraMessage";
 import { ZoraChatInput } from "./ZoraChatInput";
-import { ZoraModelSelector } from "./ZoraModelSelector";
 import { ZoraToolApprovalCard } from "./ZoraToolApprovalCard";
+import { ZoraHopLimitCard } from "./ZoraHopLimitCard";
 import { ZoraAuditLog } from "./ZoraAuditLog";
 
-type Props = { onClose: () => void };
+// No onClose prop anymore — the Chat button in the main header (which
+// toggles zoraOpen in routes/index.tsx) is the only way to open/close
+// this now; a second close button inside the panel itself was redundant.
+type Props = Record<string, never>;
 
 const CAPABILITIES = [
   { icon: Globe, text: "Open tabs and navigate to URLs" },
@@ -19,55 +22,76 @@ const CAPABILITIES = [
   { icon: Bookmark, text: "Manage your bookmarks" },
 ];
 
-export function ZoraSidebar({ onClose }: Props) {
+// How long the "Connecting…" state shows before the real panel appears —
+// this component is only ever mounted while zoraOpen is true (routes/
+// index.tsx unmounts it entirely on close), so a plain useState(true)
+// here already re-triggers this on every single open, matching "always,
+// briefly" exactly without any extra plumbing. Not tied to a real network
+// wait (there isn't one worth waiting on here) — purely a deliberate,
+// consistent beat before the panel appears, same spirit as the Tor
+// connecting screen elsewhere in this app.
+const CONNECT_MS = 900;
+
+function ZoraConnecting() {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-4 px-8">
+      <ZoraMascot className="h-10 w-10 text-primary" />
+      <p className="text-[13px] font-medium text-muted-foreground">Connecting…</p>
+      <div className="h-1 w-full max-w-[160px] overflow-hidden rounded-full bg-muted">
+        <div
+          className="h-full rounded-full bg-primary"
+          style={{ animation: `zora-connect-fill ${CONNECT_MS}ms ease-out forwards` }}
+        />
+      </div>
+      <style>{`@keyframes zora-connect-fill { from { width: 0%; } to { width: 100%; } }`}</style>
+    </div>
+  );
+}
+
+export function ZoraSidebar(_props: Props) {
   const { session } = useAuth();
   const {
     messages,
     isLoading,
     statusText,
     pendingToolCall,
+    hopLimitReached,
     send,
     regenerate,
     stop,
     approveToolCall,
     denyToolCall,
+    continueFromLimit,
   } = useZoraChat(session?.accessToken ?? null);
   const { settings: zoraSettings, setScreenShareEnabled } = useZoraSettings();
   const scrollRef = useRef<HTMLDivElement | null>(null);
-  const [showScreenShareInfo, setShowScreenShareInfo] = useState(false);
+  const [connecting, setConnecting] = useState(true);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setConnecting(false), CONNECT_MS);
+    return () => clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages, isLoading, pendingToolCall]);
+  }, [messages, isLoading, pendingToolCall, hopLimitReached]);
+
+  if (connecting) return <ZoraConnecting />;
 
   const lastModelId = [...messages].reverse().find((m) => m.role === "model")?.id;
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between px-1 pb-2">
-        <ZoraModelSelector />
+      <div className="relative flex items-center justify-end px-1 pb-2">
+        {/* No title/model-label here anymore — the model picker moved into
+            ZoraChatInput's own composer, and a static "Zora" text label
+            next to it was redundant with the mascot itself. */}
         <div className="flex items-center gap-1">
           {/* zora-browser-integration-plan.md section 5 — off by default,
               gates only the see_screen tool. The visibility indicator
-              (green dot) is deliberately always next to this exact
-              toggle, not tucked away in Settings, so it can't go unnoticed
-              while it's on. */}
-          <div className="relative flex items-center">
-            <button
-              onClick={() => setShowScreenShareInfo((v) => !v)}
-              aria-label="About screen sharing"
-              className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-            >
-              <Info className="h-3.5 w-3.5" />
-            </button>
-            {showScreenShareInfo && (
-              <div className="absolute right-0 top-7 z-10 w-56 rounded-xl border border-border bg-popover p-3 text-xs leading-relaxed text-muted-foreground shadow-lg">
-                When on, Zora can take screenshots of this page to actually see it — useful for anything text alone
-                can't tell it (layout, images, a canvas or video). This uses more usage (image tokens) than normal
-                chat.
-              </div>
-            )}
-          </div>
+              (green dot) is deliberately always right on this toggle,
+              not tucked away in Settings, so it can't go unnoticed while
+              it's on. */}
           <button
             onClick={() => void setScreenShareEnabled(!zoraSettings.screenShareEnabled)}
             aria-pressed={zoraSettings.screenShareEnabled}
@@ -83,13 +107,6 @@ export function ZoraSidebar({ onClose }: Props) {
             {zoraSettings.screenShareEnabled ? "Sharing" : "Share screen"}
           </button>
           <ZoraAuditLog />
-          <button
-            onClick={onClose}
-            aria-label="Close sidebar"
-            className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          >
-            <PanelRightClose className="h-4 w-4" />
-          </button>
         </div>
       </div>
 
@@ -113,24 +130,13 @@ export function ZoraSidebar({ onClose }: Props) {
         {pendingToolCall && (
           <ZoraToolApprovalCard call={pendingToolCall} onApprove={approveToolCall} onDeny={denyToolCall} />
         )}
+        {hopLimitReached && <ZoraHopLimitCard onContinue={continueFromLimit} />}
         {isLoading && !pendingToolCall && (
           <p className="px-1 text-sm text-muted-foreground">{statusText ?? "Thinking…"}</p>
         )}
       </div>
-      <div className="flex items-center gap-2 pt-2">
-        <ZoraChatInput onSend={send} disabled={isLoading} />
-        {/* Immediate-stop (zora-browser-integration-plan.md section 6) —
-            only shown mid-turn, so it can't be mistaken for a second send
-            button the rest of the time. */}
-        {isLoading && (
-          <button
-            onClick={stop}
-            title="Stop"
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          >
-            <Square className="h-3.5 w-3.5 fill-current" />
-          </button>
-        )}
+      <div className="pt-2">
+        <ZoraChatInput onSend={send} disabled={isLoading} isLoading={isLoading} onStop={stop} />
       </div>
     </div>
   );

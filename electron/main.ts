@@ -1743,6 +1743,40 @@ function registerIpc() {
     const ctx = contextFor(e);
     if (ctx) clearAuditLog(ctx.win.id);
   });
+  // "+" button in ZoraChatInput.tsx — attaches an image directly (opens
+  // the OS file picker, not a drag-and-drop zone), read straight into
+  // base64 here since that's the exact shape search-chat needs to hand
+  // Gemini an inlineData part, same protocol see_screen already uses for
+  // tool-result images.
+  ipcMain.handle("zora:pickImageFile", async (e) => {
+    const ctx = contextFor(e);
+    const options: Electron.OpenDialogOptions = {
+      properties: ["openFile"],
+      filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "gif"] }],
+    };
+    const result = ctx ? await dialog.showOpenDialog(ctx.win, options) : await dialog.showOpenDialog(options);
+    const filePath = result.filePaths[0];
+    if (result.canceled || !filePath) return null;
+    const ext = path.extname(filePath).slice(1).toLowerCase();
+    const mimeType = ext === "jpg" ? "image/jpeg" : `image/${ext}`;
+    try {
+      const data = await fsPromises.readFile(filePath);
+      return { name: path.basename(filePath), mimeType, base64: data.toString("base64") };
+    } catch (err) {
+      console.error("[zora:pickImageFile] failed to read file:", err);
+      return null;
+    }
+  });
+  // Renderer-side "Copy" buttons (Zora's message actions among them) were
+  // using the web Clipboard API (navigator.clipboard.writeText) — that
+  // needs an explicit permission grant Electron doesn't hand out by
+  // default the way a real browser tab does, so it was failing silently.
+  // Electron's own clipboard module (already used for image-copy in the
+  // page context menu, see copyImage above) always works, no permission
+  // dance at all — just exposing it to the renderer too.
+  ipcMain.handle("clipboard:writeText", (_e, text: string) => {
+    clipboard.writeText(text);
+  });
   // Not window-scoped, same as the rest of Settings — one search engine
   // choice across every window/tab. Was localStorage before (see
   // src/lib/settings-store.ts's comment): quecksilver://newtab and

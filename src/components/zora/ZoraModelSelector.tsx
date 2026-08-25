@@ -1,15 +1,21 @@
-import { Check, ChevronDown } from "lucide-react";
+import { Check, ChevronUp } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 // Same four Zora variants as QueckSilver AI's ModelSelector.tsx
-// (VARIANT_LABEL: omni/Flash/FlashLite/Pro). UI-only for now — search-chat
-// always runs one fixed backend model; picking a variant here doesn't
-// change what actually answers yet (see the master plan, this is scoped
-// as a follow-up once search-chat supports a `variant` parameter).
-const VARIANTS = ["Zora-6.1", "Zora-Flash", "Zora-Flash-Lite", "Zora-Pro"] as const;
+// (VARIANT_LABEL: omni/Flash/FlashLite/Pro), renamed to this app's own
+// "-Arch" naming. UI-only for now — search-chat always runs one fixed
+// backend model; picking a variant here doesn't change what actually
+// answers yet (see the master plan, this is scoped as a follow-up once
+// search-chat supports a `variant` parameter).
+const VARIANTS = ["6.1-Arch", "6.1-Flash-Arch", "6.1-Flash-Lite-Arch", "6.1-Pro-Arch"] as const;
 
+// Lives inside ZoraChatInput's bottom row now (was the sidebar's own
+// header before) — same QueckSilver AI convention this was already
+// matching (model picker docked to the composer, not the page header),
+// just applied here too. Opens upward (dropdown sits above the button)
+// since the button itself is now near the bottom of the panel.
 export function ZoraModelSelector() {
-  const [selected, setSelected] = useState<(typeof VARIANTS)[number]>("Zora-6.1");
+  const [selected, setSelected] = useState<(typeof VARIANTS)[number]>("6.1-Flash-Lite-Arch");
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
 
@@ -26,13 +32,13 @@ export function ZoraModelSelector() {
     <div ref={ref} className="relative">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1 rounded-lg px-1.5 py-1 text-sm font-medium text-foreground transition-colors hover:bg-muted"
+        className="flex items-center gap-1 rounded-lg px-1.5 py-1 text-[12.5px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
       >
         {selected}
-        <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+        <ChevronUp className="h-3 w-3" />
       </button>
       {open && (
-        <div className="absolute left-0 top-full z-20 mt-1 w-40 overflow-hidden rounded-xl border border-border bg-card p-1 shadow-md">
+        <div className="absolute right-0 bottom-full z-20 mb-1 w-52 overflow-hidden rounded-xl border border-border bg-card p-1 shadow-md">
           {VARIANTS.map((v) => (
             <button
               key={v}

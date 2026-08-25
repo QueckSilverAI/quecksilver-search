@@ -163,6 +163,10 @@ type BrowserAPI = {
     getToolCatalog: () => Promise<Record<string, ZoraToolCatalogEntry>>;
     getAuditLog: () => Promise<AuditLogEntry[]>;
     clearAuditLog: () => Promise<void>;
+    pickImageFile: () => Promise<{ name: string; mimeType: string; base64: string } | null>;
+  };
+  clipboard: {
+    writeText: (text: string) => Promise<void>;
   };
   searchEngine: {
     get: () => Promise<string>;

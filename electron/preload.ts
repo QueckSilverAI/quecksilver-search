@@ -275,6 +275,9 @@ const tools = {
   execute: (name: string, args: Record<string, unknown>): Promise<ToolResult> =>
     ipcRenderer.invoke("tools:execute", name, args),
 };
+const clipboardApi = {
+  writeText: (text: string): Promise<void> => ipcRenderer.invoke("clipboard:writeText", text),
+};
 const zora = {
   // See electron/build-app-context.ts — called once per send() by
   // use-zora-chat.ts and attached to the request as `appContext`.
@@ -304,6 +307,8 @@ const zora = {
   getToolCatalog: (): Promise<Record<string, ZoraToolCatalogEntry>> => ipcRenderer.invoke("zora:getToolCatalog"),
   getAuditLog: (): Promise<AuditLogEntry[]> => ipcRenderer.invoke("zora:getAuditLog"),
   clearAuditLog: (): Promise<void> => ipcRenderer.invoke("zora:clearAuditLog"),
+  pickImageFile: (): Promise<{ name: string; mimeType: string; base64: string } | null> =>
+    ipcRenderer.invoke("zora:pickImageFile"),
 };
 const searchEngine = {
   get: (): Promise<string> => ipcRenderer.invoke("searchEngine:get"),
@@ -437,6 +442,7 @@ contextBridge.exposeInMainWorld("browserAPI", {
   window: windowControls,
   overlay,
   zora,
+  clipboard: clipboardApi,
   searchEngine,
   onionize,
 });
@@ -463,6 +469,7 @@ export type BrowserAPI = {
   window: typeof windowControls;
   overlay: typeof overlay;
   zora: typeof zora;
+  clipboard: typeof clipboardApi;
   searchEngine: typeof searchEngine;
   onionize: typeof onionize;
 };

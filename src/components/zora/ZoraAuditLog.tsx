@@ -19,8 +19,15 @@ export function ZoraAuditLog() {
     window.browserAPI?.zora.getAuditLog().then(setEntries);
   }, [open]);
 
+  // No relative wrapper here (unlike the first version) — the button and
+  // its popover are plain children of ZoraSidebar's header row, which is
+  // itself the `relative` positioning context now (see ZoraSidebar.tsx's
+  // comment on its screen-share info popover for why: anchoring to a
+  // small icon-sized box let a wide popover overflow past the sidebar's
+  // own left edge, where it's covered by the native tab view underneath
+  // rather than looking merely "cut off").
   return (
-    <div className="relative flex items-center">
+    <>
       <button
         onClick={() => setOpen((v) => !v)}
         aria-label="Recent actions"
@@ -30,7 +37,7 @@ export function ZoraAuditLog() {
         <History className="h-3.5 w-3.5" />
       </button>
       {open && (
-        <div className="absolute right-0 top-7 z-10 flex max-h-80 w-72 flex-col overflow-hidden rounded-xl border border-border bg-popover shadow-lg">
+        <div className="absolute right-0 top-7 z-10 flex max-h-80 w-64 flex-col overflow-hidden rounded-xl border border-border bg-popover shadow-lg">
           <div className="flex items-center justify-between border-b border-border px-3 py-2">
             <span className="text-xs font-semibold text-foreground">Recent actions</span>
             {entries.length > 0 && (
@@ -71,6 +78,6 @@ export function ZoraAuditLog() {
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }

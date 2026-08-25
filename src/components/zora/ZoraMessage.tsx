@@ -24,7 +24,11 @@ export function ZoraMessage({ message, isLastModelMessage, onRegenerate }: Props
 
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(message.text);
+      if (window.browserAPI) {
+        await window.browserAPI.clipboard.writeText(message.text);
+      } else {
+        await navigator.clipboard.writeText(message.text);
+      }
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
@@ -57,7 +61,12 @@ export function ZoraMessage({ message, isLastModelMessage, onRegenerate }: Props
   if (isUser) {
     return (
       <div className="flex flex-col items-end gap-1">
-        <div className="max-w-[85%] rounded-3xl bg-muted/80 px-4 py-3 text-sm text-foreground">{message.text}</div>
+        {message.imageDataUrl && (
+          <img src={message.imageDataUrl} alt="" className="max-h-48 max-w-[70%] rounded-2xl object-cover" />
+        )}
+        {message.text && (
+          <div className="max-w-[85%] rounded-3xl bg-muted/80 px-4 py-3 text-sm text-foreground">{message.text}</div>
+        )}
         {actions}
       </div>
     );

@@ -1390,14 +1390,6 @@ function Index() {
   };
 
   const autoSavedPillTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // TEMPORARY: Zora sidebar disabled for this release (real bugs found —
-  // chat input width, dropdown clipping, an instant "Something went
-  // wrong" error — see the conversation with Juri from 2026-08-24). Kept
-  // right here, not ripped out, so re-enabling is just flipping the
-  // button below back — zoraOpen/ZoraSidebar's actual rendering further
-  // down is untouched.
-  const [chatComingSoon, setChatComingSoon] = useState(false);
-  const chatComingSoonTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     const api = typeof window !== "undefined" ? window.browserAPI?.passwords : undefined;
     if (!api) return;
@@ -2254,27 +2246,19 @@ function Index() {
                   </button>
                 )}
                 {/* Chat pill — same pill design as the profile button (bg-card,
-                  h-8, matching shadow). TEMPORARILY back to "Coming soon"
-                  for this release — see the state comment above. The real
-                  onClick (setZoraOpen) and the whole sidebar are still
-                  right here in the codebase, just not wired to this
-                  button for now. */}
+                  h-8, matching shadow). Opens/closes the Zora sidebar
+                  (routes/index.tsx's zoraOpen state, rendered as a flex
+                  sibling to contentRef further down — see the comment
+                  there for why it has to live outside contentRef). */}
                 <button
-                  onClick={() => {
-                    setChatComingSoon(true);
-                    if (chatComingSoonTimer.current) clearTimeout(chatComingSoonTimer.current);
-                    chatComingSoonTimer.current = setTimeout(() => setChatComingSoon(false), 1400);
-                  }}
-                  className="ml-2 flex h-8 items-center gap-1.5 rounded-full bg-card pl-2 pr-3.5 text-[13px] font-semibold text-foreground shadow-[0_1px_3px_rgba(0,0,0,0.15)]"
+                  onClick={() => setZoraOpen((v) => !v)}
+                  aria-pressed={zoraOpen}
+                  className={`ml-2 flex h-8 items-center gap-1.5 rounded-full pl-2 pr-3.5 text-[13px] font-semibold shadow-[0_1px_3px_rgba(0,0,0,0.15)] ${
+                    zoraOpen ? "bg-[var(--brand)] text-white" : "bg-card text-foreground"
+                  }`}
                 >
-                  {chatComingSoon ? (
-                    <span className="px-0.5">Coming soon</span>
-                  ) : (
-                    <>
-                      <QueckSilverLogo className="h-4 w-4" style={{ color: "var(--brand)" }} />
-                      Chat
-                    </>
-                  )}
+                  <QueckSilverLogo className="h-4 w-4" style={{ color: zoraOpen ? "white" : "var(--brand)" }} />
+                  Chat
                 </button>
               </>
             )}
@@ -2534,8 +2518,10 @@ function Index() {
                 )}
               </div>
               {zoraOpen && (
-                <div className="flex h-full w-[380px] shrink-0 flex-col border-l border-[var(--chrome-border)] bg-background p-2">
-                  <ZoraSidebar onClose={() => setZoraOpen(false)} />
+                <div className="flex h-full w-[404px] shrink-0 flex-col p-2">
+                  <div className="flex h-full w-full flex-col rounded-2xl border border-[var(--chrome-border)] bg-background p-2 shadow-[0_2px_12px_rgba(0,0,0,0.08)]">
+                    <ZoraSidebar />
+                  </div>
                 </div>
               )}
               </div>

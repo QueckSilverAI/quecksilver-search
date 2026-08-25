@@ -7,7 +7,14 @@ export type ZoraMessage = {
   text: string;
   time: number;
   failed?: boolean;
+  // "+" button in ZoraChatInput.tsx — shown as a small thumbnail on the
+  // message itself so the person can see what they attached, alongside
+  // being sent to Gemini as real image input (see send()'s imageBase64
+  // param below).
+  imageDataUrl?: string;
 };
+
+export type ImageAttachment = { name: string; mimeType: string; base64: string };
 
 export type PendingToolCall = { name: string; args: Record<string, unknown> };
 
@@ -17,6 +24,14 @@ type SearchChatResponse =
   | { toolCall: { name: string; args: Record<string, unknown> }; contents: GeminiContent[]; usage: unknown }
   | { error: string };
 type ToolPermissionMode = "auto" | "ask";
+type ToolCallResponse = Extract<SearchChatResponse, { toolCall: unknown }>;
+type SentAppContext = {
+  controlCenterSettings: unknown;
+  openTabs: unknown;
+  windowMode: unknown;
+  activeTabDomain: string | null | undefined;
+  screenShareEnabled: boolean;
+} | null;
 
 const MAX_CLIENT_HOPS = 20;
 
@@ -77,7 +92,10 @@ function requiresApproval(
 // app, so when the server hands back a `toolCall` instead of a `reply`, we
 // execute it locally via window.browserAPI.tools.execute and POST the
 // result back with the echoed `contents` to continue the same turn —
-// looping until a final text reply comes back (or MAX_CLIENT_HOPS is hit).
+// looping until a final text reply comes back (or MAX_CLIENT_HOPS is hit,
+// see runHops below — that pauses with a "Continue" affordance rather
+// than failing the turn, since a genuinely long multi-tool task hitting a
+// round-number cap isn't an error, just a checkpoint).
 // web_search is a special case: it's bounced here too (so the UI can show
 // "Searching the web for ..."), but the server ignores whatever we send
 // back for it and redoes the real search itself — this client never touches
@@ -94,14 +112,23 @@ export function useZoraChat(accessToken: string | null) {
   const [isLoading, setIsLoading] = useState(false);
   const [statusText, setStatusText] = useState<string | null>(null);
   const [pendingToolCall, setPendingToolCall] = useState<PendingToolCall | null>(null);
+  const [hopLimitReached, setHopLimitReached] = useState(false);
   const idRef = useRef(0);
   const nextId = () => `m${++idRef.current}`;
   const approvalResolveRef = useRef<((approved: boolean) => void) | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   // read_page_aloud/stop_reading (Phase N) — the one tool result that's
   // played locally instead of being sent back to Gemini as input, see the
-  // result-handling branch inside send() below.
+  // result-handling branch inside runHops() below.
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  // What continueFromLimit() needs to pick up exactly where runHops() left
+  // off — the still-unexecuted toolCall (with its contents so far) plus
+  // the same appContext/permissions snapshot the rest of this turn used.
+  const hopLimitStateRef = useRef<{
+    response: ToolCallResponse;
+    appContext: SentAppContext;
+    permissions: Record<string, ToolPermissionMode>;
+  } | null>(null);
 
   useEffect(() => {
     return window.browserAPI?.zora.onStopReading(() => {
@@ -120,24 +147,58 @@ export function useZoraChat(accessToken: string | null) {
 
   const postJson = useCallback(
     async (body: Record<string, unknown>, appContext: unknown, signal: AbortSignal): Promise<SearchChatResponse> => {
-      const res = await fetch(SEARCH_CHAT_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          // No account needed to chat — falls back to the public anon key,
-          // same convention Supabase uses for unauthenticated calls.
-          Authorization: `Bearer ${accessToken ?? SUPABASE_ANON_KEY}`,
-          apikey: SUPABASE_ANON_KEY,
-        },
-        body: JSON.stringify({ ...body, appContext }),
-        signal,
-      });
-      if (!res.ok) {
-        const detail = await res.text().catch(() => "");
-        console.error(`[zora] search-chat ${res.status}:`, detail.slice(0, 500));
-        throw new Error(`search-chat failed: ${res.status}`);
+      // Retries transient failures (network blips, a cold-starting
+      // function, a brief upstream rate limit) up to twice with a short
+      // backoff before actually giving up — the exact symptom this was
+      // added for: a tool call succeeds, then the very next hop in the
+      // same turn intermittently fails and recovers seconds later on its
+      // own. Never retries a definite failure (4xx other than 429) —
+      // retrying a bad request or an auth problem wouldn't fix it, just
+      // delay showing the real error.
+      let lastError: unknown;
+      for (let attempt = 0; attempt <= 2; attempt++) {
+        if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+        try {
+          const res = await fetch(SEARCH_CHAT_URL, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              // No account needed to chat — falls back to the public anon key,
+              // same convention Supabase uses for unauthenticated calls.
+              Authorization: `Bearer ${accessToken ?? SUPABASE_ANON_KEY}`,
+              apikey: SUPABASE_ANON_KEY,
+            },
+            body: JSON.stringify({ ...body, appContext }),
+            signal,
+          });
+          if (!res.ok) {
+            const detail = await res.text().catch(() => "");
+            console.error(`[zora] search-chat ${res.status}:`, detail.slice(0, 500));
+            const isTransient = res.status === 429 || res.status >= 500;
+            if (isTransient && attempt < 2) {
+              lastError = new Error(`search-chat failed: ${res.status}`);
+              await new Promise((r) => setTimeout(r, 600 * (attempt + 1)));
+              continue;
+            }
+            throw new Error(`search-chat failed: ${res.status}`);
+          }
+          return (await res.json()) as SearchChatResponse;
+        } catch (e) {
+          if (signal.aborted || (e instanceof Error && e.name === "AbortError")) throw e;
+          // A network-level failure (e.g. "Failed to fetch" — no HTTP
+          // response at all, not even a 5xx) is exactly as transient as a
+          // 5xx, and just as worth one retry.
+          const isHttpError = e instanceof Error && e.message.startsWith("search-chat failed:");
+          if (!isHttpError && attempt < 2) {
+            console.error(`[zora] search-chat network error (attempt ${attempt + 1}):`, e);
+            lastError = e;
+            await new Promise((r) => setTimeout(r, 600 * (attempt + 1)));
+            continue;
+          }
+          throw e;
+        }
       }
-      return (await res.json()) as SearchChatResponse;
+      throw lastError;
     },
     [accessToken],
   );
@@ -162,15 +223,123 @@ export function useZoraChat(accessToken: string | null) {
     approvalResolveRef.current = null;
   }, []);
 
-  const send = useCallback(
-    async (rawText: string) => {
-      const text = rawText.trim();
-      if (!text || isLoading) return;
+  // Runs up to MAX_CLIENT_HOPS tool-execute-then-continue round trips
+  // starting from `startResponse`. Returns a final `reply`/`error`
+  // response once the model stops calling tools, OR — if the cap is hit
+  // while a toolCall is still pending — the unexecuted ToolCallResponse
+  // for continueFromLimit() to pick up later, distinguished from a normal
+  // in-progress toolCall by the caller checking hops against the cap.
+  const runHops = useCallback(
+    async (
+      startResponse: SearchChatResponse,
+      appContext: SentAppContext,
+      permissions: Record<string, ToolPermissionMode>,
+      abort: AbortController,
+    ): Promise<{ limitReached: true; pending: ToolCallResponse } | { limitReached: false; response: SearchChatResponse }> => {
+      let response = startResponse;
+      let hops = 0;
 
-      const userMsg: ZoraMessage = { id: nextId(), role: "user", text, time: Date.now() };
+      while ("toolCall" in response && hops < MAX_CLIENT_HOPS) {
+        if (abort.signal.aborted) return { limitReached: false, response };
+        hops++;
+        const { name, args } = response.toolCall;
+
+        let result: { ok: boolean; text: string; imageBase64?: string; audioBase64?: string; audioMimeType?: string };
+        // These four are resolved entirely server-side (web_search via
+        // Gemini grounding; remember_preference/fact_check/find_coupon_codes
+        // the same way, see supabase/functions/search-chat/index.ts) —
+        // the client never actually executes them, just bounces an empty
+        // placeholder so the loop continues.
+        const isServerResolved = SERVER_RESOLVED_TOOLS.has(name);
+        if (requiresApproval(name, permissions, appContext?.activeTabDomain)) {
+          setStatusText(null);
+          const approved = await waitForApproval({ name, args });
+          if (abort.signal.aborted) return { limitReached: false, response };
+          result = approved
+            ? isServerResolved
+              ? { ok: true, text: "" }
+              : window.browserAPI
+                ? await window.browserAPI.tools.execute(name, args)
+                : { ok: false, text: "Browser tools aren't available outside the desktop app." }
+            : { ok: false, text: "The person declined to run this tool. Don't retry it — ask what they'd like instead." };
+        } else {
+          setStatusText(statusFor(name, args));
+          result = isServerResolved
+            ? { ok: true, text: "" } // server redoes the real thing itself, see postJson comment above
+            : window.browserAPI
+              ? await window.browserAPI.tools.execute(name, args)
+              : { ok: false, text: "Browser tools aren't available outside the desktop app." };
+        }
+
+        // read_page_aloud's audio is for the person to actually hear —
+        // played locally right here, never forwarded to Gemini (unlike
+        // imageBase64, which the server turns into real model input).
+        if (result.audioBase64) {
+          audioRef.current?.pause();
+          const audio = new Audio(`data:${result.audioMimeType ?? "audio/wav"};base64,${result.audioBase64}`);
+          audioRef.current = audio;
+          void audio.play().catch(() => {});
+        }
+
+        response = await postJson(
+          { contents: response.contents, toolResult: { name, response: result.text, imageBase64: result.imageBase64 } },
+          appContext,
+          abort.signal,
+        );
+      }
+
+      if ("toolCall" in response) {
+        return { limitReached: true, pending: response };
+      }
+      return { limitReached: false, response };
+    },
+    [postJson, waitForApproval],
+  );
+
+  // Shared by send() and continueFromLimit() — everything that happens
+  // once runHops() actually stops (a real reply, a hard error, or the hop
+  // cap hit again).
+  const finishTurn = useCallback(
+    (
+      result: Awaited<ReturnType<typeof runHops>>,
+      appContext: SentAppContext,
+      permissions: Record<string, ToolPermissionMode>,
+      abort: AbortController,
+    ) => {
+      setStatusText(null);
+      if (abort.signal.aborted) return;
+
+      if (result.limitReached) {
+        hopLimitStateRef.current = { response: result.pending, appContext, permissions };
+        setHopLimitReached(true);
+        return;
+      }
+      if ("reply" in result.response) {
+        applyMessages((prev) => [...prev, { id: nextId(), role: "model", text: result.response.reply, time: Date.now() }]);
+      } else {
+        throw new Error("error" in result.response ? result.response.error : "unresolved tool loop");
+      }
+    },
+    [applyMessages],
+  );
+
+  const send = useCallback(
+    async (rawText: string, attachment?: ImageAttachment) => {
+      const text = rawText.trim();
+      if ((!text && !attachment) || isLoading) return;
+
+      const userMsg: ZoraMessage = {
+        id: nextId(),
+        role: "user",
+        text,
+        time: Date.now(),
+        imageDataUrl: attachment ? `data:${attachment.mimeType};base64,${attachment.base64}` : undefined,
+      };
       const historyBefore = messagesRef.current.map((m) => ({ role: m.role, text: m.text }));
       applyMessages((prev) => [...prev, userMsg]);
       setIsLoading(true);
+      setHopLimitReached(false);
+      hopLimitStateRef.current = null;
       const abort = new AbortController();
       abortRef.current = abort;
 
@@ -181,7 +350,7 @@ export function useZoraChat(accessToken: string | null) {
         // supabase/functions/search-chat/index.ts for which fields it reads.
         const fullAppContext = window.browserAPI ? await window.browserAPI.zora.getAppContext() : null;
         const zoraSettings = window.browserAPI ? await window.browserAPI.zora.getSettings() : null;
-        const appContext = fullAppContext
+        const appContext: SentAppContext = fullAppContext
           ? {
               controlCenterSettings: fullAppContext.controlCenterSettings,
               openTabs: fullAppContext.openTabs,
@@ -195,66 +364,18 @@ export function useZoraChat(accessToken: string | null) {
         // resolveAllToolPermissions.
         const permissions = window.browserAPI ? await window.browserAPI.zora.getEffectivePermissions() : {};
 
-        let response = await postJson({ prompt: text, history: historyBefore }, appContext, abort.signal);
-        let hops = 0;
-
-        while ("toolCall" in response && hops < MAX_CLIENT_HOPS) {
-          if (abort.signal.aborted) break;
-          hops++;
-          const { name, args } = response.toolCall;
-
-          let result: { ok: boolean; text: string; imageBase64?: string; audioBase64?: string; audioMimeType?: string };
-          // These three are resolved entirely server-side (web_search via
-          // Gemini grounding; remember_preference/fact_check/find_coupon_codes
-          // the same way, see supabase/functions/search-chat/index.ts) —
-          // the client never actually executes them, just bounces an empty
-          // placeholder so the loop continues.
-          const isServerResolved = SERVER_RESOLVED_TOOLS.has(name);
-          if (requiresApproval(name, permissions, appContext?.activeTabDomain)) {
-            setStatusText(null);
-            const approved = await waitForApproval({ name, args });
-            if (abort.signal.aborted) break;
-            result = approved
-              ? isServerResolved
-                ? { ok: true, text: "" }
-                : window.browserAPI
-                  ? await window.browserAPI.tools.execute(name, args)
-                  : { ok: false, text: "Browser tools aren't available outside the desktop app." }
-              : { ok: false, text: "The person declined to run this tool. Don't retry it — ask what they'd like instead." };
-          } else {
-            setStatusText(statusFor(name, args));
-            result = isServerResolved
-              ? { ok: true, text: "" } // server redoes the real thing itself, see postJson comment above
-              : window.browserAPI
-                ? await window.browserAPI.tools.execute(name, args)
-                : { ok: false, text: "Browser tools aren't available outside the desktop app." };
-          }
-
-          // read_page_aloud's audio is for the person to actually hear —
-          // played locally right here, never forwarded to Gemini (unlike
-          // imageBase64, which the server turns into real model input).
-          if (result.audioBase64) {
-            audioRef.current?.pause();
-            const audio = new Audio(`data:${result.audioMimeType ?? "audio/wav"};base64,${result.audioBase64}`);
-            audioRef.current = audio;
-            void audio.play().catch(() => {});
-          }
-
-          response = await postJson(
-            { contents: response.contents, toolResult: { name, response: result.text, imageBase64: result.imageBase64 } },
-            appContext,
-            abort.signal,
-          );
-        }
-
-        setStatusText(null);
-        if (abort.signal.aborted) return;
-
-        if ("reply" in response) {
-          applyMessages((prev) => [...prev, { id: nextId(), role: "model", text: response.reply, time: Date.now() }]);
-        } else {
-          throw new Error("error" in response ? response.error : "unresolved tool loop");
-        }
+        const initial = await postJson(
+          {
+            prompt: text || "What do you see in this image?",
+            history: historyBefore,
+            imageBase64: attachment?.base64,
+            imageMimeType: attachment?.mimeType,
+          },
+          appContext,
+          abort.signal,
+        );
+        const result = await runHops(initial, appContext, permissions, abort);
+        finishTurn(result, appContext, permissions, abort);
       } catch (e) {
         if (abort.signal.aborted) {
           // Person hit stop — the partial turn just ends here, no error
@@ -265,9 +386,18 @@ export function useZoraChat(accessToken: string | null) {
         }
         console.error("[zora] send failed:", e);
         setStatusText(null);
+        // A specific reason (rather than always the same generic
+        // sentence) — helps tell "this is expected, wait and retry" (a
+        // transient network/rate-limit blip that just wasn't recoverable
+        // within postJson's own retries) apart from something actually
+        // broken worth reporting.
+        const reason =
+          e instanceof Error && e.message.startsWith("search-chat failed:")
+            ? `Something went wrong (${e.message.replace("search-chat failed: ", "error ")}). Try again in a moment.`
+            : "Something went wrong, try again.";
         applyMessages((prev) => [
           ...prev,
-          { id: nextId(), role: "model", text: "Something went wrong, try again.", time: Date.now(), failed: true },
+          { id: nextId(), role: "model", text: reason, time: Date.now(), failed: true },
         ]);
       } finally {
         setIsLoading(false);
@@ -275,8 +405,41 @@ export function useZoraChat(accessToken: string | null) {
         abortRef.current = null;
       }
     },
-    [isLoading, applyMessages, postJson, waitForApproval],
+    [isLoading, applyMessages, postJson, runHops, finishTurn],
   );
+
+  // "Continue" button on the tool-limit card (QueckSilver AI /code's own
+  // pattern for the same situation) — picks up the exact unexecuted
+  // toolCall runHops() stopped on, not a fresh turn, so nothing about
+  // what the model was doing gets lost or repeated.
+  const continueFromLimit = useCallback(async () => {
+    const saved = hopLimitStateRef.current;
+    if (!saved || isLoading) return;
+    setHopLimitReached(false);
+    hopLimitStateRef.current = null;
+    setIsLoading(true);
+    const abort = new AbortController();
+    abortRef.current = abort;
+    try {
+      const result = await runHops(saved.response, saved.appContext, saved.permissions, abort);
+      finishTurn(result, saved.appContext, saved.permissions, abort);
+    } catch (e) {
+      if (abort.signal.aborted) {
+        setStatusText(null);
+        return;
+      }
+      console.error("[zora] continue failed:", e);
+      setStatusText(null);
+      applyMessages((prev) => [
+        ...prev,
+        { id: nextId(), role: "model", text: "Something went wrong, try again.", time: Date.now(), failed: true },
+      ]);
+    } finally {
+      setIsLoading(false);
+      setPendingToolCall(null);
+      abortRef.current = null;
+    }
+  }, [isLoading, runHops, finishTurn, applyMessages]);
 
   // Immediate-stop (zora-browser-integration-plan.md section 6) — aborts
   // whatever's in flight right now. If a tool approval card is showing,
@@ -303,10 +466,12 @@ export function useZoraChat(accessToken: string | null) {
     isLoading,
     statusText,
     pendingToolCall,
+    hopLimitReached,
     send,
     regenerate,
     stop,
     approveToolCall,
     denyToolCall,
+    continueFromLimit,
   };
 }
