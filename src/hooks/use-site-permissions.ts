@@ -37,6 +37,10 @@ export function useSitePermissions() {
     },
     [api, refresh],
   );
+  // Doesn't touch the entry list itself (the allow/block choices stay as
+  // they are) — this only clears what the site actually stored on disk,
+  // so no refresh() needed.
+  const clearSiteData = useCallback((domain: string) => api?.clearSiteData(domain), [api]);
 
-  return { entries, set, remove, isElectron: Boolean(api) };
+  return { entries, set, remove, clearSiteData, isElectron: Boolean(api) };
 }

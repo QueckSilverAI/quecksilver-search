@@ -37,6 +37,22 @@ type Props = {
   onClose: (id: string) => void;
   onToggleMute: (id: string) => void;
   onReorder: (newOrder: string[]) => void;
+  // Dragging a tab far enough vertically away from the strip tears it out
+  // into its own new window (see DETACH_VERTICAL_THRESHOLD below) —
+  // screenX/screenY are where it was dropped, in OS screen coordinates,
+  // so the new window can be positioned right there. Optional: vertical-
+  // mode's own tab list (VerticalTabsSidebar.tsx) doesn't wire this up,
+  // so passing it there is a no-op rather than a hard requirement.
+  onDetachToNewWindow?: (tabId: string, screenX: number, screenY: number) => void;
+  // Fired whenever the "armed to tear off" state changes (see
+  // DETACH_VERTICAL_THRESHOLD below), and unconditionally with false when
+  // a drag ends. The native view for whichever tab is active always
+  // renders ABOVE this component's own DOM regardless of z-index (see
+  // minimal-browser's own architecture notes) — without hiding it while
+  // armed, a tab dragged down far enough disappears the instant it
+  // crosses into the actual page content underneath. Optional for the
+  // same reason onDetachToNewWindow is.
+  onDragArmedChange?: (armed: boolean) => void;
   onNewTab: () => void;
   // Opens the tabs-menu dropdown (vertical-tabs toggle + open-tabs list) —
   // replaced the old plain "open quecksilver.ch" logo button entirely.
@@ -165,6 +181,8 @@ export function TabStrip({
   onClose,
   onToggleMute,
   onReorder,
+  onDetachToNewWindow,
+  onDragArmedChange,
   onNewTab,
   onOpenTabsMenu,
   onToggleGroupCollapse,
@@ -200,9 +218,22 @@ export function TabStrip({
   const dragInfo = useRef<{
     id: string;
     startX: number;
+    startY: number;
     originIndex: number;
     shift: number;
     slotWidth: number;
+    // The tab's own on-screen box at the moment the drag started — needed
+    // once armed switches it to position:fixed below, since a fixed
+    // element no longer has a normal in-flow position for a transform to
+    // be relative TO; left/top have to be set explicitly instead.
+    initialRect: { left: number; top: number; width: number; height: number };
+    // True once the pointer has travelled far enough vertically away from
+    // the strip that releasing now tears the tab out into its own window
+    // (see DETACH_VERTICAL_THRESHOLD below) instead of just reordering it.
+    // Kept on the ref (read synchronously in onDragMove/endDrag) rather
+    // than component state — state would mean waiting on a re-render on
+    // every single pointermove, same reasoning as orderRef above.
+    armed: boolean;
   } | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
 
@@ -308,6 +339,7 @@ export function TabStrip({
     if (e.button !== 0) return;
     const el = tabRefs.current.get(tabId);
     if (!el) return;
+    console.log("[tab-detach] beginDrag", tabId);
     // A tab has to be the active one to be draggable in any meaningful way
     // (it's the one the pointer math treats as "here"), so grabbing a
     // background tab selects it immediately, same moment the drag starts.
@@ -316,16 +348,20 @@ export function TabStrip({
     // compatibility click event per the Pointer Events spec, which is what
     // onClick below relies on to select the tab on a plain (non-drag) click.
     el.setPointerCapture(e.pointerId);
+    const rect = el.getBoundingClientRect();
     dragInfo.current = {
       id: tabId,
       startX: e.clientX,
+      startY: e.clientY,
       originIndex: orderRef.current.indexOf(tabId),
       shift: 0,
       // Measured live rather than reusing the render's `tabWidth` estimate:
       // actual per-tab width is whatever flexbox settled on, which can
       // differ slightly from the JS estimate right at the min/max clamp —
       // using the real box keeps the drag transform pixel-accurate.
-      slotWidth: el.getBoundingClientRect().width,
+      slotWidth: rect.width,
+      initialRect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+      armed: false,
     };
     setDraggingId(tabId);
     el.style.transition = "none";
@@ -334,10 +370,80 @@ export function TabStrip({
     el.style.boxShadow = "0 4px 14px rgba(0,0,0,0.18)";
   }
 
+  // How far (in px) the pointer has to travel vertically away from the
+  // strip before a release tears the tab out into its own window instead
+  // of just reordering it — same idea as Chrome/Edge's own tear-off
+  // gesture. Purely vertical, not total distance: a normal reorder drag
+  // can and does travel a long way horizontally without ever leaving the
+  // strip, so only Y is a meaningful "the person is pulling this off the
+  // strip" signal.
+  const DETACH_VERTICAL_THRESHOLD = 45;
+
+  // Switches the dragged tab between two entirely different positioning
+  // modes: normal in-flow (position:relative, transform:translateX — the
+  // plain reorder path, unchanged from before) while under the vertical
+  // threshold, and position:fixed once armed. The fixed switch is NOT
+  // just cosmetic — the strip's own row has overflow-x-auto (see its own
+  // comment further down), and CSS makes that implicitly clip the Y axis
+  // too (a non-"visible" overflow-x forces overflow-y to "auto" as well,
+  // per spec), so a plain translateY here would get silently clipped at
+  // the row's own edge instead of visibly floating below it. A
+  // position:fixed element is positioned against the viewport and paints
+  // in its own layer, unaffected by any ancestor's overflow — which is
+  // exactly what's needed for the tab to actually look like it's coming
+  // off the strip rather than just disappearing at the boundary.
+  function setArmedVisual(el: HTMLDivElement, info: NonNullable<typeof dragInfo.current>, dx: number, dy: number) {
+    el.style.position = "fixed";
+    el.style.left = `${info.initialRect.left}px`;
+    el.style.top = `${info.initialRect.top}px`;
+    el.style.width = `${info.initialRect.width}px`;
+    el.style.height = `${info.initialRect.height}px`;
+    el.style.margin = "0";
+    el.style.transform = `translate(${dx}px, ${dy}px) scale(0.94)`;
+    el.style.opacity = "0.8";
+  }
+
   function onDragMove(tabId: string, e: React.PointerEvent<HTMLDivElement>) {
     const info = dragInfo.current;
     if (!info || info.id !== tabId) return;
+    const totalDy = e.clientY - info.startY;
+    // Tearing off the LAST remaining tab in a window would just be a
+    // convoluted way to move the window itself — same as a real browser,
+    // that's not offered.
+    const tab = tabsById.get(tabId);
+    const detachable = tabs.length > 1 && !!tab;
+    console.log("[tab-detach] onDragMove", { totalDy, detachable, tabsLength: tabs.length, isHome: tab?.isHome, isSettings: tab?.isSettings });
+    const armed = detachable && Math.abs(totalDy) > DETACH_VERTICAL_THRESHOLD;
+    const wasArmed = info.armed;
+    info.armed = armed;
+    if (armed !== wasArmed) {
+      console.log("[tab-detach] armed changed:", armed, { totalDy, detachable });
+      onDragArmedChange?.(armed);
+    }
+    const el = tabRefs.current.get(tabId);
     const totalDx = e.clientX - info.startX;
+    if (armed) {
+      if (el) {
+        if (!wasArmed) el.style.transition = "transform 80ms ease, opacity 80ms ease";
+        setArmedVisual(el, info, totalDx, totalDy);
+      }
+      return;
+    }
+    if (wasArmed && el) {
+      // Coming back inside the threshold — drop back to the normal
+      // in-flow reorder mode. Clearing left/top/width/height/margin lets
+      // flexbox resume owning this tab's box; the translateX assignment
+      // just below immediately overwrites the transform this frame, so
+      // there's no visible snap back to an unrotated/unscaled state first.
+      el.style.transition = "none";
+      el.style.position = "relative";
+      el.style.left = "";
+      el.style.top = "";
+      el.style.width = "";
+      el.style.height = "";
+      el.style.margin = "";
+      el.style.opacity = "";
+    }
     const rawShift = totalDx / info.slotWidth;
     // Hysteresis around each slot boundary: the raw threshold sits exactly
     // at ±0.5 tab-widths, so a pointer holding still right there (or jittery
@@ -368,7 +474,6 @@ export function TabStrip({
     // the cursor regardless of how many times it's been re-slotted.
     const indexDelta = newIndex - info.originIndex;
     const remaining = totalDx - indexDelta * info.slotWidth;
-    const el = tabRefs.current.get(tabId);
     if (el) el.style.transform = `translateX(${remaining}px)`;
   }
 
@@ -386,10 +491,32 @@ export function TabStrip({
       el.style.transform = "";
       el.style.zIndex = "";
       el.style.position = "";
+      el.style.left = "";
+      el.style.top = "";
+      el.style.width = "";
+      el.style.height = "";
+      el.style.margin = "";
       el.style.boxShadow = "";
+      el.style.opacity = "";
     }
+    const wasArmed = info.armed;
     dragInfo.current = null;
     setDraggingId(null);
+    // Unconditional, regardless of how the drag ended — armed's own
+    // "false" is what tells the visibility effect in routes/index.tsx to
+    // go back to whatever it should actually be right now (see
+    // onDragArmedChange's own doc comment on why that's not just a bare
+    // setVisible(true) here).
+    onDragArmedChange?.(false);
+    console.log("[tab-detach] endDrag", tabId, "wasArmed:", wasArmed, "hasCallback:", !!onDetachToNewWindow);
+    if (wasArmed) {
+      // Screen coordinates (not viewport-relative clientX/Y) — the new
+      // window this opens is a separate OS window, positioned by main.ts
+      // from wherever the tab was actually dropped on the display.
+      console.log("[tab-detach] calling onDetachToNewWindow", tabId, e.screenX, e.screenY);
+      onDetachToNewWindow?.(tabId, e.screenX, e.screenY);
+      return;
+    }
     const propOrder = tabs.map((t) => t.id);
     const changed =
       orderRef.current.length !== propOrder.length ||

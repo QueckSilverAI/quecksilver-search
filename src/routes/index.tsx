@@ -83,8 +83,33 @@ import type {
 import { TAB_GROUP_COLORS } from "@/overlay/types";
 import { useWindowControls } from "@/hooks/use-window-controls";
 import { parseUrlBarInput, isLikelyDirectUrl } from "@/lib/url-bar";
+import {
+  getUrlDraft,
+  setUrlDraftStored,
+  clearUrlDraft,
+  getHomeSearchDraft,
+  setHomeSearchDraftStored,
+  clearHomeSearchDraft,
+  clearAllDraftsForTab,
+} from "@/lib/url-draft-store";
 
 export const Route = createFileRoute("/")({
+  // This app has no public visitors to serve fast SSR HTML to or make
+  // crawlable — every load is Electron's OWN chrome UI window rendering
+  // itself, always with a real window.browserAPI available a moment
+  // later. SSR was actively counterproductive here: the server has no
+  // access to that API at all, so it always rendered the same
+  // Electron-unaware fallback state (an empty tab list, defaulting to
+  // "New Tab") regardless of what the window was actually supposed to
+  // show — most visibly on a freshly torn-off tab, where the server-
+  // rendered "New Tab" flash before React caught up and re-rendered with
+  // the real, already-loaded page looked exactly like the window
+  // reopening and then loading the URL, even though no navigation ever
+  // happened. ssr: false skips server rendering for this route entirely,
+  // so the first thing painted is the client's own correct render
+  // instead of a guaranteed-wrong one that gets thrown away a moment
+  // later.
+  ssr: false,
   head: () => ({
     meta: [
       { title: "QueckSilver Arch" },
@@ -140,6 +165,7 @@ function Index() {
     closeTab,
     switchTab,
     reorderTabs,
+    detachToWindow,
     navigate,
     goBack,
     goForward,
@@ -1203,7 +1229,25 @@ function Index() {
   // overlay's own live overlay.update effect keeping it current.
   const tabsRef = useRef(tabs);
   tabsRef.current = tabs;
+  // Tracks the PREVIOUS activeId so the effect below can tell "a real
+  // navigation landed on the tab we're already looking at" (should still
+  // overwrite the draft with the new URL, same as before) apart from "we
+  // just switched to a different tab" (should restore whatever was left
+  // sitting in that other tab's own draft, if anything, instead of
+  // resetting it) — see url-draft-store.ts for why that draft survives
+  // across the switch in the first place.
+  const prevActiveIdRef = useRef(activeId);
   useEffect(() => {
+    const switchedTab = prevActiveIdRef.current !== activeId;
+    prevActiveIdRef.current = activeId;
+    if (editingUrlRef.current) return;
+    if (switchedTab) {
+      const saved = getUrlDraft(activeId);
+      if (saved) {
+        setUrlDraft(saved);
+        return;
+      }
+    }
     // Simple on purpose: only ever actively BLANK the field for the two
     // clear, stable states (home/settings). For every other update,
     // either it's a real, usable URL (show it) or it's some transient
@@ -1213,7 +1257,6 @@ function Index() {
     // Trying to actively chase down and blank every transient value was
     // the actual bug — this only ever adds text, never removes it, except
     // for the two real "should be blank" cases.
-    if (editingUrlRef.current) return;
     if (isHome || isSettings) {
       setUrlDraft("");
       return;
@@ -1221,11 +1264,43 @@ function Index() {
     const url = activeTab?.url ?? "";
     if (!url || url === HOME_URL || url === SETTINGS_URL || url === "about:blank") return;
     setUrlDraft(url);
-  }, [activeTab?.url, isHome]);
+  }, [activeId, activeTab?.url, isHome]);
 
   const secondaryIsHome = secondaryTab?.isHome ?? false;
   const secondaryIsSettings = secondaryTab?.isSettings ?? false;
 
+  // homeUrlDraft/secondaryHomeUrlDraft (the Start page's own centered
+  // search bar — separate field from the header address bar above) are
+  // single, lifted pieces of state shared by whichever Home tab happens
+  // to be showing, so on their own a half-typed search silently followed
+  // you to a DIFFERENT Home tab instead of staying with the tab it was
+  // typed into. Re-seeding from this tab's own stored draft (or blanking
+  // if it never had one) every time the primary/secondary Home tab
+  // actually changes is what keeps each Home tab's search box genuinely
+  // its own.
+  const prevHomeTabIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const tabId = isHome ? activeId : null;
+    if (prevHomeTabIdRef.current === tabId) return;
+    prevHomeTabIdRef.current = tabId;
+    setHomeUrlDraft(tabId ? getHomeSearchDraft(tabId) : "");
+  }, [activeId, isHome]);
+  const prevSecondaryHomeTabIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const tabId = secondaryIsHome ? secondaryId : null;
+    if (prevSecondaryHomeTabIdRef.current === tabId) return;
+    prevSecondaryHomeTabIdRef.current = tabId;
+    setSecondaryHomeUrlDraft(tabId ? getHomeSearchDraft(tabId) : "");
+  }, [secondaryId, secondaryIsHome]);
+
+  // Set true for the moment a dragged tab is "armed" to tear off (see
+  // TabStrip.tsx's onDragArmedChange) — folded into the SAME visibility
+  // effect below rather than a separate setVisible() call, specifically
+  // so restoring it afterward always falls back to whatever isHome/
+  // isSettings actually says at that moment, instead of a hardcoded
+  // setVisible(true) that could wrongly re-show a native view over the
+  // Start/Settings page if that's what's active by then.
+  const [tabDragArmed, setTabDragArmed] = useState(false);
   useEffect(() => {
     if (secondaryId) {
       // In split view either half might be the only one that actually
@@ -1234,11 +1309,11 @@ function Index() {
       // content is needed at all right now.
       const leftNeedsNative = !(isHome || isSettings);
       const rightNeedsNative = !(secondaryIsHome || secondaryIsSettings);
-      setVisible(leftNeedsNative || rightNeedsNative);
+      setVisible(!tabDragArmed && (leftNeedsNative || rightNeedsNative));
     } else {
-      setVisible(!isHome && !isSettings);
+      setVisible(!tabDragArmed && !isHome && !isSettings);
     }
-  }, [isHome, isSettings, secondaryId, secondaryIsHome, secondaryIsSettings, setVisible]);
+  }, [isHome, isSettings, secondaryId, secondaryIsHome, secondaryIsSettings, setVisible, tabDragArmed]);
 
   // chromeHidden is an explicit dependency here (not just relying on the
   // ResizeObserver alone) so bounds are force-recalculated the instant the
@@ -1551,6 +1626,12 @@ function Index() {
     // tab is no longer "home" but hasn't reported the new URL yet either,
     // during which the address bar had nothing correct to show at all.
     if (target !== HOME_URL) setUrlDraft(target);
+    // A submitted value isn't a pending draft anymore — it's about to
+    // become the real URL, so drop whatever was stored (this fires for
+    // both the header bar's Enter and the Start page's own search bar)
+    // rather than let it linger and get wrongly restored on some later
+    // tab switch.
+    clearAllDraftsForTab(activeId);
     if (activeId) navigate(activeId, target);
     else newTab(target === HOME_URL ? undefined : target);
     setEditingUrl(false);
@@ -1585,11 +1666,13 @@ function Index() {
         ].slice(0, 20),
       );
     }
+    clearAllDraftsForTab(id);
     closeTab(id);
   };
 
   const openBookmark = (url: string, targetId: string | null = activeId) => {
     if (targetId === activeId && url !== HOME_URL) setUrlDraft(url);
+    clearAllDraftsForTab(targetId);
     if (targetId) navigate(targetId, url);
     else newTab(url);
   };
@@ -1663,6 +1746,8 @@ function Index() {
           onClose={(id) => handleCloseTab(id)}
           onToggleMute={(id) => window.browserAPI?.tabs.toggleMute(id)}
           onReorder={(newOrder) => reorderTabs(newOrder)}
+          onDetachToNewWindow={(id, screenX, screenY) => detachToWindow(id, screenX, screenY)}
+          onDragArmedChange={setTabDragArmed}
           onNewTab={() => newTab()}
           onOpenTabsMenu={(rect) =>
             window.browserAPI?.overlay.open(
@@ -1861,11 +1946,13 @@ function Index() {
                     };
                     programmaticUrlChangeRef.current = true; // the effect below would otherwise redundantly redo this exact lookup on its next run
                     setUrlDraft(match);
+                    setUrlDraftStored(activeId, match);
                     return;
                   }
                   pendingCompletionSelectionRef.current = null;
                   programmaticUrlChangeRef.current = false;
                   setUrlDraft(raw);
+                  setUrlDraftStored(activeId, raw);
                 }}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") submitUrl(urlDraft);
@@ -1942,6 +2029,7 @@ function Index() {
                         : null;
                     programmaticUrlChangeRef.current = true;
                     setUrlDraft(finalValue);
+                    setUrlDraftStored(activeId, finalValue);
                   }
                 }}
                 className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none"
@@ -2445,7 +2533,10 @@ function Index() {
                         {isHome && !isHomeLoading && (
                           <HomeContent
                             urlDraft={homeUrlDraft}
-                            onUrlDraftChange={setHomeUrlDraft}
+                            onUrlDraftChange={(value) => {
+                              setHomeUrlDraft(value);
+                              setHomeSearchDraftStored(activeId, value);
+                            }}
                             onSubmit={submitUrl}
                             bookmarks={bookmarks}
                             onOpenBookmark={(url) => openBookmark(url)}
@@ -2472,9 +2563,13 @@ function Index() {
                         {secondaryTab?.isHome && (
                           <HomeContent
                             urlDraft={secondaryHomeUrlDraft}
-                            onUrlDraftChange={setSecondaryHomeUrlDraft}
+                            onUrlDraftChange={(value) => {
+                              setSecondaryHomeUrlDraft(value);
+                              setHomeSearchDraftStored(secondaryId, value);
+                            }}
                             onSubmit={(raw) => {
                               const target = parseUrlBarInput(raw, isTorWindow);
+                              clearHomeSearchDraft(secondaryId);
                               if (target && secondaryId) navigate(secondaryId, target);
                             }}
                             bookmarks={bookmarks}
@@ -2501,7 +2596,10 @@ function Index() {
                     {isHome && !isHomeLoading && (
                       <HomeContent
                         urlDraft={homeUrlDraft}
-                        onUrlDraftChange={setHomeUrlDraft}
+                        onUrlDraftChange={(value) => {
+                          setHomeUrlDraft(value);
+                          setHomeSearchDraftStored(activeId, value);
+                        }}
                         onSubmit={submitUrl}
                         bookmarks={bookmarks}
                         onOpenBookmark={(url) => openBookmark(url)}

@@ -32,6 +32,11 @@ import type {
 // __root.tsx shell (see routes/__root.tsx), so it gets the same <html>/
 // <head>/appCss automatically — no separate HTML document to maintain.
 export const Route = createFileRoute("/overlay")({
+  // Same reasoning as routes/index.tsx's own ssr: false — this window is
+  // exclusively Electron's own native overlay host, server rendering it
+  // gains nothing and only risks the same kind of "wrong content painted
+  // once, then replaced" flash.
+  ssr: false,
   component: OverlayRoute,
 });
 

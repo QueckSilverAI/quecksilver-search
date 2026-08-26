@@ -41,7 +41,7 @@ function ContextMenuActionItem({
       onClick={onClick}
       className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[13px] text-foreground hover:bg-muted"
     >
-      <Icon className="h-[15px] w-[15px] shrink-0 text-muted-foreground" />
+      <Icon className="h-[15px] w-[15px] shrink-0 text-foreground" />
       <span className="min-w-0 flex-1 truncate">{label}</span>
       {shortcut && <span className="shrink-0 text-[11px] text-muted-foreground">{shortcut}</span>}
     </button>

@@ -10,6 +10,7 @@ import {
   net as electronNet,
   globalShortcut,
   session as electronSession,
+  screen,
 } from "electron";
 import path from "node:path";
 import { fork, type ChildProcess } from "node:child_process";
@@ -773,8 +774,16 @@ function contextFor(
   event: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent,
 ): WindowEntry | null {
   const bw = BrowserWindow.fromWebContents(event.sender);
-  if (!bw) return null;
-  return windows.get(bw.id) ?? null;
+  if (bw) return windows.get(bw.id) ?? null;
+  // Falls back to TabManager's own webContents.id -> owner tracking — see
+  // that field's doc comment in tab-manager.ts for exactly why the
+  // Electron lookup above can come back empty for a TAB's webContents
+  // specifically (as opposed to the chrome UI's own, which IS a real
+  // BrowserWindow and always resolves through the fast path above).
+  const ownerWindowId = TabManager.findOwnerWindowId(event.sender.id);
+  console.log("[context-for] BrowserWindow.fromWebContents empty, fallback owner window:", ownerWindowId);
+  if (ownerWindowId == null) return null;
+  return windows.get(ownerWindowId) ?? null;
 }
 
 // --- Image/link context menu actions --------------------------------------
@@ -822,6 +831,99 @@ function openLinkInNewWindow(win: BrowserWindow, url: string) {
   const newCtx = windows.get(newWin.id);
   const activeId = newCtx?.tabs.getActiveId();
   if (newCtx && activeId) void newCtx.tabs.navigate(activeId, url);
+}
+// Tab tear-off — dragging a tab far enough away from the strip (see
+// TabStrip.tsx's vertical-threshold check) turns it into its own window,
+// same gesture as Chrome/Edge. See tab-manager.ts's detachTab/adoptTab
+// for the actual mechanism: the tab's real WebContentsView is reparented
+// into the new window, not closed and reopened — same renderer process,
+// same history/scroll/form state throughout, no navigation happens
+// anywhere in this function (Tor is the one deliberate exception, see
+// below). The window this shows up in still starts blank-ish for a brief
+// moment purely because ITS OWN chrome UI (a separate page load) hasn't
+// finished booting yet — see main.ts's tabs:listSync/preload.ts's
+// initialTabsSnapshot for why that's now as short as possible rather
+// than waiting on a full async round-trip.
+async function detachTabToNewWindow(win: BrowserWindow, tabId: string, screenX: number, screenY: number) {
+  // If this exact line isn't showing up in the terminal when you drag a
+  // tab off, the running app is still on an OLDER build of main.ts (the
+  // main process needs a full `npm run electron:dev` restart to pick up
+  // any electron/*.ts change — see AGENTS.md — a plain window reload
+  // only refreshes the renderer half). That's the single most likely
+  // explanation if this still looks like the old close+reopen behavior.
+  console.log("[tab-detach] LIVE-TRANSFER CODE PATH — v2 (detachTab/adoptTab, not navigate)");
+  const ctx = windows.get(win.id);
+  if (!ctx) {
+    console.log("[tab-detach] bailing out early — no window context");
+    return;
+  }
+  // Live-transfers the actual tab (same WebContentsView, same renderer
+  // process — no navigation happens anywhere in this function) rather
+  // than closing it and reopening the URL fresh: detachTab hands back
+  // the still-fully-alive view, adoptTab below reattaches it to the new
+  // window with every listener rebound. History, scroll position, form
+  // state, JS state all just come along, same as Chrome/Edge's own
+  // tear-off — see tab-manager.ts's wireTabListeners/detachTab/adoptTab
+  // for why this needed a real refactor rather than "close, reopen, hope
+  // the reload is fast enough not to notice".
+  //
+  // TOR is the one exception, kept on the old close-and-reload path
+  // below: the detached view's webContents is permanently bound to
+  // whichever session it was CREATED with (Electron has no API to swap a
+  // webContents' session after the fact), and for a Tor window that
+  // session's proxy routing is wired up by createTorWindow's own
+  // Tor-bootstrap sequence — reparenting the view into a window that
+  // never ran that sequence risks leaving it on a session nobody's
+  // actively routing through Tor's SOCKS proxy anymore once the source
+  // window closes. Not worth that risk for what's a narrow edge case
+  // (tearing a tab specifically out of a Tor window) versus just
+  // reloading the URL, which is exactly as safe as opening it fresh.
+  const identity = getActiveIdentity(win.id);
+  if (identity.windowMode === "tor") {
+    const tab = ctx.tabs.listTabs().tabs.find((t) => t.id === tabId);
+    if (!tab || tab.isHome || tab.isSettings) return;
+    const url = tab.url;
+    ctx.tabs.closeTab(tabId);
+    const newWin = await createTorWindow();
+    positionTornOffWindow(newWin, screenX, screenY);
+    const newCtx = windows.get(newWin.id);
+    const activeId = newCtx?.tabs.getActiveId();
+    if (newCtx && activeId) void newCtx.tabs.navigate(activeId, url);
+    return;
+  }
+
+  const detached = ctx.tabs.detachTab(tabId);
+  console.log("[tab-detach] detachTab result:", !!detached);
+  if (!detached) return;
+  const { view, isHome, isSettings, openedAt } = detached;
+
+  const newWin =
+    identity.windowMode === "incognito"
+      ? createIncognitoWindow()
+      : createWindow({ activeProfileId: identity.activeProfileId, guestMode: identity.guestMode });
+  positionTornOffWindow(newWin, screenX, screenY);
+  const newCtx = windows.get(newWin.id);
+  if (!newCtx) return;
+  // createWindow() always starts a fresh window with its own default
+  // Home tab (see the TabManager constructor) — adopt the real, detached
+  // tab in, THEN close that placeholder, so the new window ends up with
+  // exactly the one tab that was actually torn off.
+  const staleHomeId = newCtx.tabs.getActiveId();
+  newCtx.tabs.adoptTab(tabId, view, isHome, isSettings, openedAt);
+  if (staleHomeId) newCtx.tabs.closeTab(staleHomeId);
+  console.log("[tab-detach] adopted into new window", newWin.id);
+}
+
+// Roughly centers a freshly torn-off window under wherever the tab was
+// dropped, same as a real browser's tear-off — setPosition works before
+// the window is actually shown (see createWindow's own ready-to-show),
+// so it never has a chance to flash at the default spot first.
+function positionTornOffWindow(win: BrowserWindow, screenX: number, screenY: number) {
+  const { width, height } = win.getBounds();
+  const display = screen.getDisplayNearestPoint({ x: screenX, y: screenY }).workArea;
+  const x = Math.round(Math.min(Math.max(screenX - width / 2, display.x), display.x + display.width - width));
+  const y = Math.round(Math.min(Math.max(screenY - 20, display.y), display.y + display.height - height));
+  win.setPosition(x, y);
 }
 // "Open in InPrivate window" — the favorites bar's own right-click menu
 // (src/overlay/FavoriteContextMenuContent.tsx), matching Edge's exact
@@ -890,6 +992,7 @@ function showContextMenu(
 }
 
 function registerIpc() {
+  console.log("[tabs-list-sync] handler registered — build includes tab-detach live-transfer + sync snapshot fix");
   // --- Overlay windows (Phase 1/2/3 of the native-overlay plan) -----------
   // Opened FROM the chrome UI's own webContents (ProfilePopup's button
   // click, the renderer half of the context menu) — contextFor(event)
@@ -987,9 +1090,39 @@ function registerIpc() {
   ipcMain.handle("tabs:close", (e, id: string) => contextFor(e)?.tabs.closeTab(id));
   ipcMain.handle("tabs:switch", (e, id: string) => contextFor(e)?.tabs.switchTab(id));
   ipcMain.handle("tabs:list", (e) => contextFor(e)?.tabs.listTabs());
+  // Synchronous twin of the handler above, called once from preload.ts
+  // BEFORE the page's own JS (and therefore React) ever starts running —
+  // see preload.ts's own comment for why this exists: without it, EVERY
+  // new window's first paint shows "New Tab" by default (the renderer's
+  // initial state has no tabs yet, and isHome ?? true then defaults
+  // true) until the normal async tabs:list() round-trip resolves a
+  // moment later. Most noticeable on a torn-off tab, where the real page
+  // was already fully loaded before this window even existed — the
+  // empty-then-real flash reads exactly like "opened blank, then loaded
+  // the URL" even though no navigation happens anywhere in tear-off.
+  // Safe to block on: this fires synchronously in the SAME tick as
+  // detachTabToNewWindow's adoptTab() call above (no I/O in between),
+  // so by the time the new window's page has loaded far enough to run
+  // its preload script at all, the adopted tab is already the real,
+  // final state to hand back here.
+  ipcMain.on("tabs:listSync", (e) => {
+    const result = contextFor(e)?.tabs.listTabs() ?? { activeId: null, secondaryId: null, tabs: [], groups: [] };
+    console.log("[tabs-list-sync] called, returning", result.tabs.length, "tab(s), activeId:", result.activeId);
+    e.returnValue = result;
+  });
   ipcMain.handle("tabs:reorder", (e, newOrder: string[]) =>
     contextFor(e)?.tabs.reorderTabs(newOrder),
   );
+  ipcMain.handle("tabs:detachToWindow", async (e, id: string, screenX: number, screenY: number) => {
+    console.log("[tab-detach] IPC handler received", id, screenX, screenY);
+    const win = contextFor(e)?.win;
+    if (!win) {
+      console.error("[tab-detach] no window context for sender");
+      return;
+    }
+    await detachTabToNewWindow(win, id, screenX, screenY);
+    console.log("[tab-detach] detachTabToNewWindow finished");
+  });
   ipcMain.handle("tabs:navigate", (e, id: string, url: string) =>
     contextFor(e)?.tabs.navigate(id, url),
   );
@@ -1182,6 +1315,33 @@ function registerIpc() {
     const ctx = contextFor(e);
     if (ctx) removeSitePermission(ctx.win.id, domain);
   });
+  // Everything the site itself put on disk (cookies, localStorage,
+  // IndexedDB, caches, service workers, ...) — separate from
+  // permissions:remove above, which only forgets the camera/mic/
+  // notification allow-or-block choice, not any actual site data.
+  ipcMain.handle("permissions:clearSiteData", async (e, domain: string) => {
+    const ctx = contextFor(e);
+    const ses = ctx?.contentSession ?? electronSession.defaultSession;
+    await Promise.all([
+      ses.clearStorageData({ origin: `https://${domain}` }).catch(() => {}),
+      ses.clearStorageData({ origin: `http://${domain}` }).catch(() => {}),
+    ]);
+    // clearStorageData({origin}) only reaches that exact origin, but
+    // cookies are commonly scoped to the whole parent domain (Domain=
+    // example.com, readable from www.example.com, accounts.example.com,
+    // ...) rather than one exact origin — same domain-wide sweep Control
+    // center's Cookie-Autodelete already does, so a cookie set on a
+    // subdomain of what was typed here still gets caught.
+    const cookies = await ses.cookies.get({ domain }).catch(() => []);
+    await Promise.all(
+      cookies.map((cookie) =>
+        ses.cookies.remove(
+          `http${cookie.secure ? "s" : ""}://${cookie.domain?.replace(/^\./, "")}${cookie.path}`,
+          cookie.name,
+        ),
+      ),
+    );
+  });
   ipcMain.handle("extensions:list", () => listExtensions());
   ipcMain.handle("extensions:addFromFolder", async () => {
     const result = await dialog.showOpenDialog({ properties: ["openDirectory"] });
@@ -1223,6 +1383,8 @@ function registerIpc() {
     // be read lazily on the next request/permission check.
     if (patch.masterMute !== undefined) ctx?.tabs.setMasterMute(patch.masterMute);
     if (patch.darkModeForced !== undefined) await ctx?.tabs.setGlobalDarkMode(patch.darkModeForced);
+    if (patch.adBlockEnabled !== undefined)
+      await ctx?.tabs.setAdBlockCosmeticFiltering(patch.adBlockEnabled);
     if (patch.javascriptDisabled !== undefined)
       await ctx?.tabs.setJavaScriptGloballyDisabled(patch.javascriptDisabled);
     if (patch.globalZoomFactor !== undefined) ctx?.tabs.setDefaultZoom(patch.globalZoomFactor);
@@ -1520,7 +1682,7 @@ function registerIpc() {
     (e, { url, username, password }: { url: string; username: string; password: string }) => {
       const ctx = contextFor(e);
       console.log(
-        `[passwords] autoSaveFromForm(url=${url}, username=${username ? "<set>" : "<empty>"}, password=${password ? "<set>" : "<empty>"})`,
+        `[passwords] autoSaveFromForm(url=${url}, username=${username ? "<set>" : "<empty>"}, password=${password ? "<set>" : "<empty>"}), ctx resolved: ${!!ctx}`,
       );
       if (!ctx) return null;
       const saved = autoSaveFromForm(ctx.win.id, url, username, password);

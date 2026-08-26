@@ -20,6 +20,18 @@ import type { ZoraSettings, ZoraPreset, ToolPermissionMode } from "./zora-settin
 import type { ZoraToolCatalogEntry } from "./zora-tool-catalog";
 import type { AuditLogEntry } from "./browser-tools";
 
+// Fetched synchronously, before anything else in this file runs — see
+// main.ts's tabs:listSync handler for the full reasoning. use-browser-api.ts
+// reads this as its very first React state instead of an empty
+// placeholder, so the chrome UI's first paint already shows the real tabs
+// (a torn-off tab included) rather than "New Tab" for the brief moment
+// before the normal async tabs:list() call would otherwise resolve.
+// ipcRenderer.sendSync blocks until main.ts responds — deliberately, this
+// needs to happen before React ever renders, not just before the page is
+// interactive.
+const initialTabsSnapshot: TabsSnapshot = ipcRenderer.sendSync("tabs:listSync");
+console.log("[tabs-list-sync] preload received initial snapshot:", initialTabsSnapshot.tabs.length, "tab(s)");
+
 const tabs = {
   new: (url?: string): Promise<string> => ipcRenderer.invoke("tabs:new", url),
   close: (id: string): Promise<void> => ipcRenderer.invoke("tabs:close", id),
@@ -28,6 +40,11 @@ const tabs = {
   // Drag-reorder in the tab strip — newOrder is the full, final tab-id order
   // after a live drag finishes.
   reorder: (newOrder: string[]): Promise<void> => ipcRenderer.invoke("tabs:reorder", newOrder),
+  // Tearing a tab out of the strip (dragged far enough vertically away from
+  // it) into its own new window — screenX/screenY position that new
+  // window under wherever the tab was dropped, same as Chrome/Edge.
+  detachToWindow: (id: string, screenX: number, screenY: number): Promise<void> =>
+    ipcRenderer.invoke("tabs:detachToWindow", id, screenX, screenY),
   navigate: (id: string, url: string): Promise<void> => ipcRenderer.invoke("tabs:navigate", id, url),
   goBack: (id: string): Promise<void> => ipcRenderer.invoke("tabs:goBack", id),
   goForward: (id: string): Promise<void> => ipcRenderer.invoke("tabs:goForward", id),
@@ -190,6 +207,12 @@ const permissions = {
   list: (): Promise<SitePermissionEntry[]> => ipcRenderer.invoke("permissions:list"),
   set: (domain: string, kind: PermissionKind, state: PermissionState): Promise<void> => ipcRenderer.invoke("permissions:set", domain, kind, state),
   remove: (domain: string): Promise<void> => ipcRenderer.invoke("permissions:remove", domain),
+  // Cookies, localStorage, IndexedDB, caches, service workers — everything
+  // that origin has stored locally, for both http/https. Separate from
+  // remove() above: that only forgets the camera/mic/notification
+  // allow-or-block choice itself, this clears what the site actually put
+  // on disk.
+  clearSiteData: (domain: string): Promise<void> => ipcRenderer.invoke("permissions:clearSiteData", domain),
 };
 type DohProvider = "off" | "cloudflare" | "quad9";
 type PrivacySettings = {
@@ -420,6 +443,7 @@ const overlay = {
 
 contextBridge.exposeInMainWorld("browserAPI", {
   tabs,
+  initialTabsSnapshot,
   bookmarks,
   headerFavorites,
   auth,

@@ -83,6 +83,7 @@ type BrowserAPI = {
     switch: (id: string) => Promise<void>;
     list: () => Promise<TabsSnapshot>;
     reorder: (newOrder: string[]) => Promise<void>;
+    detachToWindow: (id: string, screenX: number, screenY: number) => Promise<void>;
     navigate: (id: string, url: string) => Promise<void>;
     goBack: (id: string) => Promise<void>;
     goForward: (id: string) => Promise<void>;
@@ -111,6 +112,10 @@ type BrowserAPI = {
     focusChrome: () => Promise<void>;
     copySelectionFor: (tabId: string) => Promise<void>;
   };
+  // Fetched via a synchronous IPC call in preload.ts, before React ever
+  // renders — see that call's own comment. Read once, as the initial
+  // React state below; onChanged above is what keeps it live afterward.
+  initialTabsSnapshot: TabsSnapshot;
   bookmarks: {
     list: () => Promise<Bookmark[]>;
     save: (value: Bookmark[]) => Promise<void>;
@@ -241,6 +246,7 @@ type BrowserAPI = {
     list: () => Promise<{ domain: string; camera: "allow" | "block"; microphone: "allow" | "block"; notifications: "allow" | "block"; autoDownloads: "allow" | "block"; updatedAt: number }[]>;
     set: (domain: string, kind: "camera" | "microphone" | "notifications" | "autoDownloads", state: "allow" | "block") => Promise<void>;
     remove: (domain: string) => Promise<void>;
+    clearSiteData: (domain: string) => Promise<void>;
   };
   extensions: {
     list: () => Promise<{ id: string; name: string; path: string; enabled: boolean }[]>;
@@ -363,7 +369,7 @@ export function useBrowserApi() {
   const api = typeof window !== "undefined" ? window.browserAPI : undefined;
   const isElectron = Boolean(api);
   const [snapshot, setSnapshot] = useState<TabsSnapshot>(
-    isElectron ? { activeId: null, secondaryId: null, tabs: [], groups: [] } : FALLBACK_SNAPSHOT,
+    isElectron && api ? api.initialTabsSnapshot : FALLBACK_SNAPSHOT,
   );
 
   useEffect(() => {
@@ -383,6 +389,16 @@ export function useBrowserApi() {
   const closeTab = useCallback((id: string) => api?.tabs.close(id), [api]);
   const switchTab = useCallback((id: string) => api?.tabs.switch(id), [api]);
   const reorderTabs = useCallback((newOrder: string[]) => api?.tabs.reorder(newOrder), [api]);
+  const detachToWindow = useCallback(
+    (id: string, screenX: number, screenY: number) => {
+      console.log("[tab-detach] hook calling api.tabs.detachToWindow", id, screenX, screenY, "api present:", !!api);
+      return api?.tabs.detachToWindow(id, screenX, screenY).then(
+        () => console.log("[tab-detach] IPC resolved"),
+        (err) => console.error("[tab-detach] IPC rejected", err),
+      );
+    },
+    [api],
+  );
   const navigate = useCallback((id: string, url: string) => api?.tabs.navigate(id, url), [api]);
   const goBack = useCallback((id: string) => api?.tabs.goBack(id), [api]);
   const goForward = useCallback((id: string) => api?.tabs.goForward(id), [api]);
@@ -417,6 +433,7 @@ export function useBrowserApi() {
     closeTab,
     switchTab,
     reorderTabs,
+    detachToWindow,
     navigate,
     goBack,
     goForward,

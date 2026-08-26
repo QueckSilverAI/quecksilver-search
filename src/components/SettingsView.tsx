@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  Bell, Bot, Camera, Check, ChevronDown, ChevronLeft, ChevronRight, Columns2, Download, Edit3, Eye, EyeOff, FolderOpen, Globe, KeyRound, Link2, Lock, Mic, Monitor,
+  Bell, Bot, Camera, Check, ChevronDown, ChevronLeft, ChevronRight, Columns2, Download, Edit3, Eraser, Eye, EyeOff, FolderOpen, Globe, KeyRound, Link2, Lock, Mic, Monitor,
   Moon, Palette, Plus, PictureInPicture2, RotateCcw, RotateCw, Search, Settings as SettingsIcon, ShieldAlert, Star, Sun, Trash2, User, Zap,
 } from "lucide-react";
 import { useAccentColor, useColorScheme, THEME_COLORS, type ColorScheme } from "@/lib/theme";
@@ -170,7 +170,7 @@ export function SettingsView({ nightModeTabId }: { nightModeTabId?: string | nul
   const { scheme, setScheme } = useColorScheme();
   const { isGuest } = useProfiles();
   const { passwords, add: addPassword, update: updatePassword, remove: removePassword, importFrom: importPasswordsFrom } = usePasswords();
-  const { entries: permissionEntries, set: setPermission, remove: removePermission } = useSitePermissions();
+  const { entries: permissionEntries, set: setPermission, remove: removePermission, clearSiteData } = useSitePermissions();
   const { settings: privacySettings, update: updatePrivacy } = usePrivacySettings();
   const [extensionsList, setExtensionsList] = useState<{ id: string; name: string; path: string; enabled: boolean }[]>([]);
   const [extensionError, setExtensionError] = useState<string | null>(null);
@@ -183,6 +183,7 @@ export function SettingsView({ nightModeTabId }: { nightModeTabId?: string | nul
   }, [nightModeTabId]);
   const [permissionDomainInput, setPermissionDomainInput] = useState("");
   const [permissionDomainConfirmed, setPermissionDomainConfirmed] = useState<string | null>(null);
+  const [siteDataCleared, setSiteDataCleared] = useState<string | null>(null);
   const [permissionSearch, setPermissionSearch] = useState("");
   const [permissionShowCount, setPermissionShowCount] = useState(10);
   const filteredPermissionEntries = permissionEntries.filter((e) => e.domain.toLowerCase().includes(permissionSearch.trim().toLowerCase()));
@@ -671,6 +672,21 @@ export function SettingsView({ nightModeTabId }: { nightModeTabId?: string | nul
                       </div>
                     );
                   })}
+                  <div className="flex items-center justify-between border-t border-border pt-3">
+                    <span className="text-sm text-foreground">
+                      {siteDataCleared === permissionDomainConfirmed ? "Data cleared" : "Stored data (cookies, cache, ...)"}
+                    </span>
+                    <button
+                      onClick={() => {
+                        clearSiteData(permissionDomainConfirmed);
+                        setSiteDataCleared(permissionDomainConfirmed);
+                      }}
+                      disabled={siteDataCleared === permissionDomainConfirmed}
+                      className="rounded-full bg-destructive/10 px-3 py-1 text-xs font-medium text-destructive transition-colors hover:bg-destructive/20 disabled:opacity-50"
+                    >
+                      Clear site data
+                    </button>
+                  </div>
                 </div>
               )}
             </CardSection>
@@ -704,6 +720,16 @@ export function SettingsView({ nightModeTabId }: { nightModeTabId?: string | nul
                           {PERMISSION_ICONS[kind]}
                         </button>
                       ))}
+                      <button
+                        onClick={() => {
+                          clearSiteData(entry.domain);
+                          setSiteDataCleared(entry.domain);
+                        }}
+                        title={siteDataCleared === entry.domain ? "Data cleared" : "Clear site data"}
+                        className="shrink-0 rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                      >
+                        {siteDataCleared === entry.domain ? <Check className="h-4 w-4" /> : <Eraser className="h-4 w-4" />}
+                      </button>
                       <button onClick={() => removePermission(entry.domain)} title="Forget this site" className="shrink-0 rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive">
                         <Trash2 className="h-4 w-4" />
                       </button>

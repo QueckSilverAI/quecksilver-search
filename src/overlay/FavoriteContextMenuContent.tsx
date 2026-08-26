@@ -25,7 +25,7 @@ function MenuItem({
       disabled={disabled}
       className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[13px] text-foreground hover:bg-muted disabled:cursor-default disabled:text-muted-foreground/50 disabled:hover:bg-transparent"
     >
-      <Icon className="h-[15px] w-[15px] shrink-0 text-muted-foreground" />
+      <Icon className="h-[15px] w-[15px] shrink-0" />
       <span className="truncate">{label}</span>
     </button>
   );

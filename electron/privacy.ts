@@ -2,6 +2,7 @@ import { app, session as electronSession, BrowserWindow } from "electron";
 import { getSitePermission, recordDefaultBlock, type PermissionKind } from "./site-permissions-store";
 import { recordHttpsUpgrade, consumeHttpExemption } from "./https-upgrade-tracker";
 import { getPrivacySettings } from "./privacy-settings-store";
+import { BUNDLED_AD_BLOCK_DOMAINS } from "./adblock-domains";
 import {
   adBlockEnabled,
   doNotTrackEnabled,
@@ -24,11 +25,14 @@ import { findMatchingMock } from "./request-mocks-store";
 // in this app, see profile-store.ts), so one call here covers every tab
 // in every window.
 
-// A compact, high-signal list of ad/tracking hosts. Deliberately NOT
-// exhaustive (a full EasyList/EasyPrivacy list is tens of thousands of
-// entries and needs its own updater) — this covers the networks that
-// account for the large majority of cross-site tracking, while staying
-// small enough to reason about and keep in the repo.
+// A compact, hand-picked list — kept ALONGSIDE the bundled list below
+// (adblock-domains.ts) rather than replaced by it, specifically for
+// entries the bundled list can't express: a couple of these are
+// PATH-scoped, not whole-domain (e.g. "facebook.com/tr" blocks just
+// Facebook's tracking-pixel path while leaving the rest of facebook.com,
+// which people are actively browsing, completely alone — a plain hosts
+// file has no concept of that, it can only block or allow an entire
+// domain).
 const BLOCKED_HOSTS = [
   // Google ads/analytics/tag-management (NOT google.com/accounts.google.com
   // etc. — those stay reachable, this is only the ad-tech subset)
@@ -39,6 +43,8 @@ const BLOCKED_HOSTS = [
   "googletagmanager.com",
   "googletagservices.com",
   "adservice.google.com",
+  "2mdn.net", // DoubleClick's own static-asset/creative CDN
+  "pagead2.googlesyndication.com",
   // Meta/Facebook tracking pixel + SDK (facebook.com itself stays reachable)
   "connect.facebook.net",
   "facebook.com/tr",
@@ -68,11 +74,42 @@ const BLOCKED_HOSTS = [
   "fullstory.com",
   "clarity.ms",
   "bing.com/bat.js",
+  // Real display/video ad-serving networks — the actual visible-ads half,
+  // as opposed to the mostly analytics/tracking list above. Added after a
+  // "the Ad-Blocker doesn't work" report: the original list blocked most
+  // TRACKING pixels well, but left plenty of banner/video ad creatives
+  // still loading from networks that were never on it. See also
+  // tab-manager.ts's Ad-Blocker cosmetic CSS, which hides the (now empty)
+  // ad containers these leave behind.
+  "adform.net",
+  "advertising.com",
+  "casalemedia.com",
+  "contextweb.com",
+  "indexexchange.com",
+  "smartadserver.com",
+  "media.net",
+  "mgid.com",
+  "revcontent.com",
+  "adroll.com",
+  "bidswitch.net",
+  "yieldmo.com",
+  "sharethrough.com",
+  "sovrn.com",
+  "adsafeprotected.com",
+  "serving-sys.com",
+  "adtechus.com",
+  "33across.com",
+  "gumgum.com",
+  "sspinc.com",
+  "spotxchange.com",
+  "springserve.com",
+  "teads.tv",
 ];
 
 function hostMatches(url: string): boolean {
   try {
     const { hostname, pathname } = new URL(url);
+    if (isInBundledAdBlockList(hostname)) return true;
     return BLOCKED_HOSTS.some((entry) => {
       const [host, pathPrefix] = entry.split("/", 2);
       if (hostname !== host && !hostname.endsWith(`.${host}`)) return false;
@@ -82,6 +119,30 @@ function hostMatches(url: string): boolean {
   } catch {
     return false;
   }
+}
+
+// Built once at module load, not per-request — see adblock-domains.ts's
+// own header for what this list is and how to refresh it.
+const BUNDLED_AD_BLOCK_SET = new Set(BUNDLED_AD_BLOCK_DOMAINS);
+
+// Walks a hostname up through its parent domains
+// ("ads.sub.example.com" -> "sub.example.com" -> "example.com" -> "com"),
+// checking each level against the bundled set — same "exact match, or a
+// listed domain is a suffix" semantics as BLOCKED_HOSTS' endsWith check
+// above, just done as a handful of O(1) Set lookups instead of a linear
+// scan. That distinction actually matters at this list's size (80,000+
+// entries, versus BLOCKED_HOSTS' ~90) — a .some()/endsWith scan over the
+// whole thing on every single request would be real, visible per-request
+// overhead; walking at most a few dot-separated labels per request isn't.
+function isInBundledAdBlockList(hostname: string): boolean {
+  let h = hostname;
+  while (h) {
+    if (BUNDLED_AD_BLOCK_SET.has(h)) return true;
+    const dot = h.indexOf(".");
+    if (dot === -1) return false;
+    h = h.slice(dot + 1);
+  }
+  return false;
 }
 
 // For Zora's list_trackers_on_page tool — just the hostname, for a short
@@ -117,6 +178,7 @@ export function applyPrivacyHardening(targetSession?: Electron.Session) {
   // --- Tracker/ad blocking -------------------------------------------
   // Gated by the Control center's "Add-Blocker" toggle (default on, so
   // behavior is unchanged for anyone who never opens it).
+  console.log("[ad-block] hook registered, adBlockEnabled() =", adBlockEnabled());
   ses.webRequest.onBeforeRequest((details, callback) => {
     // Masterplan #26 — start time for this request's log entry (see the
     // onCompleted hook below), recorded unconditionally so the log covers
@@ -129,6 +191,7 @@ export function applyPrivacyHardening(targetSession?: Electron.Session) {
       // needs no extra classification logic. details.webContentsId is
       // whichever tab's page issued the request, not necessarily the
       // active one.
+      console.log("[ad-block] blocked", details.url);
       incrementTrackerCount(details.webContentsId, safeHostname(details.url));
       callback({ cancel: true });
       return;

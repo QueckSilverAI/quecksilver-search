@@ -29,7 +29,7 @@ function TabFavicon({ url }: { url: string }) {
       src = null;
     }
   }
-  if (!src) return <Globe className="h-4 w-4 shrink-0 text-muted-foreground" />;
+  if (!src) return <Globe className="h-4 w-4 shrink-0 text-foreground" />;
   return (
     <img
       src={src}
@@ -139,7 +139,7 @@ export function TabsMenuContent({
           payload.verticalTabsEnabled ? "bg-muted" : "hover:bg-muted"
         }`}
       >
-        <PanelLeft className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <PanelLeft className="h-4 w-4 shrink-0 text-foreground" />
         <span className="text-[13px] font-medium text-foreground">
           {payload.verticalTabsEnabled ? "Disable vertical tabs" : "Enable vertical tabs"}
         </span>
@@ -187,9 +187,9 @@ export function TabsMenuContent({
                   className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left ${t.isActive ? "bg-muted" : "hover:bg-muted"}`}
                 >
                   {t.isSettings ? (
-                    <SettingsIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    <SettingsIcon className="h-4 w-4 shrink-0 text-foreground" />
                   ) : t.isHome ? (
-                    <SearchIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    <SearchIcon className="h-4 w-4 shrink-0 text-foreground" />
                   ) : (
                     <TabFavicon url={t.url} />
                   )}

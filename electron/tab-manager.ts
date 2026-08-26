@@ -20,7 +20,7 @@ import {
 } from "./privacy-settings-store";
 import { checkUrlSafety } from "./phishing-guard";
 import { getOriginalHttpUrl, allowHttpOnce } from "./https-upgrade-tracker";
-import { popupBlockEnabled, cookieAutoDeleteEnabled, autoSuspendMinutesSetting, jsErrorOverlayEnabled, type VisionFilter, type CursorSize, type UserAgentPreset, type DeviceEmulationPreset, type PageMetadata } from "./control-center-store";
+import { popupBlockEnabled, cookieAutoDeleteEnabled, autoSuspendMinutesSetting, jsErrorOverlayEnabled, adBlockEnabled, type VisionFilter, type CursorSize, type UserAgentPreset, type DeviceEmulationPreset, type PageMetadata } from "./control-center-store";
 import { sendCdpCommand, detachDebugger } from "./cdp-client";
 import {
   getTrackerCount,
@@ -90,6 +90,26 @@ function isAuthPopupUrl(url: string): boolean {
 // fully detached, not just hidden, to keep memory/CPU down.
 export class TabManager {
   private win: BrowserWindow;
+  // Which TabManager currently owns a given tab's webContents, keyed by
+  // Electron's own webContents.id (a stable number, unrelated to which
+  // window it's attached to). Exists because IPC handlers in main.ts
+  // resolve "which window is this call about" via
+  // BrowserWindow.fromWebContents(event.sender) — reliable for the chrome
+  // UI's OWN webContents (it IS the window), but a TAB's webContents
+  // (living in a WebContentsView, not a BrowserWindow of its own) is only
+  // ever associated with whichever window's contentView it's CURRENTLY
+  // attached to. That's exactly the association tab tear-off changes:
+  // detachTab/adoptTab move a tab's view to a different BrowserWindow
+  // entirely, and Electron's own from-webContents lookup wasn't
+  // reliably picking that up afterward — most visibly as the
+  // "password saved" pill silently never firing for a tab that had been
+  // torn off, since contextFor() in main.ts came back with the wrong (or
+  // no) window and the IPC handler quietly bailed. main.ts's contextFor
+  // uses this as its fallback when the Electron lookup comes up empty.
+  private static tabOwners = new Map<number, TabManager>();
+  static findOwnerWindowId(webContentsId: number): number | null {
+    return TabManager.tabOwners.get(webContentsId)?.win.id ?? null;
+  }
   private views = new Map<string, WebContentsView>();
   private order: string[] = [];
   private activeId: string | null = null;
@@ -214,6 +234,22 @@ export class TabManager {
     this.onNavigate = onNavigate ?? null;
     this.onContextMenuRequest = onContextMenuRequest ?? null;
     this.contentSession = contentSession ?? null;
+    // Session-level, not just per-webContents: webContents.setUserAgent()
+    // below (in createTab) only takes effect for requests issued AFTER
+    // that call, which is fine for a normal tab (UA is set before its
+    // loadURL ever fires) but loses the race for an OAuth POPUP window —
+    // window.open() starts that popup's very first navigation as part of
+    // window creation itself, and the did-create-window handler where the
+    // popup's own setUserAgent() call lives can run just after that first
+    // request already went out. Setting it on the session up front means
+    // every webContents sharing this session — including a popup created
+    // moments later — already has the right UA for its first request too,
+    // no race possible. This is the actual fix for Google's sign-in
+    // occasionally returning "400 — that's an error" (Google's backend
+    // rejecting the still-default Electron UA on that first request); the
+    // per-webContents calls stay in place alongside this as belt-and-
+    // suspenders for navigator.userAgent and any session-less window.
+    this.contentSessionOrDefault().setUserAgent(TAB_USER_AGENT);
     this.createTab(HOME_URL);
     // Control center's "Auto-Suspend" (masterplan #12) — checked every 30s
     // rather than a per-tab setTimeout, since the threshold
@@ -592,6 +628,78 @@ export class TabManager {
     if (this.cursorSizeEnabled === "default") return;
     wc.insertCSS(TabManager.cursorCss(this.cursorSizeEnabled))
       .then((key) => this.cursorSizeKeys.set(id, key))
+      .catch(() => {});
+  }
+
+  // --- Control center: Ad-Blocker cosmetic filtering ----------------------
+  // The "Ad-Blocker" toggle's OTHER half — privacy.ts's onBeforeRequest
+  // hook stops known ad/tracking HOSTS at the network layer (never sent at
+  // all), but a lot of real-world display/video ads are served from a
+  // site's own CDN or an ad-tech domain too obscure to be worth hand-
+  // maintaining in BLOCKED_HOSTS, so the network block alone left plenty
+  // of ad units still visibly rendering — reported as "the ad blocker
+  // doesn't work". This adds the other standard half every real ad-blocker
+  // has: hiding the (now often empty/broken, since their creative request
+  // got blocked above) ad containers themselves via CSS, matched against
+  // the small set of very well-established, low-false-positive selectors
+  // major ad networks use (Google Ad Manager/AdSense's own id/class
+  // conventions, the ARIA "Advertisement" label screen-reader-only ad
+  // markup uses, ...) rather than loose substring class-name matching
+  // (which would just as happily hide a "gradient" or "header" element).
+  //
+  // Same shape as global dark mode above: one CSS key per tab so toggling
+  // off cleanly removes exactly what was inserted, re-applied on every
+  // real navigation (see the did-navigate hook below) since a fresh
+  // document has none of the previous page's injected CSS.
+  private adBlockCosmeticEnabled = adBlockEnabled();
+  private readonly adBlockCosmeticKeys = new Map<string, string>();
+
+  private static readonly AD_BLOCK_COSMETIC_CSS = `
+    ins.adsbygoogle,
+    .adsbygoogle,
+    ins[data-ad-client],
+    [data-ad-slot],
+    [id^="div-gpt-ad"],
+    [id^="gpt-ad"],
+    iframe[id^="google_ads_iframe"],
+    div[id^="google_ads_iframe"],
+    iframe[src*="googlesyndication.com"],
+    iframe[src*="doubleclick.net"],
+    iframe[src*="amazon-adsystem.com"],
+    .google-auto-placed,
+    [aria-label="Advertisement" i],
+    [aria-label="Werbung" i] {
+      display: none !important;
+    }
+  `;
+
+  async setAdBlockCosmeticFiltering(enabled: boolean) {
+    this.adBlockCosmeticEnabled = enabled;
+    for (const [id, view] of this.views) {
+      const wc = view.webContents;
+      const existingKey = this.adBlockCosmeticKeys.get(id);
+      if (existingKey) {
+        await wc.removeInsertedCSS(existingKey).catch(() => {});
+        this.adBlockCosmeticKeys.delete(id);
+      }
+      if (enabled) {
+        const key = await wc.insertCSS(TabManager.AD_BLOCK_COSMETIC_CSS).catch(() => null);
+        if (key) this.adBlockCosmeticKeys.set(id, key);
+      }
+    }
+  }
+
+  // Called both right after a tab is created (so a tab opened after the
+  // setting was turned on still gets it) and on every real navigation (see
+  // did-navigate below) — unlike the global filters above which only
+  // insert once at creation, this NEEDS the per-navigation reapply: a
+  // freshly loaded document has no memory of CSS inserted into the
+  // previous page, so without this ads would only stay hidden until the
+  // very first click to a new page.
+  private applyAdBlockCosmeticCssTo(id: string, wc: Electron.WebContents) {
+    if (!this.adBlockCosmeticEnabled) return;
+    wc.insertCSS(TabManager.AD_BLOCK_COSMETIC_CSS)
+      .then((key) => this.adBlockCosmeticKeys.set(id, key))
       .catch(() => {});
   }
 
@@ -1700,12 +1808,8 @@ export class TabManager {
     // page-scale gesture handling by default; without this, zoom-changed
     // can fire but nothing visibly zooms.
     view.webContents.setVisualZoomLevelLimits(1, 3).catch(() => {});
-    // Surfaces a crashing tab-preload.cjs in the electron:dev terminal
-    // instead of it failing silently.
-    view.webContents.on("preload-error", (_event, preloadPath, error) => {
-      console.error(`[preload-error][tab ${id}] ${preloadPath}:`, error);
-    });
-    for (const listener of this.viewCreatedListeners) listener(view.webContents);
+
+    this.wireTabListeners(id, view);
 
     if (url === HOME_URL) {
       this.homeTabs.add(id);
@@ -1721,6 +1825,80 @@ export class TabManager {
           /* surfaced to the renderer via did-fail-load below */
         });
     }
+
+    this.views.set(id, view);
+    this.order.push(id);
+    this.switchTab(id);
+    return id;
+  }
+
+  // The exact set of webContents event names wireTabListeners attaches —
+  // kept as one list so clearTabListeners (used when a tab is adopted
+  // into a DIFFERENT TabManager, see adoptTab) can strip precisely these
+  // and nothing else, rather than a blanket removeAllListeners() that
+  // could just as easily wipe out something unrelated some other module
+  // attached to the same webContents (browser-tools.ts's find-in-page
+  // helper, for one, briefly listens on "found-in-page" too).
+  private static readonly TAB_LISTENER_EVENTS = [
+    "preload-error",
+    "before-input-event", // the F11/shortcut relay from main.ts's onViewCreated
+    "did-create-window",
+    "render-process-gone",
+    "context-menu",
+    "dom-ready",
+    "enter-html-full-screen",
+    "leave-html-full-screen",
+    "will-navigate",
+    "audio-state-changed",
+    "zoom-changed",
+    "did-navigate",
+    "did-navigate-in-page",
+    "page-title-updated",
+    "did-start-loading",
+    "did-stop-loading",
+    "did-fail-load",
+    "found-in-page",
+  ] as const;
+
+  private clearTabListeners(view: WebContentsView) {
+    for (const evt of TabManager.TAB_LISTENER_EVENTS) {
+      view.webContents.removeAllListeners(evt as never);
+    }
+    // Not itself a stored listener (setWindowOpenHandler replaces a
+    // single slot rather than appending), but still WRONG-window-bound
+    // until wireTabListeners overwrites it — clearing it here just makes
+    // the "this view currently has no window-manager wiring at all"
+    // state explicit for the brief moment between detach and adopt.
+    view.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  }
+
+  // All the per-tab wiring that makes a WebContentsView actually behave
+  // like a tab IN THIS WINDOW — every listener here closes over `this`
+  // (this.win, this.bypassPhishingCheckFor, this.emitChange, ...), which
+  // is exactly why this had to become its own method rather than staying
+  // inline in createTab: adoptTab (tab tear-off — see main.ts's
+  // detachTabToNewWindow) needs to run this SAME wiring again, freshly
+  // bound to the NEW TabManager/window a tab just moved into, after
+  // clearTabListeners above has stripped whatever was bound to the OLD
+  // one. Without that rebind, a torn-off tab's fullscreen button would
+  // fullscreen the window it just LEFT, its context menu would report to
+  // the wrong window, and — the one that would actually make a moved tab
+  // look completely frozen — did-navigate/title-updated/loading events
+  // would emitChange() into the old window's renderer instead of the new
+  // one's, since emitChange sends over `this.win.webContents`.
+  private wireTabListeners(id: string, view: WebContentsView) {
+    // Registered here rather than only in createTab specifically so
+    // adoptTab (a tab arriving from a DIFFERENT window) re-registers this
+    // exact webContents.id against THIS manager too, overwriting whatever
+    // the source window's entry was — see tabOwners' own doc comment on
+    // the class field above for why this needs to exist at all.
+    TabManager.tabOwners.set(view.webContents.id, this);
+    // Surfaces a crashing tab-preload.cjs in the electron:dev terminal
+    // instead of it failing silently.
+    view.webContents.on("preload-error", (_event, preloadPath, error) => {
+      console.error(`[preload-error][tab ${id}] ${preloadPath}:`, error);
+    });
+    for (const listener of this.viewCreatedListeners) listener(view.webContents);
 
     const emit = () => this.emitChange();
     // Without this, Electron's default behavior for target="_blank" links
@@ -1744,7 +1922,21 @@ export class TabManager {
             width: 500,
             height: 650,
             autoHideMenuBar: true,
-            webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
+            webPreferences: {
+              contextIsolation: true,
+              nodeIntegration: false,
+              sandbox: true,
+              // Without this, the popup falls back to Electron's own
+              // default session instead of the tab it was opened from —
+              // fine for a normal window (that tab uses the default
+              // session too), but for Incognito/Tor windows this used to
+              // hand the sign-in popup a completely different session
+              // than the rest of that window's browsing: none of the
+              // in-memory-only partition's cookies, and — before the
+              // session-level setUserAgent() in the constructor above —
+              // none of its UA override either.
+              session: this.contentSessionOrDefault(),
+            },
           },
         };
       }
@@ -1805,12 +1997,16 @@ export class TabManager {
     });
     view.webContents.on("dom-ready", () => view.setBackgroundColor("#ffffff"));
     // Control center globals that need to apply to every NEW tab too, not
-    // just the ones open when the toggle was flipped.
+    // just the ones open when the toggle was flipped. Also re-applied here
+    // (not just at tab creation) when a tab is ADOPTED into this manager —
+    // that's the correct behavior: a torn-off tab should pick up whatever
+    // this window's current settings are, same as any other tab in it.
     this.applyMasterMuteTo(view.webContents);
     this.applyGlobalDarkModeTo(id, view.webContents);
     this.applyVisionFilterTo(id, view.webContents);
     this.applyCursorSizeTo(id, view.webContents);
     this.applyGridOverlayTo(id, view.webContents);
+    this.applyAdBlockCosmeticCssTo(id, view.webContents);
     this.applyUserAgentPresetTo(view.webContents);
     if (this.javascriptGloballyDisabled) void this.applyJsToggle(view.webContents, true);
     this.trackConsoleErrors(id, view.webContents);
@@ -1930,17 +2126,31 @@ export class TabManager {
       // be re-resolved on every real navigation, not just applied once at
       // tab creation (see applyCustomCssForTab's own comment above).
       void this.applyCustomCssForTab(id, view.webContents);
+      // Ad-Blocker cosmetic filtering — same "fresh document, no memory of
+      // the last page's injected CSS" reasoning as custom CSS above.
+      this.applyAdBlockCosmeticCssTo(id, view.webContents);
       emit();
     });
     view.webContents.on("did-navigate-in-page", emit);
     view.webContents.on("page-title-updated", emit);
     view.webContents.on("did-start-loading", emit);
     view.webContents.on("did-stop-loading", emit);
-    view.webContents.on("did-fail-load", (_event, errorCode, _desc, validatedURL, isMainFrame) => {
+    view.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
       // -3 is ERR_ABORTED — fires on completely normal things (the user
       // navigating away before a slow page finished, a redirect chain,
       // etc.), not a real failure, so it's excluded here.
       if (isMainFrame && errorCode !== -3 && !validatedURL.startsWith("data:")) {
+        // Logged with the raw Chromium error code/description — the error
+        // PAGE itself only shows a short, friendly title (see
+        // describeNetError below), and for anything outside its handful of
+        // explicit cases that title is the same generic "This page isn't
+        // available" regardless of what actually went wrong underneath.
+        // Without this, tracking down e.g. "was that a redirect loop, a
+        // blocked-by-adblock request, or something else" for one of those
+        // generic cases meant reproducing it all over again from scratch.
+        console.error(
+          `[tab-manager] did-fail-load ${errorCode} (${errorDescription}) for ${validatedURL}`,
+        );
         // If this failed URL was silently upgraded from http:// by
         // privacy.ts, the site most likely just doesn't support https at
         // all — a generic "DNS/connection" message would be misleading
@@ -1973,11 +2183,93 @@ export class TabManager {
         activeMatchOrdinal: result.activeMatchOrdinal,
       });
     });
+  }
 
+  // Removes a tab's WebContentsView from this window WITHOUT destroying
+  // it — the live-transfer half of tab tear-off (see main.ts's
+  // detachTabToNewWindow, which calls this then hands the returned view
+  // to another TabManager's adoptTab). Deliberately mirrors closeTab's
+  // bookkeeping below almost exactly (same per-tab Maps cleared, same
+  // activeId/secondaryId reassignment, same "last tab closes the window"
+  // rule) — the only real difference is this never touches the view or
+  // its webContents at all: no removeChildView-then-forget, no
+  // .webContents.close(), nothing destroyed. The view comes back out
+  // through the return value, still fully alive, for adoptTab to attach
+  // to a different window a moment later.
+  detachTab(id: string): { view: WebContentsView; isHome: boolean; isSettings: boolean; openedAt: number } | null {
+    const view = this.views.get(id);
+    if (!view) return null;
+    const isHome = this.homeTabs.has(id);
+    const isSettings = this.settingsTabs.has(id);
+    const openedAt = this.openedAt.get(id) ?? Date.now();
+
+    if (this.activeId === id || this.secondaryId === id) this.win.contentView.removeChildView(view);
+    const wasSecondary = this.secondaryId === id;
+    if (wasSecondary) this.secondaryId = null;
+
+    this.clearTabListeners(view);
+
+    this.views.delete(id);
+    this.globalDarkModeKeys.delete(id);
+    this.visionFilterKeys.delete(id);
+    this.cursorSizeKeys.delete(id);
+    this.gridOverlayKeys.delete(id);
+    this.adBlockCosmeticKeys.delete(id);
+    this.customCssKeys.delete(id);
+    this.consoleErrorCounts.delete(id);
+    this.consoleLogs.delete(id);
+    this.harListeners.delete(id);
+    this.harRecordings.delete(id);
+    this.siteSafetyByTab.delete(id);
+    this.unloadedTabUrls.delete(id);
+    this.homeTabs.delete(id);
+    this.settingsTabs.delete(id);
+    this.manualZoomTabs.delete(id);
+    this.nightModeTabs.delete(id);
+    this.mutedTabs.delete(id);
+    this.audibleTabs.delete(id);
+    this.openedAt.delete(id);
+    this.lastActiveAt.delete(id);
+    this.tabGroupOf.delete(id);
+    this.deviceEmulation.delete(id);
+    this.order = this.order.filter((tabId) => tabId !== id);
+    this.pruneEmptyGroups();
+
+    // Same "closing the last tab closes the window" rule as closeTab —
+    // tearing a window's only tab out into its own window would just
+    // leave an empty husk behind otherwise.
+    if (this.order.length === 0) {
+      this.win.close();
+    } else if (this.activeId === id) {
+      this.activeId = null;
+      const next = this.order[this.order.length - 1];
+      if (next) this.switchTab(next);
+    } else if (wasSecondary && this.contentVisible) {
+      const left = this.activeId ? this.views.get(this.activeId) : null;
+      left?.setBounds(this.boundsFor(this.activeId, this.bounds));
+    }
+    this.emitChange();
+
+    return { view, isHome, isSettings, openedAt };
+  }
+
+  // The other half of live tab tear-off — takes a view detachTab handed
+  // back (from a DIFFERENT TabManager/window) and makes it a real tab in
+  // THIS one: rewires every listener to this window (see wireTabListeners'
+  // own comment for exactly why that's necessary, not optional), restores
+  // its Home/Settings flag and original open time, and switches to it.
+  // No navigation happens anywhere in here — same webContents, same
+  // renderer process, same scroll position/history/form state it had a
+  // moment ago in the other window.
+  adoptTab(id: string, view: WebContentsView, isHome: boolean, isSettings: boolean, openedAt: number) {
+    view.setBounds(this.bounds);
+    this.openedAt.set(id, openedAt);
+    if (isHome) this.homeTabs.add(id);
+    if (isSettings) this.settingsTabs.add(id);
+    this.wireTabListeners(id, view);
     this.views.set(id, view);
     this.order.push(id);
     this.switchTab(id);
-    return id;
   }
 
   closeTab(id: string) {
@@ -2020,7 +2312,10 @@ export class TabManager {
     // double-click, ...) and calling .close() on undefined here is
     // exactly the class of bug that crashed the whole app with "Cannot
     // read properties of undefined (reading 'close')" before.
-    if (view.webContents && !view.webContents.isDestroyed()) view.webContents.close();
+    if (view.webContents && !view.webContents.isDestroyed()) {
+      TabManager.tabOwners.delete(view.webContents.id);
+      view.webContents.close();
+    }
     this.views.delete(id);
     this.globalDarkModeKeys.delete(id);
     this.gridOverlayKeys.delete(id);
@@ -2533,6 +2828,34 @@ function describeNetError(errorCode: number): { title: string; hint: string } {
       return {
         title: "Connection isn't private",
         hint: "This site's security certificate isn't valid, proceeding isn't safe.",
+      };
+    // Added after tracking down an "account.presearch.com sign-in fails"
+    // report that turned out to be exactly this — a real redirect loop on
+    // the site's own login flow, not a QueckSilver Arch bug, but the
+    // generic default message below gave no hint of that. Almost always a
+    // cookie problem (a stale/missing session cookie the login redirect
+    // keeps checking for and never finding) — deleting that site's cookies
+    // or trying Incognito, same as any other browser, is the standard fix.
+    case -310: // ERR_TOO_MANY_REDIRECTS
+      return {
+        title: "Too many redirects",
+        hint: "This is almost always a cookie problem on the site's end — try clearing this site's cookies, or open it in an Incognito window.",
+      };
+    // Distinct from every case above, and worth calling out by name: this
+    // means the request never even went out — QueckSilver Arch's own
+    // Ad-Blocker or a custom block pattern (Control center → Privacy)
+    // stopped it, not a real network failure. Without this case it looked
+    // identical to a genuinely broken page, with no hint that turning the
+    // Ad-Blocker off for this site is the actual fix.
+    case -20: // ERR_BLOCKED_BY_CLIENT
+      return {
+        title: "Blocked by the Ad-Blocker",
+        hint: "QueckSilver Arch's built-in Ad-Blocker (or one of your custom block patterns) stopped this request. Turn it off for this site in the Control center if the page needs it.",
+      };
+    case -324: // ERR_EMPTY_RESPONSE
+      return {
+        title: "The site sent no response",
+        hint: "The server closed the connection without sending anything back — usually temporary, try again in a moment.",
       };
     default:
       return { title: "This page isn't available", hint: "The page couldn't be reached." };
