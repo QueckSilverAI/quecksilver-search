@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import net from "node:net";
 import { app } from "electron";
@@ -21,6 +21,33 @@ export type TorStatus =
 
 const SOCKS_PORT = 9150; // deliberately NOT Tor's default 9050, so this never collides with a real, separately-running Tor install/Tor Browser on the same machine
 const CONTROL_PORT = 9151;
+
+// Same directory startTor() below passes as --DataDirectory — hoisted out
+// to module scope so requestNewIdentity()'s cookie lookup (readControlAuthCookie)
+// can resolve the exact same path without re-deriving it or needing startTor
+// to remember/export it separately.
+function torDataDir(): string {
+  return path.join(app.getPath("userData"), "tor-data");
+}
+
+// Tor was started with --CookieAuthentication 1 below, which means the
+// control port genuinely REQUIRES this cookie on every AUTHENTICATE — a
+// bare "AUTHENTICATE" with no argument gets rejected ("515 Authentication
+// failed"), which is exactly what made requestNewIdentity() silently never
+// work: SIGNAL NEWNYM was being sent on a connection that never actually
+// authenticated, so Tor never granted a fresh circuit, while the person
+// saw a "New Identity" confirmation because the OTHER cleanup this ran
+// (clearing storage, resetting tabs) still worked regardless.
+function readControlAuthCookie(): string | null {
+  try {
+    const cookiePath = path.join(torDataDir(), "control_auth_cookie");
+    if (!existsSync(cookiePath)) return null;
+    return readFileSync(cookiePath).toString("hex");
+  } catch (err) {
+    console.error("[tor] failed to read control_auth_cookie:", err);
+    return null;
+  }
+}
 
 let torProcess: ChildProcess | null = null;
 let status: TorStatus = { state: "stopped" };
@@ -62,7 +89,7 @@ export async function startTor(binaryPathOverride?: string | null): Promise<void
 
   setStatus({ state: "starting", bootstrapPercent: 0, message: "Starting Tor…" });
 
-  const dataDir = path.join(app.getPath("userData"), "tor-data");
+  const dataDir = torDataDir();
 
   try {
     torProcess = spawn(
@@ -161,5 +188,11 @@ function sendControlCommand(command: string): Promise<string> {
 // window's session partition (done by the caller, in main.ts) is what
 // makes it a genuinely full reset rather than just a new circuit.
 export async function requestNewIdentity(): Promise<void> {
-  await sendControlCommand(`AUTHENTICATE\r\nSIGNAL NEWNYM`);
+  const cookieHex = readControlAuthCookie();
+  if (!cookieHex) {
+    throw new Error(
+      "Couldn't read Tor's control_auth_cookie — is Tor actually running and bootstrapped?",
+    );
+  }
+  await sendControlCommand(`AUTHENTICATE ${cookieHex}\r\nSIGNAL NEWNYM`);
 }

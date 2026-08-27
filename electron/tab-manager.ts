@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, session as electronSession, WebContentsView } from "electron";
+import { app, BrowserWindow, dialog, session as electronSession, shell, WebContentsView } from "electron";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import fs from "node:fs/promises";
@@ -79,6 +79,23 @@ function isAuthPopupUrl(url: string): boolean {
       if (hostname !== host && !hostname.endsWith(`.${host}`)) return false;
       return !pathPrefix || href.includes(`/${pathPrefix}`);
     });
+  } catch {
+    return false;
+  }
+}
+
+// Schemes Chromium itself can navigate to. Anything else (mailto:, tel:,
+// sms:, or an app's own custom scheme like slack:/zoommtg:/spotify:) has
+// no renderer to load — it has to be handed to the OS via shell.openExternal
+// instead, see will-navigate/setWindowOpenHandler below. "about:blank" is
+// used internally (see createTab's HOME_URL handling) and is intentionally
+// not treated as external — it's not something a page link would ever
+// point at anyway.
+const NAVIGABLE_SCHEMES = new Set(["http:", "https:", "file:", "data:", "blob:", "about:"]);
+
+function isExternalProtocolUrl(url: string): boolean {
+  try {
+    return !NAVIGABLE_SCHEMES.has(new URL(url).protocol);
   } catch {
     return false;
   }
@@ -1915,6 +1932,10 @@ export class TabManager {
     // target="_blank"/new-tab request (disposition check below), and for
     // everything else only when Popup-Block is off.
     view.webContents.setWindowOpenHandler(({ url, disposition }) => {
+      if (isExternalProtocolUrl(url)) {
+        shell.openExternal(url).catch(() => {});
+        return { action: "deny" };
+      }
       if (isAuthPopupUrl(url)) {
         return {
           action: "allow",
@@ -2067,6 +2088,20 @@ export class TabManager {
         pendingHttpOnlyBypass = null;
         allowHttpOnce(targetUrl);
         return; // let it through as plain http, no upgrade, no re-check
+      }
+      // mailto:/tel:/custom-scheme links (slack://, zoommtg://, spotify:, ...)
+      // have no Chromium renderer to navigate to — without this, Chromium
+      // just fails the navigation with ERR_UNKNOWN_URL_SCHEME and our own
+      // did-fail-load handler shows the generic "This page isn't available"
+      // error page instead of actually handing the link to the OS, so
+      // every mailto/"open in app" link on a real site looked completely
+      // dead. Must run before the trackingParams/phishingProtection early
+      // return below, or an external-scheme URL with both features off
+      // reaches Chromium unhandled the same as before this existed.
+      if (isExternalProtocolUrl(targetUrl)) {
+        event.preventDefault();
+        shell.openExternal(targetUrl).catch(() => {});
+        return;
       }
       if (!trackingParamsEnabled() && !phishingProtectionEnabled()) return;
       event.preventDefault();

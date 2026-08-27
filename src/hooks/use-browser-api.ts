@@ -262,7 +262,7 @@ type BrowserAPI = {
     get: () => Promise<{
       removeTrackingParams: boolean;
       httpsOnly: boolean;
-      dohProvider: "off" | "cloudflare" | "quad9";
+      dohProvider: "off" | "cloudflare" | "quad9" | "google";
       panicShortcut: string;
       phishingProtection: boolean;
       torBinaryPath: string;
@@ -271,7 +271,7 @@ type BrowserAPI = {
     set: (patch: Partial<{
       removeTrackingParams: boolean;
       httpsOnly: boolean;
-      dohProvider: "off" | "cloudflare" | "quad9";
+      dohProvider: "off" | "cloudflare" | "quad9" | "google";
       panicShortcut: string;
       phishingProtection: boolean;
       torBinaryPath: string;
@@ -279,7 +279,7 @@ type BrowserAPI = {
     }>) => Promise<{
       removeTrackingParams: boolean;
       httpsOnly: boolean;
-      dohProvider: "off" | "cloudflare" | "quad9";
+      dohProvider: "off" | "cloudflare" | "quad9" | "google";
       panicShortcut: string;
       phishingProtection: boolean;
       torBinaryPath: string;

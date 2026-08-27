@@ -362,6 +362,29 @@ export function applyPrivacyHardening(targetSession?: Electron.Session) {
       callback(true);
       return;
     }
+    // Sanitized clipboard WRITE (navigator.clipboard.writeText/write with a
+    // user gesture) is what every real browser allows silently, no prompt —
+    // it's the "copy" button case, not a privacy-sensitive read. Without
+    // this, it fell through to the same "no stored decision → denied" path
+    // as camera/mic, which is why copy buttons did nothing on every real
+    // site (including our own). Clipboard READ stays out of this allowlist
+    // and keeps falling through to denied below — actually letting a page
+    // read the clipboard is the sensitive direction.
+    if (permission === "clipboard-sanitized-write") {
+      callback(true);
+      return;
+    }
+    // Pointer Lock (element.requestPointerLock() — mouselook in browser
+    // games, 3D viewers/CAD tools, any canvas app that captures the
+    // cursor) isn't privacy-sensitive either, same reasoning as fullscreen
+    // above — it doesn't hand the page any data, just cursor capture, and
+    // Chromium already shows its own "press Esc to exit" overlay for it.
+    // Same missing-mapping problem as clipboard write: silently denied,
+    // looked exactly like "the game just doesn't respond to my mouse".
+    if (permission === "pointerLock") {
+      callback(true);
+      return;
+    }
     // geolocation has no per-site store entry (see PERMISSION_KIND_MAP's
     // comment) — it's governed entirely by the Control center's
     // "Standortfreigabe global" toggle, defaulting to blocked (the
@@ -412,6 +435,8 @@ export function applyPrivacyHardening(targetSession?: Electron.Session) {
   });
   ses.setPermissionCheckHandler((webContents, permission) => {
     if (permission === "fullscreen") return true;
+    if (permission === "clipboard-sanitized-write") return true;
+    if (permission === "pointerLock") return true;
     if (permission === "geolocation") return !locationGloballyBlocked();
     const kind = PERMISSION_KIND_MAP[permission];
     const win = webContents ? BrowserWindow.fromWebContents(webContents) : null;

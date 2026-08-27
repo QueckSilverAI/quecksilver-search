@@ -42,8 +42,18 @@ export function listFrequentSites(windowId: number, prefix: string, limit = 5): 
   const needle = prefix.trim().toLowerCase();
   if (!needle) return [];
   const all = store.read(windowId, []);
+  // startsWith, not includes — the URL-bar caller does INLINE completion
+  // (the matched domain's remaining characters get appended straight into
+  // the field, pre-selected), which only makes sense for an actual prefix
+  // match. With includes(), a high-visit-count domain that merely
+  // CONTAINS the typed text anywhere (not at the start) could out-rank a
+  // genuine prefix match in the sort below and take the one slot the
+  // caller actually checks (routes/index.tsx only looks at results[0]) —
+  // silently swallowing a real, valid suggestion for that keystroke since
+  // the caller's own startsWith guard then rejects the non-prefix top
+  // result and shows nothing at all.
   const results = all
-    .filter((s) => s.domain.toLowerCase().includes(needle))
+    .filter((s) => s.domain.toLowerCase().startsWith(needle))
     .sort((a, b) => b.visitCount - a.visitCount || b.lastVisit - a.lastVisit)
     .slice(0, limit);
   // Temporary diagnostic.

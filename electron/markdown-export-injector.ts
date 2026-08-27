@@ -76,6 +76,20 @@ const EXTRACT_MARKDOWN_SCRIPT = `
         const alt = node.getAttribute("alt") || "";
         const src = node.getAttribute("src") || "";
         lines.push("![" + alt + "](" + src + ")");
+      } else if (tag === "A") {
+        // A link that's a direct block-level child (not wrapped in a <p> —
+        // a standalone "Read more" link, or a linked image used as its own
+        // element) used to fall through to the generic "else" branch below,
+        // which just recurses into it as if it were a plain container —
+        // losing the href entirely, since inline()'s A-handling (the code
+        // that actually knows how to produce "[text](href)") only runs for
+        // an <a> found while walking a PARENT's children, never for the
+        // <a> itself when it's the thing being visited at the top level.
+        // Mirrors inline()'s own A case exactly, just invoked here for the
+        // block-level case that never reached it.
+        const href = node.getAttribute("href") || "";
+        const text = inline(node).trim();
+        if (text) lines.push("[" + text + "](" + href + ")");
       } else if (tag === "HR") {
         lines.push("---");
       } else {

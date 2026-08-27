@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
-export type DohProvider = "off" | "cloudflare" | "quad9";
+export type DohProvider = "off" | "cloudflare" | "quad9" | "google";
 export type PrivacySettings = {
   removeTrackingParams: boolean;
   httpsOnly: boolean;

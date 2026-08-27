@@ -9,6 +9,16 @@ export type SitePermissionEntry = {
   microphone: PermissionState;
   notifications: PermissionState;
   autoDownloads: PermissionState;
+  // True only once the person has actually used Settings → Site
+  // permissions to set autoDownloads themselves (setSitePermission below).
+  // DEFAULT_ENTRY's autoDownloads: "block" also gets written as a side
+  // effect any time recordDefaultBlock creates an entry for an unrelated
+  // undecided permission (camera, say) on the same domain — without this
+  // flag, downloads-store.ts's will-download handler couldn't tell "the
+  // person deliberately blocked downloads here" apart from "this domain
+  // happens to have a permissions row for a completely different reason",
+  // and would end up blocking downloads nobody ever asked it to block.
+  autoDownloadsExplicit?: boolean;
   updatedAt: number;
 };
 
@@ -49,11 +59,15 @@ export function recordDefaultBlock(windowId: number, domain: string, kind: Permi
 export function setSitePermission(windowId: number, domain: string, kind: PermissionKind, state: PermissionState) {
   const entries = store.read(windowId, []);
   const existing = entries.find((e) => e.domain === domain);
+  // Marks this as a real, deliberate decision — see autoDownloadsExplicit's
+  // doc comment above for why this can't just be "an entry exists".
+  const explicitPatch = kind === "autoDownloads" ? { autoDownloadsExplicit: true } : {};
   if (existing) {
     existing[kind] = state;
     existing.updatedAt = Date.now();
+    Object.assign(existing, explicitPatch);
   } else {
-    entries.push({ ...DEFAULT_ENTRY(domain), [kind]: state, updatedAt: Date.now() });
+    entries.push({ ...DEFAULT_ENTRY(domain), [kind]: state, updatedAt: Date.now(), ...explicitPatch });
   }
   store.write(windowId, entries);
 }

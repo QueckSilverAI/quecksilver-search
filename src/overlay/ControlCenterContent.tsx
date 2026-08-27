@@ -822,9 +822,20 @@ export function ControlCenterContent({
               // pulls in the two performance toggles it depends on, in
               // the SAME patch, so main.ts's dnsOverHttps-style "read the
               // sibling field off next" pattern isn't needed here.
+              //
+              // autoSuspendMinutes is the one that actually matters here:
+              // unloadBackgroundTabsOnIdle itself isn't read by anything —
+              // tab-manager.ts's checkAutoSuspend() only acts once
+              // autoSuspendMinutes is above 0 (see its own comment). Without
+              // this, turning Battery saver on left autoSuspendMinutes at
+              // whatever it was (0/"Off" by default), so background tabs
+              // were still throttled but never actually unloaded — half the
+              // preset silently doing nothing. 10 matches the same preset's
+              // apply_preset("battery_saver") value in browser-tools.ts, so
+              // Zora and this toggle agree on what "battery saver" means.
               set(
                 v
-                  ? { batterySaverMode: true, backgroundTabsThrottled: true, unloadBackgroundTabsOnIdle: true }
+                  ? { batterySaverMode: true, backgroundTabsThrottled: true, unloadBackgroundTabsOnIdle: true, autoSuspendMinutes: 10 }
                   : { batterySaverMode: false },
               )
             }

@@ -1,4 +1,4 @@
-import { shell } from "electron";
+import { shell, session as electronSession } from "electron";
 import type { TabManager } from "./tab-manager";
 import { listBookmarks, saveBookmarks } from "./bookmark-store";
 import { HOME_URL } from "./types";
@@ -568,7 +568,12 @@ async function executeBrowserToolInner(
       case "download_url": {
         const url = typeof args.url === "string" ? args.url : null;
         if (!url) return { ok: false, text: "Missing url." };
-        win.webContents.downloadURL(url);
+        // ctx.contentSession (falling back to the default session for a
+        // normal window) — NOT win.webContents, which is always the chrome
+        // UI's own default-session webContents regardless of window mode.
+        // Same Tor-proxy-bypass/Incognito-cookie-leak reasoning as
+        // main.ts's saveImageDirect/saveLinkAs.
+        (ctx.contentSession ?? electronSession.defaultSession).downloadURL(url);
         return { ok: true, text: `Started downloading ${url}.` };
       }
       case "list_downloads": {

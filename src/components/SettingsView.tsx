@@ -1071,6 +1071,7 @@ export function SettingsView({ nightModeTabId }: { nightModeTabId?: string | nul
                   <option value="off">Off</option>
                   <option value="cloudflare">Cloudflare</option>
                   <option value="quad9">Quad9</option>
+                  <option value="google">Google</option>
                 </select>
               </div>
             </CardSection>

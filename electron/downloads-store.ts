@@ -1,8 +1,28 @@
-import { app, session } from "electron";
+import { app, BrowserWindow, session } from "electron";
 import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
+import { getSitePermission } from "./site-permissions-store";
 import { JsonStore } from "./json-store";
 import type { DownloadItem } from "./types";
+
+// Chrome/Edge behavior: a colliding filename doesn't overwrite silently or
+// fail — it gets " (2)", " (3)", ... inserted before the extension. Without
+// this, item.setSavePath() below just pointed every same-named download at
+// the exact same path, so a second download of "invoice.pdf" either
+// silently clobbered the first file or (on platforms/situations where the
+// underlying write can't replace an existing file) failed outright with
+// nothing visibly saved — indistinguishable from "download did nothing".
+function uniquifyPath(folder: string, filename: string): string {
+  const ext = path.extname(filename);
+  const base = filename.slice(0, filename.length - ext.length);
+  let candidate = path.join(folder, filename);
+  let n = 2;
+  while (existsSync(candidate)) {
+    candidate = path.join(folder, `${base} (${n})${ext}`);
+    n++;
+  }
+  return candidate;
+}
 
 const store = new JsonStore<DownloadItem[]>("downloads.json");
 const FOLDER_KEY_STORE = new JsonStore<{ folder: string }>("downloads-folder.json");
@@ -53,16 +73,46 @@ function addOrUpdate(item: DownloadItem) {
 // will-download on the session's downloads, not per-WebContents, so this
 // only needs registering once regardless of how many tabs exist.
 export function registerDownloadTracking(onChanged: () => void) {
-  session.defaultSession.on("will-download", (_event, item) => {
+  session.defaultSession.on("will-download", (event, item, webContents) => {
+    // "Automatische Downloads" per-site permission (Settings → Site
+    // permissions) — was defined end-to-end (store, IPC, UI toggle, Zora
+    // tool) but nothing ever actually read it here, so it had zero effect
+    // regardless of what a person set it to. Only enforced when the person
+    // deliberately blocked it for this exact domain (autoDownloadsExplicit
+    // — see its doc comment in site-permissions-store.ts): an ambient
+    // "block" that only exists as a side effect of some unrelated
+    // permission's default-block record must NOT start silently killing
+    // that domain's downloads. Same shape as camera/mic below it in
+    // privacy.ts: once explicitly blocked, ALL downloads from that domain
+    // are stopped (not just automatic ones) until switched back to
+    // "allow" — there's no reliable way from the main process to tell a
+    // real click-triggered download apart from a script-triggered one, so
+    // rather than guess we keep this consistent with how every other
+    // per-site permission in the app already behaves.
+    try {
+      const domain = new URL(webContents.getURL()).hostname;
+      const win = BrowserWindow.fromWebContents(webContents);
+      const entry = win ? getSitePermission(win.id, domain) : null;
+      if (entry?.autoDownloadsExplicit && entry.autoDownloads === "block") {
+        event.preventDefault();
+        return;
+      }
+    } catch {
+      /* no valid origin (e.g. a data: URL download) — nothing to block against */
+    }
+
     const folder = getDownloadsFolder();
     if (!existsSync(folder)) mkdirSync(folder, { recursive: true });
-    const savePath = path.join(folder, item.getFilename());
+    const savePath = uniquifyPath(folder, item.getFilename());
     item.setSavePath(savePath);
 
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const record: DownloadItem = {
       id,
-      filename: item.getFilename(),
+      // The uniquified basename, not item.getFilename() — otherwise the
+      // downloads list shows two entries both named "invoice.pdf" even
+      // though the second one actually landed on disk as "invoice (2).pdf".
+      filename: path.basename(savePath),
       path: savePath,
       state: "progressing",
       receivedBytes: 0,

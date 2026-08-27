@@ -20,6 +20,25 @@ const TRANSLATED_ATTR = "data-qs-translated";
 // Runs inside the page. Collects visible text nodes not already translated,
 // tags each with a data-qs-translate-id so the injection step can find the
 // exact same node again after the async round-trip to the edge function.
+//
+// Wraps each qualifying text node in its own marker <span> rather than
+// stamping the id on its existing parent element. Stamping the parent used
+// to break on the extremely common case of a parent with MORE than one
+// direct text-node child around some inline markup — e.g.
+// "Read this <b>important</b> update" has THREE text-node children of the
+// same <p> ("Read this ", inside <b> doesn't count, " update"), and
+// setAttribute just overwrote the same attribute on the same <p> for each
+// one in turn, so only the LAST segment's id "won" on that parent. The
+// injection step below then found nothing for the first segment's id (its
+// translation silently vanished) and wrote the LAST segment's translation
+// into the FIRST text-node child it found under that id (visibly scrambled/
+// wrong text) — exactly the "sentences with bold/italic/links in the
+// middle come out garbled" symptom. A dedicated wrapper per text node gives
+// every segment its own unique, unambiguous element to find and update, no
+// matter how many sibling text runs share the same original parent. This
+// is the same technique real "translate this page" implementations use for
+// exactly this reason — TreeWalker itself is well-defined to keep
+// traversing correctly across the DOM mutation this causes.
 const EXTRACT_SCRIPT = `
 (() => {
   const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEXTAREA", "INPUT", "CODE", "PRE"]);
@@ -41,16 +60,22 @@ const EXTRACT_SCRIPT = `
   let id = 0;
   while ((node = walker.nextNode())) {
     const segId = "qs-t-" + id++;
-    node.parentElement.setAttribute("data-qs-translate-id", segId);
+    const wrapper = document.createElement("span");
+    wrapper.setAttribute("data-qs-translate-id", segId);
+    node.parentNode.insertBefore(wrapper, node);
+    wrapper.appendChild(node);
     segments.push({ id: segId, text: node.nodeValue });
   }
   return segments;
 })();
 `;
 
-// Runs inside the page after translation. Looks each node back up by the id
-// stamped during extraction and swaps in the translated text, then marks it
-// so a second translate pass (or the extractor re-running) skips it.
+// Runs inside the page after translation. Looks each wrapper span back up
+// by the id stamped during extraction and swaps in the translated text,
+// then marks it so a second translate pass (or the extractor re-running)
+// skips it. Each span wraps exactly one original text node and nothing
+// else, so setting textContent directly is always correct — no more
+// "guess which child text node this segment meant" ambiguity.
 function buildInjectScript(pairs: Array<{ id: string; text: string }>): string {
   return `
 (() => {
@@ -58,12 +83,7 @@ function buildInjectScript(pairs: Array<{ id: string; text: string }>): string {
   for (const { id, text } of pairs) {
     const el = document.querySelector('[data-qs-translate-id="' + id + '"]');
     if (!el) continue;
-    for (const child of el.childNodes) {
-      if (child.nodeType === Node.TEXT_NODE && child.nodeValue && child.nodeValue.trim()) {
-        child.nodeValue = text;
-        break;
-      }
-    }
+    el.textContent = text;
     el.setAttribute("${TRANSLATED_ATTR}", "");
     el.removeAttribute("data-qs-translate-id");
   }

@@ -619,6 +619,18 @@ async function createTorWindow(): Promise<BrowserWindow> {
   const win = createWindow({ activeProfileId: null, guestMode: true, windowMode: "tor" });
   const ctx = windows.get(win.id);
   await startTor(getPrivacySettings().torBinaryPath || null);
+  // "Tor security level" — the only concrete promise this setting's own
+  // Settings-page description makes is "Safest disables JavaScript
+  // entirely, many sites won't work, by design". Reuses the exact same
+  // CDP-based mechanism the Control Center's own "Disable JavaScript"
+  // toggle already uses (TabManager.setJavaScriptGloballyDisabled) —
+  // there's no separate "safer"-specific restriction (selective per-
+  // protocol JS, font/media blocking) implemented anywhere in this app,
+  // and nothing in the UI promises one, so "safer" intentionally behaves
+  // like "standard" here rather than inventing unpromised behavior.
+  if (ctx && getPrivacySettings().torSecurityLevel === "safest") {
+    await ctx.tabs.setJavaScriptGloballyDisabled(true);
+  }
   // Control center's "VPN-Kill-Switch" (masterplan #6) — once this window
   // has been genuinely routed through Tor at least once, any LATER status
   // that isn't "ready" (Tor crashed, was killed externally, ...) means
@@ -796,26 +808,43 @@ function contextFor(
 // need the actual bytes, not just the URL, and net.fetch (Electron's
 // fetch, respects the same session/cookies as the tab so an auth-gated
 // image still works) is the one thing they have in common.
-async function fetchImageBuffer(url: string): Promise<Buffer> {
-  const res = await electronNet.fetch(url);
+//
+// `ses` MUST be the calling window's own contentSession (falling back to
+// the default session only for a normal window, which has none) — without
+// it, net.fetch defaults to session.defaultSession regardless of which
+// window/tab the request came from. For an Incognito window that silently
+// mixes that window's supposedly-isolated request in with the default
+// session's cookies; for a TOR window it's far worse: the proxy is only
+// ever set on that window's OWN contentSession (see createTorWindow), so a
+// request issued against the default session bypasses Tor's SOCKS proxy
+// entirely and goes out over the real network directly — a genuine
+// deanonymization leak for exactly the "right-click an image, save it"
+// action, while the rest of the page correctly stayed on Tor.
+async function fetchImageBuffer(url: string, ses: Electron.Session): Promise<Buffer> {
+  const res = await electronNet.fetch(url, { session: ses });
   return Buffer.from(await res.arrayBuffer());
 }
-async function copyImage(url: string) {
-  const buf = await fetchImageBuffer(url);
+async function copyImage(url: string, ses: Electron.Session) {
+  const buf = await fetchImageBuffer(url, ses);
   clipboard.writeImage(nativeImage.createFromBuffer(buf));
 }
-async function saveImageAs(url: string) {
+async function saveImageAs(url: string, ses: Electron.Session) {
   const focused = BrowserWindow.getFocusedWindow();
   const suggestedName = decodeURIComponent(url.split("/").pop()?.split("?")[0] || "image.png");
   const result = await dialog.showSaveDialog(focused ?? undefined!, { defaultPath: suggestedName });
   if (result.canceled || !result.filePath) return;
-  const buf = await fetchImageBuffer(url);
+  const buf = await fetchImageBuffer(url, ses);
   await fsPromises.writeFile(result.filePath, buf);
 }
 // "Save image" (no "as") — straight to the configured downloads folder,
-// same behavior/location as a regular file download.
-function saveImageDirect(win: BrowserWindow, url: string) {
-  win.webContents.downloadURL(url);
+// same behavior/location as a regular file download. Session.downloadURL()
+// (not webContents.downloadURL()) is what lets this go through the right
+// session — win.webContents is always the CHROME UI's own webContents
+// (default session, always, regardless of window mode), never the tab's
+// isolated contentSession, so routing through it had exactly the same
+// Incognito/Tor leak as fetchImageBuffer above.
+function saveImageDirect(ses: Electron.Session, url: string) {
+  ses.downloadURL(url);
 }
 function copyLink(url: string) {
   clipboard.writeText(url);
@@ -947,9 +976,11 @@ function openLinkHere(win: BrowserWindow, tabId: string, url: string) {
 // a save location first. Distinct from saveImageAs: this doesn't fetch
 // bytes itself, it lets Electron's normal download machinery (and the
 // existing downloads list) handle it, same as a real browser's version of
-// this same menu item.
-function saveLinkAs(win: BrowserWindow, url: string) {
-  win.webContents.downloadURL(url);
+// this same menu item. Same session.downloadURL() reasoning as
+// saveImageDirect above — must NOT go through win.webContents (default
+// session always) or this leaks the same way in Incognito/Tor windows.
+function saveLinkAs(ses: Electron.Session, url: string) {
+  ses.downloadURL(url);
 }
 // --- Right-click menu (image / link / selected text) -----------------------
 // Rendered in the native overlay window (see electron/overlay-window.ts) as
@@ -1224,11 +1255,17 @@ function registerIpc() {
   // lives at module scope above registerIpc() — createWindow() needs to
   // hand showContextMenu to TabManager before registerIpc() ever runs for
   // the very first window, so it couldn't be defined only in here.
-  ipcMain.handle("images:copy", (_e, url: string) => copyImage(url));
-  ipcMain.handle("images:save", (_e, url: string) => saveImageAs(url));
+  ipcMain.handle("images:copy", (e, url: string) => {
+    const ctx = contextFor(e);
+    return copyImage(url, ctx?.contentSession ?? electronSession.defaultSession);
+  });
+  ipcMain.handle("images:save", (e, url: string) => {
+    const ctx = contextFor(e);
+    return saveImageAs(url, ctx?.contentSession ?? electronSession.defaultSession);
+  });
   ipcMain.handle("images:saveDirect", (e, url: string) => {
     const ctx = contextFor(e);
-    if (ctx) saveImageDirect(ctx.win, url);
+    if (ctx) saveImageDirect(ctx.contentSession ?? electronSession.defaultSession, url);
   });
   ipcMain.handle("links:copy", (_e, url: string) => copyLink(url));
   ipcMain.handle("links:openInNewTab", (e, url: string) => {
@@ -1248,7 +1285,7 @@ function registerIpc() {
   });
   ipcMain.handle("links:saveAs", (e, url: string) => {
     const ctx = contextFor(e);
-    if (ctx) saveLinkAs(ctx.win, url);
+    if (ctx) saveLinkAs(ctx.contentSession ?? electronSession.defaultSession, url);
   });
   ipcMain.handle("images:copyLink", (_e, url: string) => copyLink(url));
   ipcMain.handle("tabs:copySelectionFor", (e, tabId: string) => {
@@ -1357,13 +1394,28 @@ function registerIpc() {
     setExtensionEnabled(id, enabled),
   );
   ipcMain.handle("privacy:get", () => getPrivacySettings());
-  ipcMain.handle("privacy:set", (_e, patch: Partial<ReturnType<typeof getPrivacySettings>>) => {
+  ipcMain.handle("privacy:set", async (_e, patch: Partial<ReturnType<typeof getPrivacySettings>>) => {
     // panicShortcut goes through updatePanicShortcut (re-registers the
     // global shortcut immediately); everything else is a plain setting
     // with no side effect beyond being read on the next relevant check.
     if (patch.panicShortcut !== undefined) updatePanicShortcut(patch.panicShortcut);
     const { panicShortcut: _omit, ...rest } = patch;
-    return setPrivacySettings(rest);
+    const next = setPrivacySettings(rest);
+    // torSecurityLevel needs an immediate, explicit push (unlike most
+    // other privacy settings here, which take effect on their own next
+    // read) — createTorWindow only applies "safest"'s JS-disable once, at
+    // that window's creation, so flipping this while a Tor window is
+    // ALREADY open needs its own re-apply to every currently-open Tor
+    // window right now, same reasoning as updatePanicShortcut above.
+    if (patch.torSecurityLevel !== undefined) {
+      const disable = patch.torSecurityLevel === "safest";
+      for (const w of windows.values()) {
+        if (getActiveIdentity(w.win.id).windowMode === "tor") {
+          await w.tabs.setJavaScriptGloballyDisabled(disable);
+        }
+      }
+    }
+    return next;
   });
   ipcMain.handle("app:installUpdate", () => autoUpdater.quitAndInstall());
   ipcMain.handle("session:setRestoreOnStart", (_e, value: boolean) => setRestoreOnStart(value));
