@@ -8,6 +8,7 @@ import { ZoraMessage } from "./ZoraMessage";
 import { ZoraChatInput } from "./ZoraChatInput";
 import { ZoraToolApprovalCard } from "./ZoraToolApprovalCard";
 import { ZoraHopLimitCard } from "./ZoraHopLimitCard";
+import { ZoraSessionExpiredCard } from "./ZoraSessionExpiredCard";
 import { ZoraAuditLog } from "./ZoraAuditLog";
 
 // No onClose prop anymore — the Chat button in the main header (which
@@ -49,13 +50,14 @@ function ZoraConnecting() {
 }
 
 export function ZoraSidebar(_props: Props) {
-  const { session } = useAuth();
+  const { session, login } = useAuth();
   const {
     messages,
     isLoading,
     statusText,
     pendingToolCall,
     hopLimitReached,
+    sessionExpired,
     send,
     regenerate,
     stop,
@@ -74,7 +76,7 @@ export function ZoraSidebar(_props: Props) {
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages, isLoading, pendingToolCall, hopLimitReached]);
+  }, [messages, isLoading, pendingToolCall, hopLimitReached, sessionExpired]);
 
   if (connecting) return <ZoraConnecting />;
 
@@ -131,6 +133,7 @@ export function ZoraSidebar(_props: Props) {
           <ZoraToolApprovalCard call={pendingToolCall} onApprove={approveToolCall} onDeny={denyToolCall} />
         )}
         {hopLimitReached && <ZoraHopLimitCard onContinue={continueFromLimit} />}
+        {sessionExpired && <ZoraSessionExpiredCard onSignIn={() => void login("reauth")} />}
         {isLoading && !pendingToolCall && (
           <p className="px-1 text-sm text-muted-foreground">{statusText ?? "Thinking…"}</p>
         )}

@@ -113,6 +113,13 @@ export function useZoraChat(accessToken: string | null) {
   const [statusText, setStatusText] = useState<string | null>(null);
   const [pendingToolCall, setPendingToolCall] = useState<PendingToolCall | null>(null);
   const [hopLimitReached, setHopLimitReached] = useState(false);
+  // search-chat returns 401 specifically when a real (non-anon) access
+  // token failed to validate — see search-chat/index.ts's auth block and
+  // electron/auth.ts's own comment: this flow's token is short-lived with
+  // no refresh, so a stale session is expected eventually, not a bug. The
+  // UI shows ZoraSessionExpiredCard (a "Sign in again" prompt) rather than
+  // the generic failure bubble so it's actually actionable.
+  const [sessionExpired, setSessionExpired] = useState(false);
   const idRef = useRef(0);
   const nextId = () => `m${++idRef.current}`;
   const approvalResolveRef = useRef<((approved: boolean) => void) | null>(null);
@@ -136,6 +143,13 @@ export function useZoraChat(accessToken: string | null) {
       audioRef.current = null;
     });
   }, []);
+
+  // Once the caller hands in a new token (a successful login/reauth), the
+  // stale-session card is no longer relevant — clears on its own rather
+  // than waiting for the next send() to reset it.
+  useEffect(() => {
+    setSessionExpired(false);
+  }, [accessToken]);
 
   const applyMessages = useCallback((updater: (prev: ZoraMessage[]) => ZoraMessage[]) => {
     setMessages((prev) => {
@@ -340,6 +354,7 @@ export function useZoraChat(accessToken: string | null) {
       setIsLoading(true);
       setHopLimitReached(false);
       hopLimitStateRef.current = null;
+      setSessionExpired(false);
       const abort = new AbortController();
       abortRef.current = abort;
 
@@ -386,6 +401,10 @@ export function useZoraChat(accessToken: string | null) {
         }
         console.error("[zora] send failed:", e);
         setStatusText(null);
+        if (e instanceof Error && e.message === "search-chat failed: 401") {
+          setSessionExpired(true);
+          return;
+        }
         // A specific reason (rather than always the same generic
         // sentence) — helps tell "this is expected, wait and retry" (a
         // transient network/rate-limit blip that just wasn't recoverable
@@ -430,10 +449,14 @@ export function useZoraChat(accessToken: string | null) {
       }
       console.error("[zora] continue failed:", e);
       setStatusText(null);
-      applyMessages((prev) => [
-        ...prev,
-        { id: nextId(), role: "model", text: "Something went wrong, try again.", time: Date.now(), failed: true },
-      ]);
+      if (e instanceof Error && e.message === "search-chat failed: 401") {
+        setSessionExpired(true);
+      } else {
+        applyMessages((prev) => [
+          ...prev,
+          { id: nextId(), role: "model", text: "Something went wrong, try again.", time: Date.now(), failed: true },
+        ]);
+      }
     } finally {
       setIsLoading(false);
       setPendingToolCall(null);
@@ -467,6 +490,7 @@ export function useZoraChat(accessToken: string | null) {
     statusText,
     pendingToolCall,
     hopLimitReached,
+    sessionExpired,
     send,
     regenerate,
     stop,
