@@ -67,6 +67,21 @@ const SENSITIVE_DOMAIN_PATTERNS = [
   /revolut/i,
   /coinbase/i,
   /\bcrypto\b/i,
+  // Swiss banks/brokers — QueckSilver is a Swiss product, and the list
+  // above was otherwise entirely US-centric (Chase, Wells Fargo) despite
+  // that.
+  /\bubs\.com$/i,
+  /postfinance/i,
+  /raiffeisen/i,
+  /\bzkb\.ch$/i,
+  /migrosbank/i,
+  /swissquote/i,
+  // Generic login/sign-in pages — not every sensitive form is a payment;
+  // an account login is exactly the kind of field a person wouldn't want
+  // Zora typing into on "auto" just because click_element/type_text
+  // happened to be set that way for everyday browsing.
+  /\blogin\b/i,
+  /sign-?in/i,
 ];
 
 function isSensitiveDomain(domain: string | null | undefined): boolean {

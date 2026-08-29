@@ -34,6 +34,7 @@ console.log("[tabs-list-sync] preload received initial snapshot:", initialTabsSn
 
 const tabs = {
   new: (url?: string): Promise<string> => ipcRenderer.invoke("tabs:new", url),
+  previewBase64: (id: string): Promise<string | null> => ipcRenderer.invoke("tabs:previewBase64", id),
   close: (id: string): Promise<void> => ipcRenderer.invoke("tabs:close", id),
   switch: (id: string): Promise<void> => ipcRenderer.invoke("tabs:switch", id),
   list: (): Promise<TabsSnapshot> => ipcRenderer.invoke("tabs:list"),
@@ -281,14 +282,24 @@ const appUpdate = {
   },
 };
 const images = {
-  copy: (url: string): Promise<void> => ipcRenderer.invoke("images:copy", url),
-  save: (url: string): Promise<void> => ipcRenderer.invoke("images:save", url),
-  saveDirect: (url: string): Promise<void> => ipcRenderer.invoke("images:saveDirect", url),
-  copyLink: (url: string): Promise<void> => ipcRenderer.invoke("images:copyLink", url),
+  // tabId/isChromeUI let main.ts find the exact webContents that rendered
+  // the image — needed to read a blob: URL's bytes back out of it (see
+  // fetchImageBuffer in main.ts). Optional so nothing else calling these
+  // breaks; main.ts just falls back to no source webContents (fine for
+  // ordinary http(s)/data URLs, which don't need one).
+  copy: (url: string, tabId?: string, isChromeUI?: boolean): Promise<void> =>
+    ipcRenderer.invoke("images:copy", url, tabId, isChromeUI),
+  save: (url: string, tabId?: string, isChromeUI?: boolean): Promise<void> =>
+    ipcRenderer.invoke("images:save", url, tabId, isChromeUI),
+  saveDirect: (url: string, tabId?: string, isChromeUI?: boolean): Promise<void> =>
+    ipcRenderer.invoke("images:saveDirect", url, tabId, isChromeUI),
+  copyLink: (url: string, tabId?: string, isChromeUI?: boolean): Promise<void> =>
+    ipcRenderer.invoke("images:copyLink", url, tabId, isChromeUI),
 };
 const links = {
   copy: (url: string): Promise<void> => ipcRenderer.invoke("links:copy", url),
-  openInNewTab: (url: string): Promise<void> => ipcRenderer.invoke("links:openInNewTab", url),
+  openInNewTab: (url: string, tabId?: string, isChromeUI?: boolean): Promise<void> =>
+    ipcRenderer.invoke("links:openInNewTab", url, tabId, isChromeUI),
   openInNewWindow: (url: string): Promise<void> => ipcRenderer.invoke("links:openInNewWindow", url),
   openInIncognitoWindow: (url: string): Promise<void> => ipcRenderer.invoke("links:openInIncognitoWindow", url),
   openHere: (tabId: string, url: string): Promise<void> => ipcRenderer.invoke("links:openHere", tabId, url),

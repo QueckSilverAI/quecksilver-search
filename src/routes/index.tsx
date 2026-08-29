@@ -573,7 +573,7 @@ function Index() {
             if (activeId) window.browserAPI?.links.openHere(activeId, action.url);
             break;
           case "openLinkInNewTab":
-            window.browserAPI?.tabs.new(action.url);
+            window.browserAPI?.links.openInNewTab(action.url, action.tabId, action.isChromeUI);
             break;
           case "openLinkInNewWindow":
             window.browserAPI?.links.openInNewWindow(action.url);
@@ -585,13 +585,16 @@ function Index() {
             window.browserAPI?.links.saveAs(action.url);
             break;
           case "copyImage":
-            window.browserAPI?.images.copy(action.url);
+            window.browserAPI?.images.copy(action.url, action.tabId, action.isChromeUI);
             break;
           case "saveImage":
-            window.browserAPI?.images.saveDirect(action.url);
+            window.browserAPI?.images.saveDirect(action.url, action.tabId, action.isChromeUI);
             break;
           case "saveImageAs":
-            window.browserAPI?.images.save(action.url);
+            window.browserAPI?.images.save(action.url, action.tabId, action.isChromeUI);
+            break;
+          case "copyImageAddress":
+            window.browserAPI?.images.copyLink(action.url, action.tabId, action.isChromeUI);
             break;
           case "copySelection":
             if (activeId) window.browserAPI?.tabs.copySelectionFor(activeId);

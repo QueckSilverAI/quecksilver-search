@@ -176,6 +176,18 @@ export class TabManager {
   // being active, cleared again the moment it becomes active once more —
   // so the idle clock restarts every time someone actually looks at it.
   private lastActiveAt = new Map<string, number>();
+  // id -> last PNG-as-base64 snapshot, for the tab strip's hover preview
+  // (TabStrip.tsx). Only the active tab (and, in split view, the
+  // secondary one) has its WebContentsView actually attached to the
+  // window at any given moment — every other tab's view gets
+  // removeChildView()'d on switch-away (see switchTab below) — and
+  // capturePage() on a view that isn't currently attached/composited
+  // can't be trusted to return a real frame. So rather than try to
+  // capture on demand when a hover fires (which is exactly when the tab
+  // is almost certainly NOT the attached one), this snapshots a tab
+  // right before it gets detached and serves that cached frame instead.
+  // Evicted in closeTab.
+  private previewCache = new Map<string, string>();
   private autoSuspendInterval: NodeJS.Timeout | null = null;
   // id -> url to skip the Safe Browsing check for, once. Set right before
   // showing the warning page for that url, from EITHER navigate() (typed
@@ -1062,10 +1074,34 @@ export class TabManager {
   }
 
   // --- Control center: screenshot + print/save-as-PDF ---------------------
-  async captureScreenshot(id: string): Promise<string | null> {
+  // The webContents.capturePage() target for whatever's VISIBLY showing as
+  // tab id's content right now. For an ordinary tab this is straightforward
+  // — its own (attached) WebContentsView. For a home/settings tab there IS
+  // no real per-tab page: createTab() creates a WebContentsView for one but
+  // deliberately never navigates it anywhere (see its own comment) — what's
+  // actually visible is the chrome UI's own React route (HomeContent /
+  // SettingsView), rendered by win.webContents itself within this.bounds
+  // (the same rect a real tab's view would occupy). Capturing win.webContents
+  // directly (unclipped) would grab the WHOLE window — toolbar, tab strip,
+  // any open sidebar — so this always passes this.bounds as the capture
+  // rect for that case, cropping it down to just the content area, same as
+  // what a real tab's own view would show. Returns null if id isn't
+  // currently the visibly-rendered tab at all (a background home/settings
+  // tab has nothing live to capture — see previewCache for how that case
+  // is handled instead, via a snapshot taken at switch-away time).
+  private async captureVisibleContent(id: string): Promise<Electron.NativeImage | null> {
+    if (this.homeTabs.has(id) || this.settingsTabs.has(id)) {
+      if (id !== this.activeId) return null;
+      return this.win.webContents.capturePage(this.bounds).catch(() => null);
+    }
     const wc = this.views.get(id)?.webContents;
     if (!wc) return null;
-    const image = await wc.capturePage();
+    return wc.capturePage().catch(() => null);
+  }
+
+  async captureScreenshot(id: string): Promise<string | null> {
+    const image = await this.captureVisibleContent(id);
+    if (!image) return null;
     const { filePath, canceled } = await dialog.showSaveDialog({
       title: "Save screenshot",
       defaultPath: path.join(app.getPath("pictures"), `screenshot-${Date.now()}.png`),
@@ -1077,17 +1113,37 @@ export class TabManager {
   }
 
   // For Zora's see_screen tool (zora-browser-integration-plan.md section
-  // 5a) — same capturePage() as captureScreenshot above, but returns the
-  // PNG as base64 directly instead of writing to disk through a save
-  // dialog. Never gets its own IPC channel exposed to the chrome UI —
-  // only browser-tools.ts calls this, and only when the screenShareEnabled
+  // 5a) — same capture as captureScreenshot above, but returns the PNG as
+  // base64 directly instead of writing to disk through a save dialog.
+  // Never gets its own IPC channel exposed to the chrome UI — only
+  // browser-tools.ts calls this, and only when the screenShareEnabled
   // toggle is on (checked there, not here, so this stays a plain capture
   // primitive with no policy baked in).
   async captureScreenshotBase64(id: string): Promise<string | null> {
-    const wc = this.views.get(id)?.webContents;
-    if (!wc) return null;
-    const image = await wc.capturePage().catch(() => null);
+    const image = await this.captureVisibleContent(id);
     return image ? image.toPNG().toString("base64") : null;
+  }
+
+  // For the tab strip's hover preview (a thumbnail shown a beat after
+  // hovering a tab — see TabStrip.tsx's HOVER_PREVIEW_DELAY_MS). Live
+  // capture only works for a tab that's actually visibly rendered right
+  // now (see captureVisibleContent) — anything else gets served the
+  // cached snapshot taken right before it stopped being visible instead
+  // (see previewCache's own comment and switchTab's capture-before-
+  // detach). This is why this needs its own method rather than reusing
+  // captureScreenshotBase64 above: that one always does a live capture
+  // (fine for its own callers, which only ever target the active tab) and
+  // is deliberately never exposed to the chrome UI at all — this one IS,
+  // via its own IPC channel (tabs:previewBase64).
+  async capturePreviewBase64(id: string): Promise<string | null> {
+    if (id !== this.activeId && id !== this.secondaryId) {
+      return this.previewCache.get(id) ?? null;
+    }
+    const image = await this.captureVisibleContent(id);
+    if (!image) return null;
+    const base64 = image.toPNG().toString("base64");
+    this.previewCache.set(id, base64); // keeps the cache warm for once this tab goes inactive
+    return base64;
   }
 
   // --- Control center: full-page screenshot (masterplan #19) --------------
@@ -1101,6 +1157,27 @@ export class TabManager {
   async captureFullPageScreenshot(id: string): Promise<string | null> {
     const view = this.views.get(id);
     const wc = view?.webContents;
+    // Home/Settings tabs have no real per-tab page to grow/scroll (see
+    // captureVisibleContent's comment — their WebContentsView is never
+    // navigated anywhere) — the "grow the view to scrollHeight" trick
+    // below needs an actual page with a DOM to measure, and doing the
+    // equivalent against win.webContents would mean temporarily resizing
+    // the WHOLE APP WINDOW rather than just a tab's content area, which
+    // is a much bigger, riskier change than this feature is worth for an
+    // internal page. Falls back to a plain (viewport-sized, non-scrolling)
+    // capture instead — not a true full-page shot, but at least not blank.
+    if (this.homeTabs.has(id) || this.settingsTabs.has(id)) {
+      const image = await this.captureVisibleContent(id);
+      if (!image) return null;
+      const { filePath, canceled } = await dialog.showSaveDialog({
+        title: "Save screenshot",
+        defaultPath: path.join(app.getPath("pictures"), `screenshot-${Date.now()}.png`),
+        filters: [{ name: "PNG image", extensions: ["png"] }],
+      });
+      if (canceled || !filePath) return null;
+      await fs.writeFile(filePath, image.toPNG());
+      return filePath;
+    }
     if (!view || !wc) return null;
     // If device emulation is active for this tab, grow from its
     // letterboxed size (not the full window) — otherwise this would
@@ -2265,6 +2342,7 @@ export class TabManager {
     this.audibleTabs.delete(id);
     this.openedAt.delete(id);
     this.lastActiveAt.delete(id);
+    this.previewCache.delete(id);
     this.tabGroupOf.delete(id);
     this.deviceEmulation.delete(id);
     this.order = this.order.filter((tabId) => tabId !== id);
@@ -2377,6 +2455,7 @@ export class TabManager {
     this.audibleTabs.delete(id);
     this.openedAt.delete(id);
     this.lastActiveAt.delete(id);
+    this.previewCache.delete(id);
     this.tabGroupOf.delete(id);
     this.deviceEmulation.delete(id);
     this.order = this.order.filter((tabId) => tabId !== id);
@@ -2456,7 +2535,26 @@ export class TabManager {
     // its last bounds forever once nothing tracks it anymore.
     if (this.activeId) {
       const prev = this.views.get(this.activeId);
-      if (prev) this.win.contentView.removeChildView(prev);
+      if (prev) {
+        // Snapshot the tab we're leaving WHILE it's still visible/composited
+        // — see previewCache's own comment for why this can't just happen
+        // later, on demand, once it's gone. Home/Settings tabs have no real
+        // per-tab page (see captureVisibleContent's comment) — what's
+        // actually showing for one is win.webContents's own content-area
+        // rect, so THAT'S what gets captured for those, not the (blank)
+        // per-tab view. Fire-and-forget: capturePage() reads the already-
+        // committed frame at call time (issued here, synchronously, before
+        // this.activeId changes or emitChange() below tells the renderer to
+        // switch to the NEW tab's content), so nothing later in this
+        // function can retroactively invalidate it.
+        const prevId = this.activeId;
+        const prevIsInternal = this.homeTabs.has(prevId) || this.settingsTabs.has(prevId);
+        const capture = prevIsInternal
+          ? this.win.webContents.capturePage(this.bounds)
+          : prev.webContents.capturePage();
+        capture.then((image) => this.previewCache.set(prevId, image.toPNG().toString("base64"))).catch(() => {});
+        this.win.contentView.removeChildView(prev);
+      }
       // Control center's "Auto-Suspend" (masterplan #12) — the tab we're
       // switching AWAY from starts its idle clock now.
       this.lastActiveAt.set(this.activeId, Date.now());

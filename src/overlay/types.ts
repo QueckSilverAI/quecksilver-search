@@ -61,13 +61,28 @@ export type ContextMenuOverlayPayload = {
 
 export type ContextMenuOverlayAction =
   | { type: "openLinkHere"; url: string }
-  | { type: "openLinkInNewTab"; url: string }
+  // tabId + isChromeUI (see the copyImage group below) — "Open in new
+  // tab" needs to know the source webContents too now: a blob: URL
+  // (image src OR link href) has to be read from there before a brand
+  // new tab (a different renderer entirely) can show it at all.
+  | { type: "openLinkInNewTab"; url: string; tabId: string; isChromeUI: boolean }
   | { type: "openLinkInNewWindow"; url: string }
   | { type: "copyLink"; url: string }
   | { type: "saveLinkAs"; url: string }
-  | { type: "copyImage"; url: string }
-  | { type: "saveImage"; url: string }
-  | { type: "saveImageAs"; url: string }
+  // tabId + isChromeUI identify which webContents actually rendered the
+  // image (a real tab, or the app's own UI) — needed on the main-process
+  // side to read a blob: URL's bytes back out of it. See
+  // electron/blob-resource.ts for why: a blob: URL only exists inside
+  // the renderer that created it, so this can't be resolved from url
+  // alone.
+  | { type: "copyImage"; url: string; tabId: string; isChromeUI: boolean }
+  | { type: "saveImage"; url: string; tabId: string; isChromeUI: boolean }
+  | { type: "saveImageAs"; url: string; tabId: string; isChromeUI: boolean }
+  // "Copy image address" specifically — separate from the plain "copyLink"
+  // above (used for real link hrefs) so a blob: image src can be resolved
+  // to a usable data: URL instead of copying dead blob: text. See
+  // main.ts's "images:copyLink" handler.
+  | { type: "copyImageAddress"; url: string; tabId: string; isChromeUI: boolean }
   | { type: "copySelection" }
   | { type: "searchSelection"; text: string }
   // --- Empty-page menu ----------------------------------------------------
@@ -473,3 +488,17 @@ export type TabsMenuOverlayAction =
   // while flipping several settings in a row.
   | { type: "cc:set"; patch: Partial<ControlCenterSettings> }
   | { type: "cc:action"; request: ControlCenterActionRequest };
+
+// --- Tab strip hover preview (belowCenter placement) -----------------------
+// Opened from TabStrip.tsx on a hover timer (not a click — see
+// TabStrip.tsx's armHoverPreview), closed again on mouseleave. Purely
+// informational, so there's no matching Action type — nothing to pick,
+// nothing for onAction to report back.
+export type TabPreviewOverlayPayload = {
+  imageBase64: string;
+  title: string;
+  // null for a home/settings tab (no real external site to show a
+  // favicon/domain for — see tab-manager.ts's captureVisibleContent).
+  host: string | null;
+  favicon: string | null;
+};

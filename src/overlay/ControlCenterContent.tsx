@@ -1353,18 +1353,25 @@ export function ControlCenterContent({
             </div>
           </div>
         )}
-        {showQr && activeTab && !activeTab.isHome && !activeTab.isSettings && (
-          <div className="flex flex-col items-center gap-1.5 px-2.5 py-2">
-            <img
-              src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(activeTab.url)}`}
-              alt="QR code for the current page"
-              className="h-[160px] w-[160px] rounded-lg border border-border"
-            />
-            <span className="max-w-[300px] truncate text-[11px] text-muted-foreground">
-              {activeTab.url}
-            </span>
-          </div>
-        )}
+        {showQr && activeTab && (() => {
+          // Home/Settings tabs don't have a real, shareable page URL —
+          // their "url" is the internal quecksilver://newtab sentinel (see
+          // HOME_URL in electron/types.ts), which would just produce a
+          // useless QR code. Falls back to the actual product site instead
+          // of hiding the button entirely for those tabs — same URL the
+          // logo click already goes to (routes/index.tsx).
+          const qrUrl = activeTab.isHome || activeTab.isSettings ? "https://quecksilver.ch" : activeTab.url;
+          return (
+            <div className="flex flex-col items-center gap-1.5 px-2.5 py-2">
+              <img
+                src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(qrUrl)}`}
+                alt="QR code for the current page"
+                className="h-[160px] w-[160px] rounded-lg border border-border"
+              />
+              <span className="max-w-[300px] truncate text-[11px] text-muted-foreground">{qrUrl}</span>
+            </div>
+          );
+        })()}
         {showJwt && (
           <div className="mt-1 flex flex-col gap-1.5 px-2.5 py-1.5">
             <textarea

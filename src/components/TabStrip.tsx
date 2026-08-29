@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import type { TabGroup, TabState } from "@/hooks/use-browser-api";
 import { QueckSilverLogo } from "@/components/QueckSilverLogo";
+import { hostnameOf } from "@/components/FavIcon";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -120,7 +121,15 @@ export function TabIcon({
       alt=""
       draggable={false}
       onError={() => setFailed(true)}
-      className="h-4 w-4 shrink-0 rounded-sm"
+      // No rounded-sm here (unlike an earlier version of this) — matches
+      // FavIcon.tsx's own treatment elsewhere (bookmarks, passwords),
+      // which never rounds a favicon either. Some sites' marks (quecksilver.ch's
+      // own included) are drawn edge-to-edge with the design reaching
+      // into the corners of the square — any extra border-radius on top
+      // of that slices into the design itself rather than just rounding
+      // an empty corner, which is what "the logo is cut off" turned out
+      // to actually be.
+      className="h-4 w-4 shrink-0 object-contain"
     />
   );
 }
@@ -172,6 +181,12 @@ const TAB_HEIGHT = "h-9"; // same for active and inactive — only the white
 // background + notch corners signal "active", not a height change, so
 // switching tabs never looks like anything is growing/shrinking.
 
+// Same debounce Chrome/Edge use for their own tab hover thumbnail — long
+// enough that just sweeping the cursor across the strip on the way
+// somewhere else never triggers a single capture, short enough that it
+// still feels responsive once you actually pause on a tab.
+const HOVER_PREVIEW_DELAY_MS = 500;
+
 export function TabStrip({
   tabs,
   groups,
@@ -200,6 +215,75 @@ export function TabStrip({
 }: Props) {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const groupsById = new Map(groups.map((g) => [g.id, g]));
+
+  // --- Hover preview -------------------------------------------------------
+  // A thumbnail of the tab's current content, shown after hovering a tab
+  // for HOVER_PREVIEW_DELAY_MS — same idea as Chrome/Edge's own tab hover
+  // card. Rendered through the native overlay window (see
+  // electron/overlay-window.ts / src/overlay/TabPreviewContent.tsx), NOT a
+  // plain DOM popup inside this window's own webContents — a tab's live
+  // native WebContentsView always paints ABOVE this chrome UI regardless
+  // of CSS z-index (same reasoning as every other dropdown/menu in this
+  // app — see ContextMenuContent.tsx), so a DOM-only popup here would get
+  // covered by the very page content it's meant to float above. No
+  // preview for the ACTIVE tab — you're already looking at it.
+  const hoveredIdRef = useRef<string | null>(null);
+  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearHoverTimer = () => {
+    if (hoverTimerRef.current !== null) {
+      clearTimeout(hoverTimerRef.current);
+      hoverTimerRef.current = null;
+    }
+  };
+  const armHoverPreview = (tabId: string) => {
+    clearHoverTimer();
+    hoverTimerRef.current = setTimeout(() => {
+      window.browserAPI?.tabs.previewBase64(tabId).then((imageBase64) => {
+        // The mouse may well have moved to a different tab (or off the
+        // strip entirely) during the delay/capture round-trip — only
+        // open the popup if this tab is STILL the one being hovered.
+        if (hoveredIdRef.current !== tabId || !imageBase64) return;
+        const rect = tabRefs.current.get(tabId)?.getBoundingClientRect();
+        const tab = tabs.find((t) => t.id === tabId);
+        if (!rect || !tab) return;
+        const isRealSite = !tab.isHome && !tab.isSettings;
+        window.browserAPI?.overlay.open(
+          "tabPreview",
+          {
+            imageBase64,
+            title: tab.isHome ? "New Tab" : tab.isSettings ? "Settings" : tab.title || tab.url,
+            host: isRealSite ? hostnameOf(tab.url) : null,
+            favicon: isRealSite ? faviconUrl(tab.url) : null,
+          },
+          { top: rect.top, left: rect.left, right: rect.right, bottom: rect.bottom, placement: "belowCenter" },
+        );
+      });
+    }, HOVER_PREVIEW_DELAY_MS);
+  };
+  const handleTabMouseEnter = (tabId: string) => {
+    hoveredIdRef.current = tabId;
+    setHoveredId(tabId);
+    // No preview for the tab you're already looking at.
+    if (tabId !== activeId) armHoverPreview(tabId);
+  };
+  const handleTabMouseLeave = (tabId: string) => {
+    if (hoveredIdRef.current === tabId) hoveredIdRef.current = null;
+    setHoveredId((v) => (v === tabId ? null : v));
+    clearHoverTimer();
+    window.browserAPI?.overlay.close();
+  };
+  // Cancels a still-pending capture and closes the popup if the whole
+  // strip unmounts (window closing, mode switch to vertical tabs) rather
+  // than leave a stale preview open or let the .then() above try to act
+  // on a gone component.
+  useLayoutEffect(
+    () => () => {
+      clearHoverTimer();
+      window.browserAPI?.overlay.close();
+    },
+    [],
+  );
+
 
   // --- Live drag-reorder -------------------------------------------------
   // Deliberately NOT native HTML5 drag-and-drop (that leaves the original
@@ -340,6 +424,12 @@ export function TabStrip({
     const el = tabRefs.current.get(tabId);
     if (!el) return;
     console.log("[tab-detach] beginDrag", tabId);
+    // A hover preview could already be open/pending from before the drag
+    // started (mousedown doesn't itself fire a mouseleave) — a floating
+    // thumbnail hanging around while the actual tab is being dragged
+    // around would look broken.
+    clearHoverTimer();
+    window.browserAPI?.overlay.close();
     // A tab has to be the active one to be draggable in any meaningful way
     // (it's the one the pointer math treats as "here"), so grabbing a
     // background tab selects it immediately, same moment the drag starts.
@@ -886,8 +976,8 @@ export function TabStrip({
                       onPointerUp={(e) => endDrag(tab.id, e)}
                       onPointerCancel={(e) => endDrag(tab.id, e)}
                       onClick={() => onSelect(tab.id)}
-                      onMouseEnter={() => setHoveredId(tab.id)}
-                      onMouseLeave={() => setHoveredId((v) => (v === tab.id ? null : v))}
+                      onMouseEnter={() => handleTabMouseEnter(tab.id)}
+                      onMouseLeave={() => handleTabMouseLeave(tab.id)}
                       className={
                         active
                           ? `relative flex ${TAB_HEIGHT} shrink cursor-pointer select-none items-center self-end rounded-t-[10px] bg-background [-webkit-app-region:no-drag]`

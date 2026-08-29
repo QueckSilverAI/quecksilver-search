@@ -161,6 +161,7 @@ import {
 } from "./extensions-store";
 import { existsSync, rmSync, promises as fsPromises } from "node:fs";
 import { OverlayWindowManager, registerOverlayIpc } from "./overlay-window";
+import { fetchBlobResource, parseDataUrl, extensionForMime, uniqueDownloadPath } from "./blob-resource";
 import type { OverlayAction } from "./overlay-types";
 // translatePageInPlace/toggleReaderMode moved into control-center-actions.ts
 // along with the rest of the controlCenter:action switch — see below.
@@ -820,20 +821,35 @@ function contextFor(
 // entirely and goes out over the real network directly — a genuine
 // deanonymization leak for exactly the "right-click an image, save it"
 // action, while the rest of the page correctly stayed on Tor.
-async function fetchImageBuffer(url: string, ses: Electron.Session): Promise<Buffer> {
+// Reads a blob: URL's bytes from INSIDE the renderer that created it — see
+// blob-resource.ts's fetchBlobResource for why net.fetch below can never
+// resolve one on its own.
+async function fetchImageBuffer(
+  url: string,
+  ses: Electron.Session,
+  sourceWebContents?: Electron.WebContents | null,
+): Promise<Buffer> {
+  const dataUrl = parseDataUrl(url);
+  if (dataUrl) return dataUrl.buffer;
+  if (url.startsWith("blob:")) {
+    const { buffer } = await fetchBlobResource(url, sourceWebContents);
+    return buffer;
+  }
   const res = await electronNet.fetch(url, { session: ses });
   return Buffer.from(await res.arrayBuffer());
 }
-async function copyImage(url: string, ses: Electron.Session) {
-  const buf = await fetchImageBuffer(url, ses);
+async function copyImage(url: string, ses: Electron.Session, sourceWebContents?: Electron.WebContents | null) {
+  const buf = await fetchImageBuffer(url, ses, sourceWebContents);
   clipboard.writeImage(nativeImage.createFromBuffer(buf));
 }
-async function saveImageAs(url: string, ses: Electron.Session) {
+async function saveImageAs(url: string, ses: Electron.Session, sourceWebContents?: Electron.WebContents | null) {
   const focused = BrowserWindow.getFocusedWindow();
-  const suggestedName = decodeURIComponent(url.split("/").pop()?.split("?")[0] || "image.png");
+  const suggestedName = url.startsWith("blob:")
+    ? "image.png"
+    : decodeURIComponent(url.split("/").pop()?.split("?")[0] || "image.png");
   const result = await dialog.showSaveDialog(focused ?? undefined!, { defaultPath: suggestedName });
   if (result.canceled || !result.filePath) return;
-  const buf = await fetchImageBuffer(url, ses);
+  const buf = await fetchImageBuffer(url, ses, sourceWebContents);
   await fsPromises.writeFile(result.filePath, buf);
 }
 // "Save image" (no "as") — straight to the configured downloads folder,
@@ -843,14 +859,60 @@ async function saveImageAs(url: string, ses: Electron.Session) {
 // (default session, always, regardless of window mode), never the tab's
 // isolated contentSession, so routing through it had exactly the same
 // Incognito/Tor leak as fetchImageBuffer above.
-function saveImageDirect(ses: Electron.Session, url: string) {
+async function saveImageDirect(
+  ses: Electron.Session,
+  url: string,
+  sourceWebContents?: Electron.WebContents | null,
+) {
+  // session.downloadURL() is Chromium's own network-level download — it
+  // hits the exact same blob:/data: wall as fetchImageBuffer's net.fetch
+  // above, so this needs the same read-the-bytes-ourselves-then-write
+  // approach (no dialog, matching "Save image"'s one-click behavior for a
+  // normal URL). The mime tells us the right extension instead of always
+  // guessing .png.
+  const dataUrl = parseDataUrl(url);
+  if (dataUrl) {
+    const dest = uniqueDownloadPath(app.getPath("downloads"), "image", extensionForMime(dataUrl.mime));
+    await fsPromises.writeFile(dest, dataUrl.buffer);
+    return;
+  }
+  if (url.startsWith("blob:")) {
+    const { buffer, mime } = await fetchBlobResource(url, sourceWebContents);
+    const dest = uniqueDownloadPath(app.getPath("downloads"), "image", extensionForMime(mime));
+    await fsPromises.writeFile(dest, buffer);
+    return;
+  }
   ses.downloadURL(url);
 }
 function copyLink(url: string) {
   clipboard.writeText(url);
 }
-function openLinkInNewTab(win: BrowserWindow, url: string) {
-  windows.get(win.id)?.tabs.createTab(url);
+// "Open link"/"Open image" in a new tab. A blob: URL only resolves inside
+// the renderer that created it (see blob-resource.ts) — a brand new tab
+// is a different renderer/process entirely, so navigating it straight to
+// a blob: URL just shows a blank/broken page (this is exactly why "Open
+// image in new tab" silently failed for chat-rendered images on
+// Claude/quecksilver.ch). Read the bytes out of the source page instead
+// and open the result as a self-contained data: URL, which any tab can
+// render on its own — covers a blob: image src and, incidentally, a
+// blob: link href the same way, since both hit the same underlying wall.
+async function openLinkInNewTab(
+  win: BrowserWindow,
+  url: string,
+  sourceWebContents?: Electron.WebContents | null,
+) {
+  const ctx = windows.get(win.id);
+  if (!ctx) return;
+  if (url.startsWith("blob:")) {
+    try {
+      const { buffer, mime } = await fetchBlobResource(url, sourceWebContents);
+      ctx.tabs.createTab(`data:${mime};base64,${buffer.toString("base64")}`);
+    } catch {
+      ctx.tabs.createTab(url); // best-effort fallback — will just show blank, same as before this fix
+    }
+    return;
+  }
+  ctx.tabs.createTab(url);
 }
 function openLinkInNewWindow(win: BrowserWindow, url: string) {
   const newWin = createWindow({
@@ -991,6 +1053,22 @@ function saveLinkAs(ses: Electron.Session, url: string) {
 // Content.tsx) — nothing in the app hides the native view for a dialog
 // anymore, and the screenshot-cache machinery that used to back all of that
 // is gone entirely (see tab-manager.ts, preload.ts).
+// Resolves the webContents that actually rendered the right-clicked
+// image/link, so fetchBlobResource can read a blob: URL back out of the
+// one place it's valid (see blob-resource.ts's doc comment). isChromeUI
+// means the click happened on the app's own UI (e.g. an image inside the
+// Zora sidebar) — that content IS the window's own webContents, never a
+// tab's; otherwise resolve the specific tab (tabId) that showed the
+// context menu.
+function resolveContextMenuSourceWebContents(
+  ctx: WindowEntry,
+  tabId?: string,
+  isChromeUI?: boolean,
+): Electron.WebContents | null {
+  if (isChromeUI) return ctx.win.webContents;
+  return tabId ? ctx.tabs.getWebContents(tabId) : null;
+}
+
 function showContextMenu(
   win: BrowserWindow,
   tabId: string,
@@ -1118,6 +1196,13 @@ function registerIpc() {
   }
 
   ipcMain.handle("tabs:new", (e, url?: string) => contextFor(e)?.tabs.createTab(url ?? HOME_URL));
+  // Tab strip hover preview — see tab-manager.ts's capturePreviewBase64
+  // for why this gets its own method/channel instead of reusing the
+  // (deliberately unexposed) captureScreenshotBase64.
+  ipcMain.handle("tabs:previewBase64", (e, id: string) => {
+    const ctx = contextFor(e);
+    return ctx ? ctx.tabs.capturePreviewBase64(id) : null;
+  });
   ipcMain.handle("tabs:close", (e, id: string) => contextFor(e)?.tabs.closeTab(id));
   ipcMain.handle("tabs:switch", (e, id: string) => contextFor(e)?.tabs.switchTab(id));
   ipcMain.handle("tabs:list", (e) => contextFor(e)?.tabs.listTabs());
@@ -1255,22 +1340,27 @@ function registerIpc() {
   // lives at module scope above registerIpc() — createWindow() needs to
   // hand showContextMenu to TabManager before registerIpc() ever runs for
   // the very first window, so it couldn't be defined only in here.
-  ipcMain.handle("images:copy", (e, url: string) => {
+  ipcMain.handle("images:copy", (e, url: string, tabId?: string, isChromeUI?: boolean) => {
     const ctx = contextFor(e);
-    return copyImage(url, ctx?.contentSession ?? electronSession.defaultSession);
+    const wc = ctx ? resolveContextMenuSourceWebContents(ctx, tabId, isChromeUI) : null;
+    return copyImage(url, ctx?.contentSession ?? electronSession.defaultSession, wc);
   });
-  ipcMain.handle("images:save", (e, url: string) => {
+  ipcMain.handle("images:save", (e, url: string, tabId?: string, isChromeUI?: boolean) => {
     const ctx = contextFor(e);
-    return saveImageAs(url, ctx?.contentSession ?? electronSession.defaultSession);
+    const wc = ctx ? resolveContextMenuSourceWebContents(ctx, tabId, isChromeUI) : null;
+    return saveImageAs(url, ctx?.contentSession ?? electronSession.defaultSession, wc);
   });
-  ipcMain.handle("images:saveDirect", (e, url: string) => {
+  ipcMain.handle("images:saveDirect", (e, url: string, tabId?: string, isChromeUI?: boolean) => {
     const ctx = contextFor(e);
-    if (ctx) saveImageDirect(ctx.contentSession ?? electronSession.defaultSession, url);
+    const wc = ctx ? resolveContextMenuSourceWebContents(ctx, tabId, isChromeUI) : null;
+    return saveImageDirect(ctx?.contentSession ?? electronSession.defaultSession, url, wc);
   });
   ipcMain.handle("links:copy", (_e, url: string) => copyLink(url));
-  ipcMain.handle("links:openInNewTab", (e, url: string) => {
+  ipcMain.handle("links:openInNewTab", (e, url: string, tabId?: string, isChromeUI?: boolean) => {
     const ctx = contextFor(e);
-    if (ctx) openLinkInNewTab(ctx.win, url);
+    if (!ctx) return;
+    const wc = resolveContextMenuSourceWebContents(ctx, tabId, isChromeUI);
+    return openLinkInNewTab(ctx.win, url, wc);
   });
   ipcMain.handle("links:openInNewWindow", (e, url: string) => {
     const ctx = contextFor(e);
@@ -1287,7 +1377,27 @@ function registerIpc() {
     const ctx = contextFor(e);
     if (ctx) saveLinkAs(ctx.contentSession ?? electronSession.defaultSession, url);
   });
-  ipcMain.handle("images:copyLink", (_e, url: string) => copyLink(url));
+  // "Copy image address" for a blob:-sourced image. Copying the raw
+  // blob: text is a dead end for the person — it's tied to that specific
+  // page's lifetime and isn't fetchable by anything outside this app, so
+  // pasting it anywhere useful just gives back garbage. Read the actual
+  // bytes (same blob-resource path as copy/save) and copy a self-
+  // contained data: URL instead, which is at least usable. Falls back to
+  // the plain (dead) blob: text only if that read itself fails.
+  ipcMain.handle("images:copyLink", async (e, url: string, tabId?: string, isChromeUI?: boolean) => {
+    if (url.startsWith("blob:")) {
+      const ctx = contextFor(e);
+      const wc = ctx ? resolveContextMenuSourceWebContents(ctx, tabId, isChromeUI) : null;
+      try {
+        const { buffer, mime } = await fetchBlobResource(url, wc);
+        clipboard.writeText(`data:${mime};base64,${buffer.toString("base64")}`);
+        return;
+      } catch {
+        // fall through — copy the (dead) blob: URL as a last resort
+      }
+    }
+    copyLink(url);
+  });
   ipcMain.handle("tabs:copySelectionFor", (e, tabId: string) => {
     contextFor(e)?.tabs.copySelection(tabId);
   });

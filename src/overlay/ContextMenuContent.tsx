@@ -59,7 +59,7 @@ export function ContextMenuContent({
   payload: ContextMenuOverlayPayload;
   onAction: (action: ContextMenuOverlayAction) => void;
 }) {
-  const { srcURL, linkURL, selectionText, isEmptyPage, pageUrl } = payload;
+  const { srcURL, linkURL, selectionText, isEmptyPage, pageUrl, tabId, isChromeUI } = payload;
   // QR code renders directly inline here rather than as a dispatched
   // action — same reasoning/pattern as ControlCenterContent's own "QR code
   // of URL" button (this overlay kind has no onNotify wired at all, only
@@ -74,27 +74,27 @@ export function ContextMenuContent({
           <ContextMenuActionItem
             icon={Download}
             label="Save image"
-            onClick={() => onAction({ type: "saveImage", url: srcURL })}
+            onClick={() => onAction({ type: "saveImage", url: srcURL, tabId, isChromeUI })}
           />
           <ContextMenuActionItem
             icon={Download}
             label="Save image as…"
-            onClick={() => onAction({ type: "saveImageAs", url: srcURL })}
+            onClick={() => onAction({ type: "saveImageAs", url: srcURL, tabId, isChromeUI })}
           />
           <ContextMenuActionItem
             icon={Copy}
             label="Copy image"
-            onClick={() => onAction({ type: "copyImage", url: srcURL })}
+            onClick={() => onAction({ type: "copyImage", url: srcURL, tabId, isChromeUI })}
           />
           <ContextMenuActionItem
             icon={Link2}
             label="Copy image address"
-            onClick={() => onAction({ type: "copyLink", url: srcURL })}
+            onClick={() => onAction({ type: "copyImageAddress", url: srcURL, tabId, isChromeUI })}
           />
           <ContextMenuActionItem
             icon={ExternalLink}
             label="Open image in new tab"
-            onClick={() => onAction({ type: "openLinkInNewTab", url: srcURL })}
+            onClick={() => onAction({ type: "openLinkInNewTab", url: srcURL, tabId, isChromeUI })}
           />
         </div>
       )}
@@ -106,7 +106,7 @@ export function ContextMenuContent({
           <ContextMenuActionItem
             icon={ExternalLink}
             label="Open link in new tab"
-            onClick={() => onAction({ type: "openLinkInNewTab", url: linkURL })}
+            onClick={() => onAction({ type: "openLinkInNewTab", url: linkURL, tabId, isChromeUI })}
           />
           <ContextMenuActionItem
             icon={Copy}

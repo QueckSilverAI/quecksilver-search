@@ -49,6 +49,7 @@ const INITIAL_SIZE_FOR: Partial<Record<OverlayKind, { width: number; height: num
   favoriteContextMenu: { width: 256, height: 300 },
   downloads: { width: 380, height: 200 },
   tabsMenu: { width: 260, height: 320 },
+  tabPreview: { width: 220, height: 168 },
 };
 
 // How far the panel's top edge sits below the anchor's bottom edge
@@ -377,7 +378,14 @@ export class OverlayWindowManager {
     // so there's nothing left to flash.
     this.primeNativeMapping(); // no-op if already primed — safety net, see warmUp()
     this.overlayWin.setOpacity(1);
-    this.overlayWin.focus();
+    // tabPreview is a pure hover/informational popup, not something a
+    // person clicks into — every other kind here is click-triggered, so
+    // taking OS focus is expected (lets Escape/arrow-key nav in a menu
+    // work right away). Stealing keyboard focus every time someone's
+    // mouse happens to pass over a tab — which can easily happen while
+    // they're mid-typing in the URL bar — would be a much worse
+    // regression than the popup just not being the OS-focused window.
+    if (this.currentKind !== "tabPreview") this.overlayWin.focus();
     this.opened = true;
     this.lastShowAt = Date.now();
   }
@@ -458,7 +466,17 @@ export class OverlayWindowManager {
     // current opacity/position, not what's actually painted inside it
     // (this window is reused, never remounted, so old content persists
     // regardless of whether it happens to be revealed right now).
-    const contentReady = kind === this.lastRenderedKind;
+    // tabPreview is deliberately excluded even when it WAS the last
+    // rendered kind: unlike every other kind here, its payload (a
+    // screenshot) is meaningfully DIFFERENT on every single open() —
+    // reopening it with "contentReady" true would show() immediately,
+    // before the new image has actually round-tripped through IPC and
+    // re-rendered, painting the PREVIOUS tab's stale screenshot for that
+    // gap — exactly the "hovering a new tab briefly flashes the last
+    // tab's preview" report this fixes. Every other kind's content is
+    // comparatively stable across repeat opens of the same kind, so
+    // "already rendered once" remains a safe enough signal for those.
+    const contentReady = kind === this.lastRenderedKind && kind !== "tabPreview";
     const forceDeferShow = !contentReady;
     // If something's currently revealed and it's NOT already the right
     // content, retreat it off-screen now instead of leaving the stale
@@ -643,7 +661,12 @@ export class OverlayWindowManager {
     // UNLIKE ownerBounds (which still includes the frame and would be
     // wrong on platforms with a visible native frame, e.g. Windows).
     const placement = anchor.placement ?? "belowRight";
-    const absLeft = placement === "atPoint" ? contentBounds.x + anchor.left : contentBounds.x + anchor.right - width;
+    const absLeft =
+      placement === "atPoint"
+        ? contentBounds.x + anchor.left
+        : placement === "belowCenter"
+          ? contentBounds.x + Math.round((anchor.left + anchor.right) / 2 - width / 2)
+          : contentBounds.x + anchor.right - width;
     const absTop = placement === "atPoint" ? contentBounds.y + anchor.top : contentBounds.y + anchor.bottom + ANCHOR_GAP;
 
     const display = screen.getDisplayMatching({
@@ -728,7 +751,16 @@ export class OverlayWindowManager {
     this.opened = false;
     this.overlayWin.setOpacity(0);
     this.overlayWin.setPosition(OFFSCREEN_X, OFFSCREEN_Y);
-    if (this.ownerWin && !this.ownerWin.isDestroyed()) this.ownerWin.focus();
+    // tabPreview never took OS focus in show() (see its own guard there)
+    // — forcing it back here on every close would be pure overhead for
+    // the common case (ownerWin already has it) and, in the rarer case
+    // where focus moved somewhere else entirely during the hover (e.g.
+    // the person alt-tabbed to another app while their mouse still sat
+    // over a tab), an unwanted focus-steal-back from THAT app, triggered
+    // by nothing more than a mouseleave. Every other kind DID take focus
+    // in show(), so handing it back here is the correct, expected
+    // "closing this menu returns you to what you were doing" behavior.
+    if (this.ownerWin && !this.ownerWin.isDestroyed() && this.currentKind !== "tabPreview") this.ownerWin.focus();
   }
 
   destroy() {

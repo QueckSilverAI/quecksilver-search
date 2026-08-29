@@ -3,7 +3,7 @@ import { Settings } from "lucide-react";
 import { QueckSilverLogo } from "@/components/QueckSilverLogo";
 import { HOME_URL, SETTINGS_URL } from "@/hooks/use-browser-api";
 
-function hostnameOf(pageUrl: string): string | null {
+export function hostnameOf(pageUrl: string): string | null {
   try {
     // Password entries and freshly-typed URLs often don't include a
     // protocol ("google.com" rather than "https://google.com") — new URL()

@@ -1,4 +1,6 @@
-import { shell, session as electronSession } from "electron";
+import { app, shell, session as electronSession } from "electron";
+import { promises as fsPromises } from "node:fs";
+import { fetchBlobResource, parseDataUrl, extensionForMime, uniqueDownloadPath } from "./blob-resource";
 import type { TabManager } from "./tab-manager";
 import { listBookmarks, saveBookmarks } from "./bookmark-store";
 import { HOME_URL } from "./types";
@@ -568,6 +570,35 @@ async function executeBrowserToolInner(
       case "download_url": {
         const url = typeof args.url === "string" ? args.url : null;
         if (!url) return { ok: false, text: "Missing url." };
+        // data: URLs are self-contained — no page/session needed, just
+        // parse and write. Electron's net.fetch/session.downloadURL don't
+        // support the scheme at all (see blob-resource.ts), so without
+        // this a data:-sourced download (an inline-generated file, same
+        // pattern chat UIs use for on-the-fly images) would silently do
+        // nothing.
+        const dataUrl = parseDataUrl(url);
+        if (dataUrl) {
+          const dest = uniqueDownloadPath(app.getPath("downloads"), "download", extensionForMime(dataUrl.mime));
+          await fsPromises.writeFile(dest, dataUrl.buffer);
+          return { ok: true, text: `Downloaded to ${dest}.` };
+        }
+        // session.downloadURL() can't resolve a blob: URL any more than
+        // saveImageDirect in main.ts can — same underlying reason (see
+        // blob-resource.ts): it's a key into the specific renderer's own
+        // Blob registry, not a network resource. Falls back to the active
+        // tab since this tool isn't given a tab_id explicitly.
+        if (url.startsWith("blob:")) {
+          const wc = requireWebContents(tabs, args.tab_id);
+          if (!wc) return noActiveTab();
+          try {
+            const { buffer, mime } = await fetchBlobResource(url, wc);
+            const dest = uniqueDownloadPath(app.getPath("downloads"), "download", extensionForMime(mime));
+            await fsPromises.writeFile(dest, buffer);
+            return { ok: true, text: `Downloaded to ${dest}.` };
+          } catch {
+            return { ok: false, text: "Couldn't read that blob: URL — the page it came from may be gone." };
+          }
+        }
         // ctx.contentSession (falling back to the default session for a
         // normal window) — NOT win.webContents, which is always the chrome
         // UI's own default-session webContents regardless of window mode.

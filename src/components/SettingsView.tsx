@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Bell, Bot, Camera, Check, ChevronDown, ChevronLeft, ChevronRight, Columns2, Download, Edit3, Eraser, Eye, EyeOff, FolderOpen, Globe, KeyRound, Link2, Lock, Mic, Monitor,
-  Moon, Palette, Plus, PictureInPicture2, RotateCcw, RotateCw, Search, Settings as SettingsIcon, ShieldAlert, Star, Sun, Trash2, User, Zap,
+  Moon, Palette, Plus, PictureInPicture2, RotateCcw, RotateCw, Search, Settings as SettingsIcon, ShieldAlert, ShieldCheck, AlertTriangle, Star, Sun, Trash2, User, Zap,
 } from "lucide-react";
 import { useAccentColor, useColorScheme, THEME_COLORS, type ColorScheme } from "@/lib/theme";
 import { useSearchEngine, SEARCH_ENGINES, useZoomLevel, useHeaderFavoritesBarVisible } from "@/lib/settings-store";
@@ -11,6 +11,7 @@ import { useHeaderFavorites } from "@/hooks/use-header-favorites";
 import { useDownloads } from "@/hooks/use-downloads";
 import { useProfiles } from "@/hooks/use-profiles";
 import { usePasswords } from "@/hooks/use-passwords";
+import { usePasswordHealth } from "@/hooks/use-password-health";
 import { useSitePermissions } from "@/hooks/use-site-permissions";
 import { usePrivacySettings, type DohProvider } from "@/hooks/use-privacy-settings";
 import { useZoraSettings, ZORA_PRESET_LABELS, type ZoraPreset } from "@/hooks/use-zora-settings";
@@ -170,6 +171,7 @@ export function SettingsView({ nightModeTabId }: { nightModeTabId?: string | nul
   const { scheme, setScheme } = useColorScheme();
   const { isGuest } = useProfiles();
   const { passwords, add: addPassword, update: updatePassword, remove: removePassword, importFrom: importPasswordsFrom } = usePasswords();
+  const passwordHealth = usePasswordHealth(passwords);
   const { entries: permissionEntries, set: setPermission, remove: removePermission, clearSiteData } = useSitePermissions();
   const { settings: privacySettings, update: updatePrivacy } = usePrivacySettings();
   const [extensionsList, setExtensionsList] = useState<{ id: string; name: string; path: string; enabled: boolean }[]>([]);
@@ -564,6 +566,47 @@ export function SettingsView({ nightModeTabId }: { nightModeTabId?: string | nul
             </SettingsCard>
           ) : (
             <>
+              <SettingsCard className="mb-3">
+                <CardSection className="flex flex-col gap-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-sm font-medium text-foreground">Password health</span>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={passwordHealth.runBreachCheck}
+                      disabled={passwordHealth.checking}
+                      className="shrink-0 gap-1.5 rounded-full"
+                    >
+                      <RotateCw className={`h-3.5 w-3.5 ${passwordHealth.checking ? "animate-spin" : ""}`} />
+                      {passwordHealth.checking ? "Checking…" : passwordHealth.hasChecked ? "Recheck for breaches" : "Check for breaches"}
+                    </Button>
+                  </div>
+                  {passwordHealth.summary.weakCount === 0 &&
+                  passwordHealth.summary.reusedCount === 0 &&
+                  (!passwordHealth.hasChecked || passwordHealth.summary.breachedCount === 0) ? (
+                    <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
+                      {passwordHealth.hasChecked ? "No weak, reused, or breached passwords found." : "No weak or reused passwords found."}
+                    </span>
+                  ) : (
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                      {passwordHealth.summary.weakCount > 0 && (
+                        <span className="flex items-center gap-1"><ShieldAlert className="h-3.5 w-3.5 text-amber-600" />{passwordHealth.summary.weakCount} weak</span>
+                      )}
+                      {passwordHealth.summary.reusedCount > 0 && (
+                        <span className="flex items-center gap-1"><Link2 className="h-3.5 w-3.5 text-amber-600" />{passwordHealth.summary.reusedCount} reused</span>
+                      )}
+                      {passwordHealth.hasChecked && passwordHealth.summary.breachedCount > 0 && (
+                        <span className="flex items-center gap-1 text-destructive"><AlertTriangle className="h-3.5 w-3.5" />{passwordHealth.summary.breachedCount} found in a data breach</span>
+                      )}
+                    </div>
+                  )}
+                  {passwordHealth.checkError && <span className="text-xs text-destructive">{passwordHealth.checkError}</span>}
+                  <span className="text-[11px] text-muted-foreground">
+                    Breach check uses Have I Been Pwned — only a partial hash of each password is sent, never the password itself.
+                  </span>
+                </CardSection>
+              </SettingsCard>
               <div className="relative mb-3">
                 <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
@@ -579,7 +622,9 @@ export function SettingsView({ nightModeTabId }: { nightModeTabId?: string | nul
                 </SettingsCard>
               ) : (
                 <SettingsCard>
-                  {filteredPasswords.map((p, i) => (
+                  {filteredPasswords.map((p, i) => {
+                    const health = passwordHealth.entries[p.id];
+                    return (
                     <div key={p.id}>
                       {i > 0 && <Divider />}
                       <CardSection className="flex items-center gap-3">
@@ -590,6 +635,25 @@ export function SettingsView({ nightModeTabId }: { nightModeTabId?: string | nul
                             {p.username || "No username"} · {pwRevealedId === p.id ? p.password : "••••••••"}
                           </span>
                         </span>
+                        {health && (health.weak || health.reused || (health.breachCount ?? 0) > 0) && (
+                          <span className="flex shrink-0 items-center gap-1">
+                            {health.weak && (
+                              <span title="Weak password">
+                                <ShieldAlert className="h-3.5 w-3.5 text-amber-600" />
+                              </span>
+                            )}
+                            {health.reused && (
+                              <span title="Reused on another saved login">
+                                <Link2 className="h-3.5 w-3.5 text-amber-600" />
+                              </span>
+                            )}
+                            {(health.breachCount ?? 0) > 0 && (
+                              <span title={`Found in ${health.breachCount} known data breach(es)`}>
+                                <AlertTriangle className="h-3.5 w-3.5 text-destructive" />
+                              </span>
+                            )}
+                          </span>
+                        )}
                         <button
                           onClick={() => setPwRevealedId(pwRevealedId === p.id ? null : p.id)}
                           title={pwRevealedId === p.id ? "Hide" : "Reveal"}
@@ -605,7 +669,8 @@ export function SettingsView({ nightModeTabId }: { nightModeTabId?: string | nul
                         </button>
                       </CardSection>
                     </div>
-                  ))}
+                    );
+                  })}
                 </SettingsCard>
               )}
             </>

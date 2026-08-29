@@ -79,6 +79,7 @@ export type AuditLogEntry = { time: number; name: string; args: Record<string, u
 type BrowserAPI = {
   tabs: {
     new: (url?: string) => Promise<string>;
+    previewBase64: (id: string) => Promise<string | null>;
     close: (id: string) => Promise<void>;
     switch: (id: string) => Promise<void>;
     list: () => Promise<TabsSnapshot>;
@@ -229,14 +230,14 @@ type BrowserAPI = {
     list: (prefix: string) => Promise<{ domain: string; visitCount: number; lastVisit: number }[]>;
   };
   images: {
-    copy: (url: string) => Promise<void>;
-    save: (url: string) => Promise<void>;
-    saveDirect: (url: string) => Promise<void>;
-    copyLink: (url: string) => Promise<void>;
+    copy: (url: string, tabId?: string, isChromeUI?: boolean) => Promise<void>;
+    save: (url: string, tabId?: string, isChromeUI?: boolean) => Promise<void>;
+    saveDirect: (url: string, tabId?: string, isChromeUI?: boolean) => Promise<void>;
+    copyLink: (url: string, tabId?: string, isChromeUI?: boolean) => Promise<void>;
   };
   links: {
     copy: (url: string) => Promise<void>;
-    openInNewTab: (url: string) => Promise<void>;
+    openInNewTab: (url: string, tabId?: string, isChromeUI?: boolean) => Promise<void>;
     openInNewWindow: (url: string) => Promise<void>;
     openInIncognitoWindow: (url: string) => Promise<void>;
     openHere: (tabId: string, url: string) => Promise<void>;
@@ -323,13 +324,13 @@ type BrowserAPI = {
   // hang off (matches ProfilePopup.tsx's existing AnchorRect).
   overlay: {
     open: (
-      kind: "profile" | "contextmenu" | "bookmark" | "groupDialog" | "tabSearch" | "downloads" | "favoriteContextMenu" | "favoriteEditDialog" | "favoriteFolder" | "newFavoriteFolderDialog" | "tabsMenu",
+      kind: "profile" | "contextmenu" | "bookmark" | "groupDialog" | "tabSearch" | "downloads" | "favoriteContextMenu" | "favoriteEditDialog" | "favoriteFolder" | "newFavoriteFolderDialog" | "tabsMenu" | "tabPreview",
       payload: unknown,
-      anchor: { top: number; left: number; right: number; bottom: number; placement?: "belowRight" | "atPoint" | "cover" },
+      anchor: { top: number; left: number; right: number; bottom: number; placement?: "belowRight" | "atPoint" | "belowCenter" | "cover" },
     ) => Promise<void>;
     close: () => Promise<void>;
-    update: (kind: "profile" | "contextmenu" | "bookmark" | "groupDialog" | "tabSearch" | "downloads" | "favoriteContextMenu" | "favoriteEditDialog" | "favoriteFolder" | "newFavoriteFolderDialog" | "tabsMenu", payload: unknown) => Promise<void>;
-    onAction: (cb: (action: { kind: "profile" | "contextmenu" | "bookmark" | "groupDialog" | "tabSearch" | "downloads" | "favoriteContextMenu" | "favoriteEditDialog" | "favoriteFolder" | "newFavoriteFolderDialog" | "tabsMenu"; action: unknown }) => void) => () => void;
+    update: (kind: "profile" | "contextmenu" | "bookmark" | "groupDialog" | "tabSearch" | "downloads" | "favoriteContextMenu" | "favoriteEditDialog" | "favoriteFolder" | "newFavoriteFolderDialog" | "tabsMenu" | "tabPreview", payload: unknown) => Promise<void>;
+    onAction: (cb: (action: { kind: "profile" | "contextmenu" | "bookmark" | "groupDialog" | "tabSearch" | "downloads" | "favoriteContextMenu" | "favoriteEditDialog" | "favoriteFolder" | "newFavoriteFolderDialog" | "tabsMenu" | "tabPreview"; action: unknown }) => void) => () => void;
   };
 };
 

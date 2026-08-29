@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 // file lives in the renderer, which never imports electron/ code directly
 // (same reasoning as use-browser-api.ts's own hand-duplicated BrowserAPI
 // type below it, not importing electron/preload.ts).
-export type OverlayKind = "profile" | "contextmenu" | "bookmark" | "groupDialog" | "tabSearch" | "downloads" | "favoriteContextMenu" | "favoriteEditDialog" | "favoriteFolder" | "newFavoriteFolderDialog" | "tabsMenu";
+export type OverlayKind = "profile" | "contextmenu" | "bookmark" | "groupDialog" | "tabSearch" | "downloads" | "favoriteContextMenu" | "favoriteEditDialog" | "favoriteFolder" | "newFavoriteFolderDialog" | "tabsMenu" | "tabPreview";
 export type OverlayAction = { kind: OverlayKind; action: unknown };
 type OverlayInitRequest = { kind: OverlayKind; payload: unknown };
 
