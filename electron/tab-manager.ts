@@ -1869,7 +1869,17 @@ export class TabManager {
     for (const view of this.views.values()) listener(view.webContents);
   }
 
-  createTab(url: string = HOME_URL): string {
+  // referrer is optional and only meant for the setWindowOpenHandler path
+  // below: a genuine target="_blank"/window.open() click on a page DOES
+  // carry a referrer in a real browser, but createTab's own loadURL() call
+  // is a fresh top-level navigation with no page context, so without this
+  // it silently drops the referrer entirely — indistinguishable from
+  // pasting the URL into a new tab by hand. That's exactly what broke
+  // AMD's driver downloads (their download endpoint rejects requests with
+  // no/partial referrer). Bookmarks, the omnibox, and other non-link
+  // callers simply don't pass one, which is correct — those genuinely have
+  // no referrer in a real browser either.
+  createTab(url: string = HOME_URL, referrer?: Electron.Referrer): string {
     const id = randomUUID();
     this.openedAt.set(id, Date.now());
     const view = new WebContentsView({
@@ -1911,9 +1921,13 @@ export class TabManager {
       this.settingsTabs.add(id);
     } else {
       const initialUrl = this.normalizeUrl(url)!;
+      const finalInitialUrl = trackingParamsEnabled()
+        ? (stripTrackingParams(initialUrl) ?? initialUrl)
+        : initialUrl;
       view.webContents
         .loadURL(
-          trackingParamsEnabled() ? (stripTrackingParams(initialUrl) ?? initialUrl) : initialUrl,
+          finalInitialUrl,
+          referrer && referrer.url ? { httpReferrer: referrer } : undefined,
         )
         .catch(() => {
           /* surfaced to the renderer via did-fail-load below */
@@ -2008,7 +2022,7 @@ export class TabManager {
     // instead; everything else opens as a new tab — always for a genuine
     // target="_blank"/new-tab request (disposition check below), and for
     // everything else only when Popup-Block is off.
-    view.webContents.setWindowOpenHandler(({ url, disposition }) => {
+    view.webContents.setWindowOpenHandler(({ url, disposition, referrer }) => {
       if (isExternalProtocolUrl(url)) {
         shell.openExternal(url).catch(() => {});
         return { action: "deny" };
@@ -2063,7 +2077,7 @@ export class TabManager {
       // enough to what the site asked for (a separate destination) without
       // either spawning a native window or blowing away the current one.
       const target = trackingParamsEnabled() ? (stripTrackingParams(url) ?? url) : url;
-      this.createTab(target);
+      this.createTab(target, referrer);
       return { action: "deny" };
     });
     // Popups created via the "allow" branch above are plain Electron

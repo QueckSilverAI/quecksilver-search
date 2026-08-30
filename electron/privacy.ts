@@ -293,22 +293,16 @@ export function applyPrivacyHardening(targetSession?: Electron.Session) {
     // top-level origin, which isn't reliably available at this hook for
     // every request type) — the simple, honest version of "block cookies".
     if (cookiesBlocked()) delete headers["Cookie"];
-    // Cuts a cross-site Referer down to just the origin (path/query
-    // dropped) — matches browsers' "strict-origin-when-cross-origin"
-    // default, so a link out to another site no longer hands it your
-    // exact page URL, only which site you came from.
-    const referer = headers["Referer"];
-    if (referer) {
-      try {
-        const refererUrl = new URL(referer);
-        const targetUrl = new URL(details.url);
-        if (refererUrl.origin !== targetUrl.origin) {
-          headers["Referer"] = refererUrl.origin + "/";
-        }
-      } catch {
-        /* malformed Referer — leave it alone */
-      }
-    }
+    // NOTE: we deliberately do NOT trim the Referer ourselves anymore.
+    // Chromium already defaults every navigation to "strict-origin-when-
+    // cross-origin" (has since Chrome 85) and — crucially — honors a
+    // page's own Referrer-Policy header/meta tag when it explicitly wants
+    // to send more than that (e.g. a full path for anti-hotlink/download
+    // verification, like AMD's driver downloads, which reject the request
+    // outright if the referrer gets cut down to just the origin). Forcing
+    // our own trim here overrode that and broke exactly those downloads.
+    // The Chromium default already gives the same privacy protection for
+    // every site that doesn't explicitly opt for something looser.
     callback({ requestHeaders: headers });
   });
 
