@@ -5,6 +5,7 @@ import {
 } from "lucide-react";
 import { useAccentColor, useColorScheme, THEME_COLORS, type ColorScheme } from "@/lib/theme";
 import { useSearchEngine, SEARCH_ENGINES, useZoomLevel, useHeaderFavoritesBarVisible } from "@/lib/settings-store";
+import { EngineIcon } from "@/components/SearchEngineChooser";
 import { useToolbarStyle, TOOLBAR_STYLES } from "@/lib/toolbar-style";
 import { ToolbarActionIcons, type ToolbarAction } from "@/components/ToolbarActionIcons";
 import { useHeaderFavorites } from "@/hooks/use-header-favorites";
@@ -382,7 +383,7 @@ export function SettingsView({ nightModeTabId }: { nightModeTabId?: string | nul
                       engine === e.id ? "border-[var(--brand)] bg-[var(--brand)]/10 shadow-sm" : "border-border hover:bg-muted"
                     }`}
                   >
-                    <img src={`https://icons.duckduckgo.com/ip3/${e.domain}.ico`} alt="" className="h-6 w-6 shrink-0 rounded-md object-contain" />
+                    <EngineIcon engine={e} className="h-6 w-6 shrink-0 rounded-md" />
                     <span className="truncate">{e.label}</span>
                   </button>
                 ))}

@@ -121,7 +121,7 @@ function requiresApproval(
 // runs, the loop pauses and exposes `pendingToolCall` — the UI renders an
 // inline approve/deny card and calls approveToolCall()/denyToolCall() to
 // resume.
-export function useZoraChat(accessToken: string | null) {
+export function useZoraChat(accessToken: string | null, attemptReauth?: () => Promise<boolean>) {
   const [messages, setMessages] = useState<ZoraMessage[]>([]);
   const messagesRef = useRef<ZoraMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -131,9 +131,16 @@ export function useZoraChat(accessToken: string | null) {
   // search-chat returns 401 specifically when a real (non-anon) access
   // token failed to validate — see search-chat/index.ts's auth block and
   // electron/auth.ts's own comment: this flow's token is short-lived with
-  // no refresh, so a stale session is expected eventually, not a bug. The
-  // UI shows ZoraSessionExpiredCard (a "Sign in again" prompt) rather than
-  // the generic failure bubble so it's actually actionable.
+  // no refresh, so a stale session is expected eventually, not a bug.
+  // Rather than immediately surfacing that as an interruption, a 401 first
+  // tries attemptReauth() (ZoraSidebar wires this to the same reauth flow
+  // ZoraSessionExpiredCard's button used to trigger manually) — if the
+  // person's system browser still has a live quecksilver.ch session, that
+  // completes almost instantly with no typing required, so most of the
+  // time this never becomes visible at all. sessionExpired (and
+  // ZoraSessionExpiredCard) is now the FALLBACK for when attemptReauth
+  // itself fails or isn't available — genuinely signed out, not just a
+  // stale token.
   const [sessionExpired, setSessionExpired] = useState(false);
   const idRef = useRef(0);
   const nextId = () => `m${++idRef.current}`;
@@ -165,6 +172,26 @@ export function useZoraChat(accessToken: string | null) {
   useEffect(() => {
     setSessionExpired(false);
   }, [accessToken]);
+
+  // Shared by send()'s and continueFromLimit()'s catch blocks below — see
+  // sessionExpired's own comment for the attemptReauth-first reasoning.
+  // The turn itself isn't automatically retried (accessToken here is a
+  // snapshot from whenever this hook instance's props last updated, not
+  // necessarily the fresh one attemptReauth() just obtained) — instead
+  // this just tells the person to send it again, once, rather than
+  // silently losing what they typed.
+  const handleUnauthorized = useCallback(async () => {
+    const reauthed = attemptReauth ? await attemptReauth() : false;
+    if (reauthed) {
+      applyMessages((prev) => [
+        ...prev,
+        { id: nextId(), role: "model", text: "Reconnected — send that again.", time: Date.now(), failed: true },
+      ]);
+    } else {
+      setSessionExpired(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [attemptReauth]);
 
   const applyMessages = useCallback((updater: (prev: ZoraMessage[]) => ZoraMessage[]) => {
     setMessages((prev) => {
@@ -417,7 +444,7 @@ export function useZoraChat(accessToken: string | null) {
         console.error("[zora] send failed:", e);
         setStatusText(null);
         if (e instanceof Error && e.message === "search-chat failed: 401") {
-          setSessionExpired(true);
+          void handleUnauthorized();
           return;
         }
         // A specific reason (rather than always the same generic
@@ -439,7 +466,7 @@ export function useZoraChat(accessToken: string | null) {
         abortRef.current = null;
       }
     },
-    [isLoading, applyMessages, postJson, runHops, finishTurn],
+    [isLoading, applyMessages, postJson, runHops, finishTurn, handleUnauthorized],
   );
 
   // "Continue" button on the tool-limit card (QueckSilver AI /code's own
@@ -465,7 +492,7 @@ export function useZoraChat(accessToken: string | null) {
       console.error("[zora] continue failed:", e);
       setStatusText(null);
       if (e instanceof Error && e.message === "search-chat failed: 401") {
-        setSessionExpired(true);
+        void handleUnauthorized();
       } else {
         applyMessages((prev) => [
           ...prev,
@@ -477,7 +504,7 @@ export function useZoraChat(accessToken: string | null) {
       setPendingToolCall(null);
       abortRef.current = null;
     }
-  }, [isLoading, runHops, finishTurn, applyMessages]);
+  }, [isLoading, runHops, finishTurn, applyMessages, handleUnauthorized]);
 
   // Immediate-stop (zora-browser-integration-plan.md section 6) — aborts
   // whatever's in flight right now. If a tool approval card is showing,

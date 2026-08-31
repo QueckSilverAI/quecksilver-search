@@ -13,6 +13,7 @@ import { FolderContentsContent } from "@/overlay/FolderContentsContent";
 import { NewFavoriteFolderDialogContent } from "@/overlay/NewFavoriteFolderDialogContent";
 import { ControlCenterContent } from "@/overlay/ControlCenterContent";
 import { TabPreviewContent } from "@/overlay/TabPreviewContent";
+import { SearchEngineOverlayContent } from "@/overlay/SearchEngineOverlayContent";
 import type {
   BookmarkOverlayPayload,
   ContextMenuOverlayPayload,
@@ -22,6 +23,7 @@ import type {
   FavoriteFolderOverlayPayload,
   GroupDialogOverlayPayload,
   ProfileOverlayPayload,
+  SearchEngineOverlayPayload,
   TabPreviewOverlayPayload,
   TabSearchOverlayPayload,
   TabsMenuOverlayPayload,
@@ -91,6 +93,7 @@ function OverlayRoute() {
           <ControlCenterContent payload={payload as TabsMenuOverlayPayload} onAction={sendAction} onNotify={notifyAction} />
         )}
         {kind === "tabPreview" && <TabPreviewContent payload={payload as TabPreviewOverlayPayload} />}
+        {kind === "searchEngine" && <SearchEngineOverlayContent payload={payload as SearchEngineOverlayPayload} onAction={sendAction} />}
         {!kind && null /* nothing open yet — window sits hidden until overlay-window.ts's open() sends overlay:init */}
       </div>
       {kind === "bookmark" && (

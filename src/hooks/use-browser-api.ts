@@ -324,13 +324,13 @@ type BrowserAPI = {
   // hang off (matches ProfilePopup.tsx's existing AnchorRect).
   overlay: {
     open: (
-      kind: "profile" | "contextmenu" | "bookmark" | "groupDialog" | "tabSearch" | "downloads" | "favoriteContextMenu" | "favoriteEditDialog" | "favoriteFolder" | "newFavoriteFolderDialog" | "tabsMenu" | "tabPreview",
+      kind: "profile" | "contextmenu" | "bookmark" | "groupDialog" | "tabSearch" | "downloads" | "favoriteContextMenu" | "favoriteEditDialog" | "favoriteFolder" | "newFavoriteFolderDialog" | "tabsMenu" | "tabPreview" | "searchEngine",
       payload: unknown,
       anchor: { top: number; left: number; right: number; bottom: number; placement?: "belowRight" | "atPoint" | "belowCenter" | "cover" },
     ) => Promise<void>;
     close: () => Promise<void>;
-    update: (kind: "profile" | "contextmenu" | "bookmark" | "groupDialog" | "tabSearch" | "downloads" | "favoriteContextMenu" | "favoriteEditDialog" | "favoriteFolder" | "newFavoriteFolderDialog" | "tabsMenu" | "tabPreview", payload: unknown) => Promise<void>;
-    onAction: (cb: (action: { kind: "profile" | "contextmenu" | "bookmark" | "groupDialog" | "tabSearch" | "downloads" | "favoriteContextMenu" | "favoriteEditDialog" | "favoriteFolder" | "newFavoriteFolderDialog" | "tabsMenu" | "tabPreview"; action: unknown }) => void) => () => void;
+    update: (kind: "profile" | "contextmenu" | "bookmark" | "groupDialog" | "tabSearch" | "downloads" | "favoriteContextMenu" | "favoriteEditDialog" | "favoriteFolder" | "newFavoriteFolderDialog" | "tabsMenu" | "tabPreview" | "searchEngine", payload: unknown) => Promise<void>;
+    onAction: (cb: (action: { kind: "profile" | "contextmenu" | "bookmark" | "groupDialog" | "tabSearch" | "downloads" | "favoriteContextMenu" | "favoriteEditDialog" | "favoriteFolder" | "newFavoriteFolderDialog" | "tabsMenu" | "tabPreview" | "searchEngine"; action: unknown }) => void) => () => void;
   };
 };
 

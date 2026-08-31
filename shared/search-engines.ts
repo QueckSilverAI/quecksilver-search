@@ -4,6 +4,7 @@
 // (the URL bar and Settings' engine picker). Kept dependency-free (no
 // React/DOM) so both sides can import it as-is.
 export type SearchEngine =
+  | "quecksilver"
   | "google"
   | "bing"
   | "duckduckgo"
@@ -20,6 +21,12 @@ export type SearchEngine =
   | "perplexity";
 
 export const SEARCH_ENGINES: { id: SearchEngine; label: string; domain: string; buildUrl: (q: string) => string }[] = [
+  // Kept first in this list on purpose — the chooser and Settings' engine
+  // grid both render SEARCH_ENGINES in this exact order, and QueckSilver
+  // Search should show up top regardless. The actual default (which engine
+  // a fresh profile starts on) is a separate value — see
+  // DEFAULT_SEARCH_ENGINE in settings-store.ts, which stays "duckduckgo".
+  { id: "quecksilver", label: "QueckSilver Search", domain: "search.quecksilver.ch", buildUrl: (q) => `https://search.quecksilver.ch/search?q=${encodeURIComponent(q)}` },
   { id: "google", label: "Google", domain: "google.com", buildUrl: (q) => `https://www.google.com/search?q=${encodeURIComponent(q)}` },
   { id: "bing", label: "Bing", domain: "bing.com", buildUrl: (q) => `https://www.bing.com/search?q=${encodeURIComponent(q)}` },
   { id: "duckduckgo", label: "DuckDuckGo", domain: "duckduckgo.com", buildUrl: (q) => `https://duckduckgo.com/?q=${encodeURIComponent(q)}` },

@@ -6,7 +6,7 @@
 // as more overlays get migrated off the screenshot-backdrop approach (see
 // Phase 4 of the plan) — ProfilePopup and the right-click context menu are
 // the first two.
-export type OverlayKind = "profile" | "contextmenu" | "bookmark" | "groupDialog" | "tabSearch" | "downloads" | "favoriteContextMenu" | "favoriteEditDialog" | "favoriteFolder" | "newFavoriteFolderDialog" | "tabsMenu" | "tabPreview";
+export type OverlayKind = "profile" | "contextmenu" | "bookmark" | "groupDialog" | "tabSearch" | "downloads" | "favoriteContextMenu" | "favoriteEditDialog" | "favoriteFolder" | "newFavoriteFolderDialog" | "tabsMenu" | "tabPreview" | "searchEngine";
 
 // Window-relative rect (getBoundingClientRect() shape) of whatever the
 // overlay should visually hang off — the profile button, or the exact

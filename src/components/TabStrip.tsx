@@ -375,6 +375,16 @@ export function TabStrip({
   const showText = tabWidth >= TEXT_HIDE_WIDTH;
   const showCloseAlways = tabWidth >= CLOSE_HIDE_WIDTH;
   const useAppLogo = tabWidth <= LOGO_SWITCH_WIDTH;
+  // True once tabs no longer fit at MIN_TAB_WIDTH even after shrinking —
+  // the rare case the scrollable row's overflow-x-auto fallback is
+  // actually for (see that div's own comment). When this is false, the
+  // "+" button renders INSIDE the scrollable row so it sits right after
+  // the last tab with no gap (see the button's own render below). When
+  // it's true, that inline button is skipped and a second, identical
+  // one renders as a plain sibling AFTER the scrollable row instead —
+  // outside the overflow-x-auto area, so it can't scroll out of view
+  // with the tabs and stays pinned at the strip's right edge.
+  const tabsOverflowing = containerWidth > 0 && tabCount * MIN_TAB_WIDTH + NEW_TAB_BTN_SPACE > containerWidth;
 
   // FLIP animation: whenever the visual order actually changes (a splice
   // during drag, tracked by `version`), the tabs that got displaced jump
@@ -770,26 +780,32 @@ export function TabStrip({
 
       {/* flex-1 so this row always claims exactly the space left over after
           the logo and window-control buttons — that measured width feeds
-          the shrink-to-fit tab math above. The "+" button lives INSIDE this
-          row, right after the last tab (not as a separate sibling out at
-          the row's far edge) — that's what makes it follow the tabs when
-          some get closed, instead of stranding out on the right with a gap
-          behind it. The container itself carries the drag region (so any
-          leftover space past the "+" button still drags the window); each
-          tab and the button opt back out of that individually. pl-2.5
-          reserves exactly NOTCH's width — the minimum that still keeps
-          the first tab's left notch from getting clipped by this
-          container's own scroll edge while that tab is active. pr-2.5
-          is unrelated to the notch — it's clearance for the "+" button's
-          own edge. overflow-x-
-          auto is a fallback only: tabs shrink down to MIN_TAB_WIDTH to fit,
-          so it should essentially never trigger, but it's there in case an
-          extreme tab count still doesn't fit. Divider visibility is driven
-          by React state (hoveredId), not a CSS sibling trick — that only
-          ever hid one side reliably. */}
+          the shrink-to-fit tab math above. The "+" button normally lives
+          INSIDE this row, right after the last tab (not as a separate
+          sibling out at the row's far edge) — that's what makes it follow
+          the tabs when some get closed, instead of stranding out on the
+          right with a gap behind it. Only exception: once tabsOverflowing
+          is true (tabs no longer fit even at MIN_TAB_WIDTH — see that
+          flag's own comment above), this inline button is skipped and a
+          second copy renders as a fixed sibling AFTER this div instead —
+          otherwise the button itself would scroll out of view along with
+          the overflowing tabs, same as any other child of this
+          overflow-x-auto row. The container itself carries the drag
+          region (so any leftover space past the "+" button still drags
+          the window); each tab and the button opt back out of that
+          individually. pl-2.5 reserves exactly NOTCH's width — the
+          minimum that still keeps the first tab's left notch from getting
+          clipped by this container's own scroll edge while that tab is
+          active. pr-1.5 is unrelated to the notch — it's clearance for
+          the "+" button's own edge. overflow-x-auto is a fallback only:
+          tabs shrink down to MIN_TAB_WIDTH to fit, so it should
+          essentially never trigger, but it's there in case an extreme tab
+          count still doesn't fit. Divider visibility is driven by React
+          state (hoveredId), not a CSS sibling trick — that only ever hid
+          one side reliably. */}
       <div
         ref={containerRef}
-        className="flex min-w-0 flex-1 items-end gap-0 self-end overflow-x-auto pl-2.5 pr-2.5 [-webkit-app-region:drag]"
+        className="flex min-w-0 flex-1 items-end gap-0 self-end overflow-x-auto pl-2.5 pr-1.5 [-webkit-app-region:drag]"
       >
         {(() => {
           const seenCollapsedGroups = new Set<string>();
@@ -1138,8 +1154,12 @@ export function TabStrip({
             no separation at all, while every other inactive/inactive
             boundary got one. Skipped when the last slot IS the active tab
             (that already has its own notch-corner separation, same rule
-            as the between-tab dividers above) or when hovering that tab. */}
+            as the between-tab dividers above) or when hovering that tab —
+            or when tabsOverflowing, since then there's no inline "+"
+            button directly after the last tab to separate from anymore
+            (it moved to the fixed copy outside this row instead). */}
         {(() => {
+          if (tabsOverflowing) return null;
           const lastTab = orderedTabs[orderedTabs.length - 1];
           if (!lastTab) return null;
           const lastGroup = lastTab.groupId ? groupsById.get(lastTab.groupId) : undefined;
@@ -1157,14 +1177,31 @@ export function TabStrip({
           );
         })()}
 
+        {!tabsOverflowing && (
+          <button
+            onClick={onNewTab}
+            aria-label="New tab"
+            className="ml-[5px] mb-[5px] flex h-7 w-7 shrink-0 items-center justify-center self-end rounded-lg text-black transition-colors hover:bg-black/10 [-webkit-app-region:no-drag]"
+          >
+            <Plus className="h-4 w-4" />
+          </button>
+        )}
+      </div>
+
+      {/* Fixed copy of the "+" button above, rendered only once tabs
+          overflow (see tabsOverflowing's comment) — a plain sibling AFTER
+          the scrollable row instead of its last child, so it can't
+          scroll away with the tabs and always stays reachable at the
+          strip's right edge. */}
+      {tabsOverflowing && (
         <button
           onClick={onNewTab}
           aria-label="New tab"
-          className="ml-1.5 mb-[5px] flex h-7 w-7 shrink-0 items-center justify-center self-end rounded-lg text-black transition-colors hover:bg-black/10 [-webkit-app-region:no-drag]"
+          className="ml-[5px] mb-[5px] flex h-7 w-7 shrink-0 items-center justify-center self-end rounded-lg text-black transition-colors hover:bg-black/10 [-webkit-app-region:no-drag]"
         >
           <Plus className="h-4 w-4" />
         </button>
-      </div>
+      )}
 
       {!hasNativeControls && (
         <div className="-mr-3 flex h-full shrink-0 items-stretch [-webkit-app-region:no-drag]">

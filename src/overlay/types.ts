@@ -1,4 +1,5 @@
 import type { ActiveIdentity, Profile } from "@/hooks/use-browser-api";
+import type { SearchEngine } from "../../shared/search-engines";
 
 // --- Profile popup (Phase 4a) ---------------------------------------------
 // Sent once when the overlay opens (see index.tsx's openProfilePopup) and
@@ -502,3 +503,23 @@ export type TabPreviewOverlayPayload = {
   host: string | null;
   favicon: string | null;
 };
+
+// --- Search engine chooser (belowRight placement) ---------------------------
+// Opened from the URL bar's leading pill (index.tsx's openSearchEngineChooser)
+// — this dropdown used to be a plain absolutely-positioned DOM panel local
+// to SearchEngineChooser.tsx, which worked fine while the pill only ever
+// showed on the Start page (no real native tab view under it there). Now
+// that the pill is always the URL bar's leading slot, opening it over an
+// actual website put the panel BEHIND that tab's native WebContentsView
+// (same "native content always paints above the chrome UI" issue every
+// other dropdown here already solves) — so this one moved to the same
+// native overlay window architecture. SEARCH_ENGINES itself doesn't need
+// to travel through the payload (its buildUrl functions aren't
+// serializable across the IPC boundary anyway) — SearchEngineOverlayContent
+// just imports the shared list directly, same as SettingsView does; only
+// the current selection is passed through.
+export type SearchEngineOverlayPayload = {
+  current: SearchEngine;
+};
+
+export type SearchEngineOverlayAction = { type: "select"; id: SearchEngine };

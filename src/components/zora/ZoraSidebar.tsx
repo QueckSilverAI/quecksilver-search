@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Bookmark, Globe, MousePointerClick, ScreenShare, SearchCheck } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useZoraChat } from "@/hooks/use-zora-chat";
@@ -51,6 +51,12 @@ function ZoraConnecting() {
 
 export function ZoraSidebar(_props: Props) {
   const { session, login } = useAuth();
+  // Stable identity (only changes if login() itself ever does) so it
+  // doesn't cascade a fresh identity through useZoraChat's
+  // handleUnauthorized/send/continueFromLimit on every render — see
+  // use-auth.tsx's login() for why this can just check the return value
+  // instead of re-reading the (possibly stale) session state.
+  const attemptZoraReauth = useCallback(async () => Boolean(await login("reauth")), [login]);
   const {
     messages,
     isLoading,
@@ -64,7 +70,7 @@ export function ZoraSidebar(_props: Props) {
     approveToolCall,
     denyToolCall,
     continueFromLimit,
-  } = useZoraChat(session?.accessToken ?? null);
+  } = useZoraChat(session?.accessToken ?? null, attemptZoraReauth);
   const { settings: zoraSettings, setScreenShareEnabled } = useZoraSettings();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [connecting, setConnecting] = useState(true);

@@ -24,17 +24,25 @@ export function useAuth() {
     };
   }, [api, profilesApi]);
 
+  // Returns the resulting session (or null if the login didn't succeed —
+  // cancelled, timed out, or the system-browser tab was closed without
+  // finishing) so callers that need to know whether it actually worked
+  // (e.g. Zora's automatic re-auth-on-401 in use-zora-chat.ts) can react
+  // to that directly, instead of reading back the (possibly still-stale,
+  // not-yet-re-rendered) `session` value from this same closure.
   const login = useCallback(
-    async (mode: "new-profile" | "reauth" = "new-profile") => {
-      if (!api) return;
+    async (mode: "new-profile" | "reauth" = "new-profile"): Promise<AuthSession> => {
+      if (!api) return null;
       setPending(true);
       try {
         const result = await api.login(mode);
         setSession(result);
+        return result;
       } catch {
         // Rejected either because the person cancelled (see cancelLogin
         // below), the flow timed out, or they closed the system-browser tab
         // without finishing — nothing to show in any case, they can retry.
+        return null;
       } finally {
         setPending(false);
       }

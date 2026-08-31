@@ -50,6 +50,7 @@ const INITIAL_SIZE_FOR: Partial<Record<OverlayKind, { width: number; height: num
   downloads: { width: 380, height: 200 },
   tabsMenu: { width: 260, height: 320 },
   tabPreview: { width: 220, height: 168 },
+  searchEngine: { width: 208, height: 300 },
 };
 
 // How far the panel's top edge sits below the anchor's bottom edge

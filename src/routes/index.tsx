@@ -77,6 +77,7 @@ import type {
   GroupDialogOverlayAction,
   NewFavoriteFolderOverlayAction,
   ProfileOverlayAction,
+  SearchEngineOverlayAction,
   TabSearchOverlayAction,
   TabsMenuOverlayAction,
 } from "@/overlay/types";
@@ -856,6 +857,11 @@ function Index() {
             break;
         }
       }
+      if (event.kind === "searchEngine") {
+        const action = event.action as SearchEngineOverlayAction;
+        if (action.type === "select") setEngine(action.id);
+        return;
+      }
     });
   }, [
     openProfileInNewWindow,
@@ -883,11 +889,11 @@ function Index() {
     createHeaderFavoriteFolder,
     recentlyClosed,
     newTab,
+    setEngine,
   ]);
   const [urlDraft, setUrlDraft] = useState("");
   const [homeUrlDraft, setHomeUrlDraft] = useState("");
   const [secondaryHomeUrlDraft, setSecondaryHomeUrlDraft] = useState("");
-  const [urlCopied, setUrlCopied] = useState(false);
   const [autoSavedPill, setAutoSavedPill] = useState<{ url: string; username: string } | null>(
     null,
   );
@@ -1590,34 +1596,6 @@ function Index() {
     setTimeout(() => setIdentityRequested(false), 1500);
   };
 
-  const copyUrl = async () => {
-    if (isHome) {
-      notifyError("Nothing to copy here");
-      return;
-    }
-    try {
-      // Was navigator.clipboard.writeText() — the chrome UI's own
-      // webContents doesn't reliably have clipboard-write permission/focus
-      // for the Clipboard API (Electron's permission handling doesn't
-      // auto-grant it the way a real user-facing page origin would), which
-      // is exactly why every other copy-to-clipboard action in this app
-      // (right-click "Copy link", "Copy image") already goes through the
-      // native electron `clipboard` module over IPC instead. Routing the
-      // address-bar button through that same links:copy handler is what
-      // actually fixes it, not just makes it consistent.
-      const url = activeTab?.url ?? "";
-      if (window.browserAPI?.links) {
-        await window.browserAPI.links.copy(url);
-      } else {
-        await navigator.clipboard.writeText(url);
-      }
-      setUrlCopied(true);
-      setTimeout(() => setUrlCopied(false), 1400);
-    } catch {
-      notifyError("Could not copy URL");
-    }
-  };
-
   const submitUrl = (raw: string) => {
     const target = parseUrlBarInput(raw, isTorWindow);
     if (!target) {
@@ -1842,39 +1820,11 @@ function Index() {
               className={`flex items-center gap-2.5 rounded-full py-[4px] pl-4 pr-2.5 transition-shadow ${editingUrl ? "ring-2 ring-[var(--brand)]" : ""}`}
               style={{ background: "var(--chrome-field)" }}
             >
-              {activeTab?.isHome ? (
-                // On the Start page there's no URL to copy, so this slot
-                // becomes a search-engine picker instead — the icon of
-                // whichever engine currently handles the Start page's search
-                // bar, with a dropdown to switch it right there instead of
-                // needing a trip to Settings.
-                <SearchEngineChooser engine={engine} onChange={setEngine} variant="inline" />
-              ) : null}
-              {!activeTab?.isHome ? (
-                <button
-                  onClick={copyUrl}
-                  aria-label="Copy URL"
-                  className={`shrink-0 ${urlCopied ? "text-green-600" : "text-muted-foreground"}`}
-                >
-                  {urlCopied ? (
-                    <Check className="h-[14px] w-[14px]" strokeWidth={2.5} />
-                  ) : (
-                    <svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
-                      <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
-                    </svg>
-                  )}
-                </button>
-              ) : null}
+              {/* Always the leading slot in the URL bar now — used to be a
+                  "Copy URL" button on non-Start tabs and this chooser only
+                  on the Start page, but the chooser is more useful here all
+                  the time (switch engine right where you search from). */}
+              <SearchEngineChooser engine={engine} onChange={setEngine} variant="inline" />
               <input
                 ref={urlBarRef}
                 value={urlDraft}
