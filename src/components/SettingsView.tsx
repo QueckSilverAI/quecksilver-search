@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Bell, Bot, Camera, Check, ChevronDown, ChevronLeft, ChevronRight, Columns2, Download, Edit3, Eraser, Eye, EyeOff, FolderOpen, Globe, KeyRound, Link2, Lock, Mic, Monitor,
-  Moon, Palette, Plus, PictureInPicture2, RotateCcw, RotateCw, Search, Settings as SettingsIcon, ShieldAlert, ShieldCheck, AlertTriangle, Star, Sun, Trash2, User, Zap,
+  Moon, Palette, Plus, RotateCcw, RotateCw, Search, Settings as SettingsIcon, ShieldAlert, ShieldCheck, AlertTriangle, Star, Sun, Trash2, User, Zap,
 } from "lucide-react";
 import { useAccentColor, useColorScheme, THEME_COLORS, type ColorScheme } from "@/lib/theme";
 import { useSearchEngine, SEARCH_ENGINES, useZoomLevel, useHeaderFavoritesBarVisible } from "@/lib/settings-store";
@@ -155,7 +155,6 @@ export function SettingsView({ nightModeTabId }: { nightModeTabId?: string | nul
     { id: "edit", icon: Edit3, label: "Edit", onClick: () => {} },
     { id: "settings", icon: SettingsIcon, label: "Settings", onClick: () => {} },
     { id: "download", icon: Download, label: "Downloads", onClick: () => {} },
-    { id: "pip", icon: PictureInPicture2, label: "Picture-in-Picture", onClick: () => {} },
     { id: "split", icon: Columns2, label: "Split", onClick: () => {}, active: true },
   ];
   const { favorites, add: addFavorite, addMany: addManyFavorites, update: updateFavorite, remove: removeFavorite } = useHeaderFavorites();

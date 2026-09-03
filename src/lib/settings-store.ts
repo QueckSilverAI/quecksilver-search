@@ -96,9 +96,9 @@ export function useOnionize() {
 // Order of the Edit/Settings/Download/Split toolbar icons — draggable to
 // rearrange (see the toolbar in routes/index.tsx), persisted so it sticks
 // across restarts.
-export type ToolbarIconId = "edit" | "settings" | "download" | "split" | "pip";
+export type ToolbarIconId = "edit" | "settings" | "download" | "split";
 const TOOLBAR_ORDER_KEY = "qs-toolbar-icon-order-v2b";
-const DEFAULT_TOOLBAR_ORDER: ToolbarIconId[] = ["edit", "download", "pip", "settings", "split"];
+const DEFAULT_TOOLBAR_ORDER: ToolbarIconId[] = ["edit", "download", "settings", "split"];
 
 export function useToolbarIconOrder() {
   const [order, setOrder] = useState<ToolbarIconId[]>(() => {

@@ -79,6 +79,9 @@ export async function runControlCenterAction(
     case "setCustomCss":
       await ctx.tabs.setCustomCssForDomain(action.domain, action.css);
       return null;
+    case "setSiteFeatureOverride":
+      ctx.tabs.setSiteFeatureOverride(action.feature, action.domain, action.disabled);
+      return null;
     case "fullPageScreenshot":
       return tabId ? await ctx.tabs.captureFullPageScreenshot(tabId) : null;
     case "exportPageAsMarkdown":

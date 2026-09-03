@@ -1,4 +1,4 @@
-import type { ActiveIdentity, Profile } from "@/hooks/use-browser-api";
+import type { ActiveIdentity, Profile, SiteOverridableFeature } from "@/hooks/use-browser-api";
 import type { SearchEngine } from "../../shared/search-engines";
 
 // --- Profile popup (Phase 4a) ---------------------------------------------
@@ -393,7 +393,8 @@ export type ControlCenterActionType =
   | "toggleHarRecording"
   | "setRequestMock"
   | "deleteRequestMock"
-  | "getRequestMocks";
+  | "getRequestMocks"
+  | "setSiteFeatureOverride";
 
 export type ControlCenterActionRequest =
   | {
@@ -408,6 +409,7 @@ export type ControlCenterActionRequest =
         | "deleteCookie"
         | "setRequestMock"
         | "deleteRequestMock"
+        | "setSiteFeatureOverride"
       >;
       tabId?: string;
     }
@@ -419,7 +421,14 @@ export type ControlCenterActionRequest =
   | { type: "setCookie"; tabId?: string; name: string; value: string }
   | { type: "deleteCookie"; tabId?: string; name: string }
   | { type: "setRequestMock"; pattern: string; status: number; body: string }
-  | { type: "deleteRequestMock"; pattern: string };
+  | { type: "deleteRequestMock"; pattern: string }
+  | {
+      type: "setSiteFeatureOverride";
+      tabId?: string;
+      feature: SiteOverridableFeature;
+      domain: string;
+      disabled: boolean;
+    };
 
 // --- Tabs menu (belowRight placement) ---------------------------------------
 // Opened from the Control center button at the top-left of TabStrip (see
@@ -467,6 +476,14 @@ export type TabsMenuOverlayPayload = {
   // whatever CSS is currently saved for it (empty string if none), null
   // when there's no real domain to target (home/settings tabs).
   customCssForActiveTab: { domain: string; css: string } | null;
+  // Control center's per-site "X off for this site" toggles — the active
+  // tab's domain and every feature's override state for it at once, null
+  // when there's no real domain to target (home/settings tabs). Same
+  // shape/reasoning as customCssForActiveTab above.
+  siteFeatureOverridesForActiveTab: {
+    domain: string;
+    overrides: Partial<Record<SiteOverridableFeature, true>>;
+  } | null;
   // Seiten-Metadaten-Check (masterplan #22) — null until the person
   // actually clicks the button (not polled), see routes/index.tsx's
   // "cc:action" handler.

@@ -3,6 +3,11 @@ import { useCallback, useEffect, useState } from "react";
 export const HOME_URL = "quecksilver://newtab";
 export const SETTINGS_URL = "quecksilver://settings";
 
+// Renderer-side copy of electron/site-feature-overrides-store.ts's type —
+// same pattern as use-control-center.ts's ControlCenterActionRequest copy.
+export type SiteOverridableFeature =
+  "adBlock" | "cookies" | "images" | "javascript" | "autoplay" | "popups";
+
 export type TabState = {
   id: string;
   url: string;
@@ -304,6 +309,10 @@ type BrowserAPI = {
     getBandwidthForActiveTab: () => Promise<number>;
     getResourceUsageForActiveTab: () => Promise<{ cpuPercent: number; ramMb: number } | null>;
     getCustomCssForActiveTab: () => Promise<{ domain: string; css: string } | null>;
+    getSiteFeatureOverridesForActiveTab: () => Promise<{
+      domain: string;
+      overrides: Partial<Record<SiteOverridableFeature, true>>;
+    } | null>;
   };
   tor: {
     getStatus: () => Promise<

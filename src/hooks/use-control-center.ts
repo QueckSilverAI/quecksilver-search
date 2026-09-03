@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import type { SiteOverridableFeature } from "./use-browser-api";
 
 // Renderer-side copy of electron/control-center-store.ts's types — same
 // pattern as use-privacy-settings.ts.
@@ -120,7 +121,8 @@ export type ControlCenterActionType =
   | "toggleHarRecording"
   | "setRequestMock"
   | "deleteRequestMock"
-  | "getRequestMocks";
+  | "getRequestMocks"
+  | "setSiteFeatureOverride";
 
 export type ControlCenterActionRequest =
   | {
@@ -135,6 +137,7 @@ export type ControlCenterActionRequest =
         | "deleteCookie"
         | "setRequestMock"
         | "deleteRequestMock"
+        | "setSiteFeatureOverride"
       >;
       tabId?: string;
     }
@@ -146,7 +149,14 @@ export type ControlCenterActionRequest =
   | { type: "setCookie"; tabId?: string; name: string; value: string }
   | { type: "deleteCookie"; tabId?: string; name: string }
   | { type: "setRequestMock"; pattern: string; status: number; body: string }
-  | { type: "deleteRequestMock"; pattern: string };
+  | { type: "deleteRequestMock"; pattern: string }
+  | {
+      type: "setSiteFeatureOverride";
+      tabId?: string;
+      feature: SiteOverridableFeature;
+      domain: string;
+      disabled: boolean;
+    };
 
 const DEFAULTS: ControlCenterSettings = {
   adBlockEnabled: true,
@@ -257,6 +267,13 @@ export function useControlCenter() {
     [api],
   );
 
+  // Per-site "X off for this site" toggles — same polling shape as
+  // getCustomCssForActiveTab above.
+  const getSiteFeatureOverridesForActiveTab = useCallback(
+    () => api?.getSiteFeatureOverridesForActiveTab() ?? Promise.resolve(null),
+    [api],
+  );
+
   return {
     settings,
     update,
@@ -267,5 +284,6 @@ export function useControlCenter() {
     getBandwidthForActiveTab,
     getResourceUsageForActiveTab,
     getCustomCssForActiveTab,
+    getSiteFeatureOverridesForActiveTab,
   };
 }

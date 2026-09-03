@@ -1,5 +1,6 @@
-import { app, session as electronSession, BrowserWindow } from "electron";
+import { app, session as electronSession, BrowserWindow, webContents } from "electron";
 import { getSitePermission, recordDefaultBlock, type PermissionKind } from "./site-permissions-store";
+import { isFeatureDisabledForDomain, type SiteOverridableFeature } from "./site-feature-overrides-store";
 import { recordHttpsUpgrade, consumeHttpExemption } from "./https-upgrade-tracker";
 import { getPrivacySettings } from "./privacy-settings-store";
 import { BUNDLED_AD_BLOCK_DOMAINS } from "./adblock-domains";
@@ -121,6 +122,38 @@ function hostMatches(url: string): boolean {
   }
 }
 
+// Control center's per-site "X off for this site" toggles — resolves
+// which domain a given request should be checked against. For a
+// sub-resource (script, image, xhr, iframe, ...) that's the ISSUING
+// PAGE's domain, via the webContents' current top-level URL (a tracker
+// script is basically never on the same domain as the site loading it) —
+// same way site-permissions-store.ts's checks already do. For a
+// mainFrame request itself, webContents.getURL() would still return the
+// PREVIOUS page (the navigation hasn't committed yet), so that case uses
+// the request's own URL instead — the address being navigated TO, which
+// is what a per-site cookie exception actually needs to key off of.
+function resolveRequestDomain(details: {
+  resourceType: string;
+  url: string;
+  webContentsId: number;
+}): string | null {
+  try {
+    if (details.resourceType === "mainFrame") return new URL(details.url).hostname;
+    const wc = webContents.fromId(details.webContentsId);
+    return wc ? new URL(wc.getURL()).hostname : null;
+  } catch {
+    return null;
+  }
+}
+
+function isFeatureDisabledForRequest(
+  feature: SiteOverridableFeature,
+  details: { resourceType: string; url: string; webContentsId: number },
+): boolean {
+  const domain = resolveRequestDomain(details);
+  return domain !== null && isFeatureDisabledForDomain(feature, domain);
+}
+
 // Built once at module load, not per-request — see adblock-domains.ts's
 // own header for what this list is and how to refresh it.
 const BUNDLED_AD_BLOCK_SET = new Set(BUNDLED_AD_BLOCK_DOMAINS);
@@ -184,7 +217,24 @@ export function applyPrivacyHardening(targetSession?: Electron.Session) {
     // onCompleted hook below), recorded unconditionally so the log covers
     // every request, not just ones any of the toggles below act on.
     recordRequestStart(details.id, details.timestamp);
-    if (adBlockEnabled() && hostMatches(details.url)) {
+    // mainFrame is excluded here on purpose: that's not a tracker loading
+    // inside a page, it's the actual navigation — the address the person
+    // is going TO. A lot of "click a sponsored search result" links (Google/
+    // Bing/DS ad redirects, e.g. ad.doubleclick.net/searchads/.../click?
+    // ...&ds_dest_url=<the real site>) live on domains that are correctly
+    // blocklisted as trackers, since the same domains also serve actual ad
+    // creatives/beacons as sub-resources. But cancelling THIS request — the
+    // navigation itself — doesn't stop an ad from loading, it just strands
+    // the person on the "Blocked by the Ad-Blocker" page with no way to
+    // reach the site they clicked through to. Sub-resource trackers
+    // (scripts, images, iframes, xhr) a page pulls in on its own are still
+    // blocked exactly as before.
+    if (
+      adBlockEnabled() &&
+      details.resourceType !== "mainFrame" &&
+      hostMatches(details.url) &&
+      !isFeatureDisabledForRequest("adBlock", details)
+    ) {
       // Control center's "Tracker-Zähler" — every cancelled request here
       // IS a blocked tracker by definition (hostMatches only matches
       // BLOCKED_HOSTS), so counting it right at the point of cancellation
@@ -225,7 +275,11 @@ export function applyPrivacyHardening(targetSession?: Electron.Session) {
     // onBeforeRequest listener, since Electron dispatches multiple
     // listeners on the same event in registration order anyway — no
     // benefit to splitting this into its own hook.
-    if (imagesGloballyDisabled() && details.resourceType === "image") {
+    if (
+      imagesGloballyDisabled() &&
+      details.resourceType === "image" &&
+      !isFeatureDisabledForRequest("images", details)
+    ) {
       callback({ cancel: true });
       return;
     }
@@ -292,7 +346,13 @@ export function applyPrivacyHardening(targetSession?: Electron.Session) {
     // here (that distinction needs details.resourceType + the frame's own
     // top-level origin, which isn't reliably available at this hook for
     // every request type) — the simple, honest version of "block cookies".
-    if (cookiesBlocked()) delete headers["Cookie"];
+    // Per-site exception: resolveRequestDomain handles the mainFrame case
+    // itself (the site being navigated TO, not the previous page), so a
+    // domain someone's exempted keeps its cookies on the very navigation
+    // that loads it, not just on sub-resources after the fact.
+    if (cookiesBlocked() && !isFeatureDisabledForRequest("cookies", details)) {
+      delete headers["Cookie"];
+    }
     // NOTE: we deliberately do NOT trim the Referer ourselves anymore.
     // Chromium already defaults every navigation to "strict-origin-when-
     // cross-origin" (has since Chrome 85) and — crucially — honors a
@@ -310,7 +370,7 @@ export function applyPrivacyHardening(targetSession?: Electron.Session) {
   // OUTGOING Cookie header alone still lets a site set/refresh cookies
   // that would go out on the person's very next request.
   ses.webRequest.onHeadersReceived((details, callback) => {
-    if (!cookiesBlocked()) {
+    if (!cookiesBlocked() || isFeatureDisabledForRequest("cookies", details)) {
       callback({});
       return;
     }

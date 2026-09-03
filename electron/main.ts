@@ -188,16 +188,23 @@ Menu.setApplicationMenu(null);
 // privacy.ts for why this specific one exists).
 applyEarlyPrivacySwitches();
 
-// Control center's "Autoplay-Block" and "Hardware-Beschleunigung" only
-// take effect via Chromium command-line switches / an API that MUST run
-// before app.whenReady() — same constraint as applyEarlyPrivacySwitches()
-// above. Read once, synchronously, at startup; toggling either setting
-// later in Settings/Control center still persists immediately, it just
-// needs the next app launch to actually apply (surfaced as a "Neustart
-// erforderlich" hint in ControlCenterContent.tsx).
+// Control center's "Hardware-Beschleunigung" only takes effect via an API
+// that MUST run before app.whenReady() — same constraint as
+// applyEarlyPrivacySwitches() above. Read once, synchronously, at
+// startup; toggling it later in Settings/Control center still persists
+// immediately, it just needs the next app launch to actually apply
+// (surfaced as a "Neustart erforderlich" hint in ControlCenterContent.tsx).
+//
+// Autoplay-Block used to live here too, as a blanket "autoplay-policy"
+// command-line switch — but that applies to literally every WebContents
+// in the whole app process, with no way to except a single site, and
+// (being a command-line switch) only takes effect on the NEXT app
+// launch. It's now set per-tab instead, via webPreferences.autoplayPolicy
+// at tab-creation time — see createTab() in tab-manager.ts — which is
+// both genuinely per-site AND doesn't need a relaunch for a freshly
+// opened tab to pick up a change.
 {
   const cc = getControlCenterSettings();
-  if (cc.autoplayBlock) app.commandLine.appendSwitch("autoplay-policy", "user-gesture-required");
   if (!cc.hardwareAcceleration) app.disableHardwareAcceleration();
 }
 
@@ -1635,6 +1642,14 @@ function registerIpc() {
     const ctx = contextFor(e);
     const activeId = ctx?.tabs.getActiveId();
     return activeId ? ctx.tabs.getCustomCssForTab(activeId) : null;
+  });
+  // Per-site "X off for this site" toggles — same polling shape as
+  // customCssForActiveTab above, one round trip for every feature's
+  // override state on the active tab's domain at once.
+  ipcMain.handle("controlCenter:siteFeatureOverridesForActiveTab", (e) => {
+    const ctx = contextFor(e);
+    const activeId = ctx?.tabs.getActiveId();
+    return activeId ? ctx.tabs.getSiteFeatureOverridesForTab(activeId) : null;
   });
   ipcMain.handle("controlCenter:currentSiteSafety", (e) => {
     const ctx = contextFor(e);

@@ -14,7 +14,6 @@ import {
   EyeOff,
   Folder,
   Link2,
-  PictureInPicture2,
   RotateCw,
   Search,
   Settings,
@@ -37,7 +36,12 @@ import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/componen
 import { setPendingSettingsAnchor } from "@/lib/settings-anchor";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useBrowserApi, HOME_URL, SETTINGS_URL } from "@/hooks/use-browser-api";
+import {
+  useBrowserApi,
+  HOME_URL,
+  SETTINGS_URL,
+  type SiteOverridableFeature,
+} from "@/hooks/use-browser-api";
 import { useControlCenter } from "@/hooks/use-control-center";
 import type {
   PageMetadata,
@@ -180,7 +184,6 @@ function Index() {
     setGroupCollapsed,
     createGroup,
     setTabGroup,
-    togglePiP,
   } = useBrowserApi();
   const {
     settings: controlCenterSettings,
@@ -192,6 +195,7 @@ function Index() {
     getBandwidthForActiveTab,
     getResourceUsageForActiveTab,
     getCustomCssForActiveTab,
+    getSiteFeatureOverridesForActiveTab,
   } = useControlCenter();
   // Cheap in-memory read on the main process side, polled only while
   // something might be showing it (the Control center dropdown) — a
@@ -257,6 +261,18 @@ function Index() {
     }, 3000);
     return () => clearInterval(interval);
   }, [getCustomCssForActiveTab]);
+  // Per-site "X off for this site" toggles — same polling shape as
+  // customCssForActiveTab above.
+  const [siteFeatureOverridesForActiveTab, setSiteFeatureOverridesForActiveTab] = useState<{
+    domain: string;
+    overrides: Partial<Record<SiteOverridableFeature, true>>;
+  } | null>(null);
+  useEffect(() => {
+    const interval = setInterval(() => {
+      void getSiteFeatureOverridesForActiveTab().then(setSiteFeatureOverridesForActiveTab);
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [getSiteFeatureOverridesForActiveTab]);
   // Seiten-Metadaten-Check (masterplan #22) — unlike everything else
   // polled here, this ISN'T re-fetched on an interval; it only changes
   // when the person actually clicks the button, which the "cc:action"
@@ -953,6 +969,7 @@ function Index() {
       bandwidthForActiveTab,
       resourceUsageForActiveTab,
       customCssForActiveTab,
+      siteFeatureOverridesForActiveTab,
       pageMetadataResult,
       requestLogResult,
       cookiesResult,
@@ -972,6 +989,7 @@ function Index() {
     bandwidthForActiveTab,
     resourceUsageForActiveTab,
     customCssForActiveTab,
+    siteFeatureOverridesForActiveTab,
     pageMetadataResult,
     requestLogResult,
     cookiesResult,
@@ -1752,6 +1770,7 @@ function Index() {
                 bandwidthForActiveTab,
                 resourceUsageForActiveTab,
                 customCssForActiveTab,
+                siteFeatureOverridesForActiveTab,
                 pageMetadataResult,
                 requestLogResult,
                 cookiesResult,
@@ -1815,7 +1834,14 @@ function Index() {
             <RotateCw className="h-4 w-4" />
           </button>
 
-          <div className="relative max-w-[900px] flex-1">
+          {/* max-w bumped from 900 to 934 — one fewer toolbar icon (32px
+              button + 2px gap, see ToolbarActionIcons.tsx's `hoverIdx * 34`
+              slot width) now that PiP is gone, so the bar gets to actually
+              use the freed space instead of just leaving it unused at the
+              end of the row. (The GAP to the icon cluster itself is fixed
+              by the flex row's own gap/margin, not by this — see the
+              -ml-0.5 override just below.) */}
+          <div className="relative max-w-[934px] flex-1">
             <div
               className={`flex items-center gap-2.5 rounded-full py-[4px] pl-4 pr-2.5 transition-shadow ${editingUrl ? "ring-2 ring-[var(--brand)]" : ""}`}
               style={{ background: "var(--chrome-field)" }}
@@ -2043,7 +2069,7 @@ function Index() {
             </div>
           </div>
 
-          <div className="ml-1.5 flex items-center">
+          <div className="-ml-0.5 flex items-center">
             {/* Same slot as the auto-save confirmation below — replaces the
               icons + profile pill (not the whole toolbar, and never covers
               the search bar) while any of these is showing, then reverts
@@ -2210,12 +2236,6 @@ function Index() {
                         onClick: toggleSplit,
                         active: Boolean(secondaryId),
                       },
-                      pip: {
-                        id: "pip",
-                        icon: PictureInPicture2,
-                        label: "Picture-in-Picture",
-                        onClick: () => void togglePiP(),
-                      },
                     };
                     return defs[id];
                   })}
@@ -2350,6 +2370,7 @@ function Index() {
                   bandwidthForActiveTab,
                   resourceUsageForActiveTab,
                   customCssForActiveTab,
+                  siteFeatureOverridesForActiveTab,
                   pageMetadataResult,
                   requestLogResult,
                   cookiesResult,

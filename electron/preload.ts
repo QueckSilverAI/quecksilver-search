@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
+import type { SiteOverridableFeature } from "./site-feature-overrides-store";
 import type {
   ActiveIdentity,
   AuthSession,
@@ -251,6 +252,10 @@ const controlCenter = {
     ipcRenderer.invoke("controlCenter:resourceUsageForActiveTab"),
   getCustomCssForActiveTab: (): Promise<{ domain: string; css: string } | null> =>
     ipcRenderer.invoke("controlCenter:customCssForActiveTab"),
+  getSiteFeatureOverridesForActiveTab: (): Promise<{
+    domain: string;
+    overrides: Partial<Record<SiteOverridableFeature, true>>;
+  } | null> => ipcRenderer.invoke("controlCenter:siteFeatureOverridesForActiveTab"),
 };
 type TorStatus =
   | { state: "stopped" }

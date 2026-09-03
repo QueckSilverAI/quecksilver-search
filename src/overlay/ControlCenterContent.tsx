@@ -92,6 +92,7 @@ import type {
   TabsMenuOverlayAction,
   TabsMenuOverlayPayload,
 } from "@/overlay/types";
+import type { SiteOverridableFeature } from "@/hooks/use-browser-api";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 
@@ -565,7 +566,6 @@ export function ControlCenterContent({
             label="Block autoplay"
             checked={cc.autoplayBlock}
             onChange={(v) => set({ autoplayBlock: v })}
-            badge="Restart"
           />
           <ToggleRow
             icon={ImageOff}
@@ -574,6 +574,78 @@ export function ControlCenterContent({
             onChange={(v) => set({ imagesDisabled: v })}
           />
         </div>
+        {payload.siteFeatureOverridesForActiveTab &&
+          (() => {
+            const { domain, overrides } = payload.siteFeatureOverridesForActiveTab;
+            const rows: {
+              feature: SiteOverridableFeature;
+              icon: React.ComponentType<{ className?: string }>;
+              label: string;
+              globalOn: boolean;
+            }[] = [
+              {
+                feature: "adBlock",
+                icon: ShieldBan,
+                label: "Ad blocker",
+                globalOn: cc.adBlockEnabled,
+              },
+              {
+                feature: "cookies",
+                icon: Cookie,
+                label: "Cookies blocked",
+                globalOn: cc.cookiesBlocked,
+              },
+              {
+                feature: "images",
+                icon: ImageOff,
+                label: "Images disabled",
+                globalOn: cc.imagesDisabled,
+              },
+              {
+                feature: "javascript",
+                icon: FileCode2,
+                label: "JavaScript disabled",
+                globalOn: cc.javascriptDisabled,
+              },
+              {
+                feature: "autoplay",
+                icon: PlayCircle,
+                label: "Autoplay blocked",
+                globalOn: cc.autoplayBlock,
+              },
+              {
+                feature: "popups",
+                icon: MousePointerSquareDashed,
+                label: "Popups blocked",
+                globalOn: cc.popupBlock,
+              },
+            ];
+            // Only features actually switched on globally get a per-site
+            // row — an override for a feature that's off everywhere
+            // anyway would be a toggle with nothing to except from.
+            const active = rows.filter((r) => r.globalOn);
+            if (active.length === 0) return null;
+            return (
+              <>
+                {active.map((r) => (
+                  <ToggleRow
+                    key={r.feature}
+                    icon={r.icon}
+                    label={`${r.label} on ${domain}`}
+                    checked={!overrides[r.feature]}
+                    onChange={(v) =>
+                      act({
+                        type: "setSiteFeatureOverride",
+                        feature: r.feature,
+                        domain,
+                        disabled: !v,
+                      })
+                    }
+                  />
+                ))}
+              </>
+            );
+          })()}
         {payload.trackerCountForActiveTab > 0 && (
           <p className="flex items-center gap-2 px-2.5 py-1 text-[11px] text-muted-foreground">
             <ShieldBan className="h-3 w-3 shrink-0" />

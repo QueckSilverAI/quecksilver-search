@@ -27,7 +27,7 @@ export const CONTROL_CENTER_FIELD_DESCRIPTIONS: Record<
   javascriptDisabled: { category: "network", description: "Disables JavaScript execution on all pages.", type: "boolean" },
   cookiesBlocked: { category: "network", description: "Blocks all cookies from being set.", type: "boolean" },
   doNotTrack: { category: "network", description: "Sends the Do-Not-Track header with requests.", type: "boolean" },
-  autoplayBlock: { category: "network", description: "Blocks video/audio autoplay.", type: "boolean", requiresRelaunch: true },
+  autoplayBlock: { category: "network", description: "Blocks video/audio autoplay.", type: "boolean" },
   popupBlock: { category: "network", description: "Blocks popup windows.", type: "boolean" },
   networkThrottle: {
     category: "network",

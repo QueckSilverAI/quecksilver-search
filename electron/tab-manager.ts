@@ -20,7 +20,19 @@ import {
 } from "./privacy-settings-store";
 import { checkUrlSafety } from "./phishing-guard";
 import { getOriginalHttpUrl, allowHttpOnce } from "./https-upgrade-tracker";
-import { popupBlockEnabled, cookieAutoDeleteEnabled, autoSuspendMinutesSetting, jsErrorOverlayEnabled, adBlockEnabled, type VisionFilter, type CursorSize, type UserAgentPreset, type DeviceEmulationPreset, type PageMetadata } from "./control-center-store";
+import {
+  popupBlockEnabled,
+  cookieAutoDeleteEnabled,
+  autoSuspendMinutesSetting,
+  jsErrorOverlayEnabled,
+  adBlockEnabled,
+  autoplayBlockEnabled,
+  type VisionFilter,
+  type CursorSize,
+  type UserAgentPreset,
+  type DeviceEmulationPreset,
+  type PageMetadata,
+} from "./control-center-store";
 import { sendCdpCommand, detachDebugger } from "./cdp-client";
 import {
   getTrackerCount,
@@ -30,6 +42,12 @@ import {
 } from "./tracker-count-store";
 import { getBandwidthBytes, resetBandwidthBytes, clearBandwidthBytes } from "./bandwidth-store";
 import { getCustomCssForDomain, setCustomCssForDomain } from "./custom-css-store";
+import {
+  isFeatureDisabledForDomain,
+  setFeatureDisabledForDomain,
+  getOverridesForDomain,
+  type SiteOverridableFeature,
+} from "./site-feature-overrides-store";
 import { extractPageAsMarkdown } from "./markdown-export-injector";
 import { getRequestLog } from "./request-log-store";
 import { getAllRequestMocks, setRequestMock as storeSetRequestMock, deleteRequestMock as storeDeleteRequestMock } from "./request-mocks-store";
@@ -793,6 +811,53 @@ export class TabManager {
     return { domain, css: getCustomCssForDomain(domain) };
   }
 
+  // Control center's per-site "X off for this site" toggles — same
+  // domain-resolution shape as getCustomCssForTab above, backing the
+  // per-site section that reads every feature's override for whatever
+  // domain the active tab is currently on, in one call instead of six.
+  getSiteFeatureOverridesForTab(
+    id: string,
+  ): { domain: string; overrides: Partial<Record<SiteOverridableFeature, true>> } | null {
+    const wc = this.views.get(id)?.webContents;
+    if (!wc) return null;
+    let domain: string;
+    try {
+      domain = new URL(wc.getURL()).hostname;
+    } catch {
+      return null;
+    }
+    if (!domain) return null;
+    return { domain, overrides: getOverridesForDomain(domain) };
+  }
+
+  // adBlock/cookies/images/popups need no re-apply here — privacy.ts's
+  // request hooks and the popup handler below read
+  // site-feature-overrides-store.ts fresh on every request/attempt, so
+  // flipping those takes effect on the very next one, not just future
+  // navigations. javascript is the one exception: the CDP toggle that
+  // enforces it has to be re-sent to any currently open tab on this
+  // domain right now, or it wouldn't apply until that tab's next
+  // navigation. autoplay can't be re-applied at all post-creation (see
+  // applyAutoplayPolicyFor's own header comment) — an open tab on the
+  // domain needs to be reopened for a change to take effect.
+  setSiteFeatureOverride(feature: SiteOverridableFeature, domain: string, disabled: boolean) {
+    setFeatureDisabledForDomain(feature, domain, disabled);
+    if (feature !== "javascript") return;
+    const target = domain
+      .trim()
+      .toLowerCase()
+      .replace(/^www\./, "");
+    for (const view of this.views.values()) {
+      let tabDomain: string;
+      try {
+        tabDomain = new URL(view.webContents.getURL()).hostname.replace(/^www\./, "");
+      } catch {
+        continue;
+      }
+      if (tabDomain === target) void this.applyJsToggleForCurrentDomain(view.webContents);
+    }
+  }
+
   // --- Control center: request mocking (masterplan #34) --------------------
   // Thin pass-through to request-mocks-store.ts — global (not per-tab),
   // see that file's own header comment for why.
@@ -836,7 +901,7 @@ export class TabManager {
   async setJavaScriptGloballyDisabled(disabled: boolean) {
     this.javascriptGloballyDisabled = disabled;
     for (const view of this.views.values()) {
-      await this.applyJsToggle(view.webContents, disabled);
+      await this.applyJsToggleForCurrentDomain(view.webContents);
     }
   }
 
@@ -848,6 +913,37 @@ export class TabManager {
       /* best-effort — some internal pages (chrome UI itself) can't be
          attached to, that's fine, nothing to disable there anyway */
     }
+  }
+
+  // Per-site "JavaScript off for this site" exception: unlike ad
+  // blocking/cookies/images (checked live per network request),
+  // script-execution is a standing CDP toggle on the page itself, so it
+  // has to be explicitly recomputed and re-sent — once right after a
+  // navigation commits (see the did-navigate listener below, so a fresh
+  // page never briefly runs with the wrong domain's setting), and once
+  // immediately when the person flips the per-site exception itself (see
+  // setSiteFeatureOverride above, for a tab already sitting on that
+  // domain with nothing to navigate to).
+  private async applyJsToggleForCurrentDomain(wc: Electron.WebContents) {
+    if (!this.javascriptGloballyDisabled) {
+      // Nothing to enforce globally. Only bother clearing an
+      // already-attached debugger back to "enabled" — for a tab that had
+      // this flipped on earlier in the session and is now navigating
+      // after the GLOBAL toggle got turned back off — rather than
+      // attaching a debugger to every ordinary tab just to say "not
+      // disabled" on every single navigation.
+      if (wc.debugger.isAttached()) await this.applyJsToggle(wc, false);
+      return;
+    }
+    let domain = "";
+    try {
+      domain = new URL(wc.getURL()).hostname;
+    } catch {
+      /* internal pages (about:blank, chrome UI) — no domain, nothing to
+         exempt, falls through to the global "disabled" default below */
+    }
+    const exempt = domain !== "" && isFeatureDisabledForDomain("javascript", domain);
+    await this.applyJsToggle(wc, !exempt);
   }
 
   // --- Control center: network-condition simulation (per active tab) -----
@@ -953,6 +1049,11 @@ export class TabManager {
       // loaded should describe the current page, not accumulate across
       // this tab's whole history.
       resetBandwidthBytes(wc.id);
+      // Per-site "JavaScript off for this site" — recomputed for
+      // wherever this navigation just landed, so a tab that goes from a
+      // JS-exempt domain to a normal one (or back) picks up the right
+      // setting before the new page's own scripts get a chance to run.
+      void this.applyJsToggleForCurrentDomain(wc);
     });
   }
 
@@ -976,6 +1077,35 @@ export class TabManager {
         el.appendChild(line);
         clearTimeout(el.__qsHideTimer);
         el.__qsHideTimer = setTimeout(() => el.remove(), 8000);
+      })();
+    `;
+    await wc.executeJavaScript(script, true).catch(() => {});
+  }
+
+  // Control center's "Popup-Block" used to drop a blocked popup with
+  // zero feedback — a click that looked like it just did nothing,
+  // indistinguishable from a broken link, with no error page to explain
+  // it (unlike the ad blocker, nothing was ever requested from the
+  // network here to attach one to). Same banner technique as
+  // showJsErrorOverlay above, keyed per tab id (not per webContents —
+  // matches every other per-tab map on this class) so a page spamming
+  // window.open() in a loop doesn't spam a new banner line for every
+  // single attempt.
+  private popupBlockedBannerShownAt = new Map<string, number>();
+
+  private async showPopupBlockedBanner(id: string, wc: Electron.WebContents) {
+    const now = Date.now();
+    if (now - (this.popupBlockedBannerShownAt.get(id) ?? 0) < 4000) return;
+    this.popupBlockedBannerShownAt.set(id, now);
+    const script = `
+      (() => {
+        if (document.getElementById("qs-popup-blocked-banner")) return;
+        const el = document.createElement("div");
+        el.id = "qs-popup-blocked-banner";
+        el.style.cssText = "position:fixed;bottom:16px;left:16px;z-index:2147483647;background:#1f2937;color:#fff;padding:10px 14px;border-radius:8px;font:12px/1.4 -apple-system,sans-serif;box-shadow:0 4px 16px rgba(0,0,0,0.3);max-width:320px;";
+        el.textContent = "Pop-up blocked \u2014 turn it off for this site in the Control center if you need it.";
+        document.body.appendChild(el);
+        setTimeout(() => el.remove(), 6000);
       })();
     `;
     await wc.executeJavaScript(script, true).catch(() => {});
@@ -1879,6 +2009,31 @@ export class TabManager {
   // no/partial referrer). Bookmarks, the omnibox, and other non-link
   // callers simply don't pass one, which is correct — those genuinely have
   // no referrer in a real browser either.
+  // Control center's "Autoplay-Block", per-tab now instead of the old
+  // app-wide command-line switch (see main.ts's early-startup block).
+  // webPreferences.autoplayPolicy can only be set at WebContentsView
+  // CREATION time — unlike the JavaScript toggle above, there's no CDP
+  // (or any other) API to flip it live, so this only takes effect for
+  // the tab being created right now; a tab that's already open and later
+  // navigates to a domain with a different override keeps whatever
+  // policy it started with until it's reopened. Real, but strictly
+  // better than the switch it replaces, which applied the SAME policy to
+  // literally every tab in the app and needed a full relaunch for any
+  // change at all.
+  private autoplayPolicyFor(
+    url: string,
+  ): "no-user-gesture-required" | "user-gesture-required" | undefined {
+    if (!autoplayBlockEnabled()) return undefined; // Electron's own permissive default
+    let domain = "";
+    try {
+      domain = new URL(url).hostname;
+    } catch {
+      return "user-gesture-required";
+    }
+    if (domain && isFeatureDisabledForDomain("autoplay", domain)) return undefined;
+    return "user-gesture-required";
+  }
+
   createTab(url: string = HOME_URL, referrer?: Electron.Referrer): string {
     const id = randomUUID();
     this.openedAt.set(id, Date.now());
@@ -1898,6 +2053,7 @@ export class TabManager {
         // of always forcing a download — same plugin Chrome/Edge/every
         // other Chromium browser ship, just off by default in Electron.
         plugins: true,
+        autoplayPolicy: this.autoplayPolicyFor(url),
         ...(this.contentSession ? { session: this.contentSession } : {}),
       },
     });
@@ -2065,8 +2221,27 @@ export class TabManager {
       const isRealNewTabRequest = disposition === "foreground-tab" || disposition === "background-tab";
       // Control center's "Popup-Block": when on, a non-auth, non-new-tab
       // popup is dropped entirely (real popup blocking) instead of being
-      // turned into a new tab below.
-      if (!isRealNewTabRequest && popupBlockEnabled()) return { action: "deny" };
+      // turned into a new tab below. Per-site exception uses THIS tab's
+      // own domain — view.webContents is the page attempting to open the
+      // popup, not the popup's own (about-to-not-exist) destination.
+      if (!isRealNewTabRequest && popupBlockEnabled()) {
+        let ownDomain = "";
+        try {
+          ownDomain = new URL(view.webContents.getURL()).hostname;
+        } catch {
+          /* no domain to exempt against — falls through to blocked below */
+        }
+        if (!ownDomain || !isFeatureDisabledForDomain("popups", ownDomain)) {
+          // Previously silent — a blocked popup looked identical to "the
+          // link does nothing", the exact same complaint the ad blocker
+          // had before it got a dedicated error page. There's no
+          // navigation to attach an error page to here (nothing was ever
+          // requested from the network), so a small on-page banner is
+          // the only way to surface this at all.
+          void this.showPopupBlockedBanner(id, view.webContents);
+          return { action: "deny" };
+        }
+      }
       // Anything that isn't a known auth-popup flow (checked above) still
       // shouldn't spawn a real OS window, but overwriting the CURRENT tab
       // with wherever the popup wanted to go is its own bug: this is the
@@ -2120,7 +2295,7 @@ export class TabManager {
     this.applyGridOverlayTo(id, view.webContents);
     this.applyAdBlockCosmeticCssTo(id, view.webContents);
     this.applyUserAgentPresetTo(view.webContents);
-    if (this.javascriptGloballyDisabled) void this.applyJsToggle(view.webContents, true);
+    if (this.javascriptGloballyDisabled) void this.applyJsToggleForCurrentDomain(view.webContents);
     this.trackConsoleErrors(id, view.webContents);
     this.applyBackgroundThrottleTo(id, view.webContents);
     // HTML5 Fullscreen API (YouTube's fullscreen button, video players,
@@ -2997,7 +3172,7 @@ function describeNetError(errorCode: number): { title: string; hint: string } {
     case -20: // ERR_BLOCKED_BY_CLIENT
       return {
         title: "Blocked by the Ad-Blocker",
-        hint: "QueckSilver Arch's built-in Ad-Blocker (or one of your custom block patterns) stopped this request. Turn it off for this site in the Control center if the page needs it.",
+        hint: "QueckSilver Arch's built-in Ad-Blocker (or one of your custom block patterns) stopped this request. Turn off the Ad-Blocker for this site in the Control center if the page needs it.",
       };
     case -324: // ERR_EMPTY_RESPONSE
       return {

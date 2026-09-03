@@ -5,9 +5,9 @@ import { JsonStore } from "./json-store";
 // ControlCenterContent.tsx). Kept in its own store/file rather than
 // folded into privacy-settings-store.ts because most of these are plain
 // browser-behavior toggles, not strictly privacy/security posture, and
-// because a couple of them (hardwareAcceleration, autoplayBlock) only take
-// effect on the NEXT app launch — worth being able to reason about as a
-// separate, self-contained group.
+// because one of them (hardwareAcceleration) only takes effect on the
+// NEXT app launch — worth being able to reason about as a separate,
+// self-contained group.
 //
 // Every field here is intentionally a dumb, serializable value — the
 // actual *effect* of flipping one lives in privacy.ts (webRequest/
@@ -25,7 +25,7 @@ export type ControlCenterSettings = {
   javascriptDisabled: boolean;
   cookiesBlocked: boolean;
   doNotTrack: boolean;
-  autoplayBlock: boolean; // Chromium switch, needs a relaunch to apply
+  autoplayBlock: boolean; // per-tab webPreferences.autoplayPolicy, see tab-manager.ts's createTab()
   popupBlock: boolean;
   networkThrottle: NetworkThrottlePreset;
   // Masterplan #35 — only read when networkThrottle === "custom", see
@@ -239,6 +239,12 @@ export function cookiesBlocked(): boolean {
 }
 export function popupBlockEnabled(): boolean {
   return getControlCenterSettings().popupBlock;
+}
+// Read live now (not just once at startup) — see tab-manager.ts's
+// createTab(), which sets webPreferences.autoplayPolicy per tab instead
+// of the old app-wide command-line switch.
+export function autoplayBlockEnabled(): boolean {
+  return getControlCenterSettings().autoplayBlock;
 }
 export function cameraGloballyBlocked(): boolean {
   return getControlCenterSettings().cameraGlobalBlock;
