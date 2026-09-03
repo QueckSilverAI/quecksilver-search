@@ -362,6 +362,15 @@ const onionize = {
     return () => ipcRenderer.removeListener("onionize:changed", handler);
   },
 };
+const toolbarStyle = {
+  get: (): Promise<string> => ipcRenderer.invoke("toolbarStyle:get"),
+  set: (style: string): Promise<void> => ipcRenderer.invoke("toolbarStyle:set", style),
+  onChanged: (cb: (style: string) => void): (() => void) => {
+    const handler = (_e: unknown, style: string) => cb(style);
+    ipcRenderer.on("toolbarStyle:changed", handler);
+    return () => ipcRenderer.removeListener("toolbarStyle:changed", handler);
+  },
+};
 
 const windowControls = {
   minimize: (): Promise<void> => ipcRenderer.invoke("window:minimize"),
@@ -480,6 +489,7 @@ contextBridge.exposeInMainWorld("browserAPI", {
   clipboard: clipboardApi,
   searchEngine,
   onionize,
+  toolbarStyle,
 });
 contextBridge.exposeInMainWorld("platformInfo", { platform: process.platform });
 
@@ -507,4 +517,5 @@ export type BrowserAPI = {
   clipboard: typeof clipboardApi;
   searchEngine: typeof searchEngine;
   onionize: typeof onionize;
+  toolbarStyle: typeof toolbarStyle;
 };

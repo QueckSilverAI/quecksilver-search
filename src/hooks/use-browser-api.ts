@@ -184,6 +184,11 @@ type BrowserAPI = {
     set: (enabled: boolean) => Promise<void>;
     onChanged: (cb: (enabled: boolean) => void) => () => void;
   };
+  toolbarStyle: {
+    get: () => Promise<string>;
+    set: (style: string) => Promise<void>;
+    onChanged: (cb: (style: string) => void) => () => void;
+  };
   downloads: {
     list: () => Promise<DownloadItem[]>;
     remove: (id: string) => Promise<void>;

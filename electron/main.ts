@@ -177,6 +177,7 @@ import {
 } from "./zora-settings-store";
 import { resolveAllToolPermissions, ZORA_TOOL_CATALOG } from "./zora-tool-catalog";
 import { getSearchEngineSetting, setSearchEngineSetting, getOnionizeSetting, setOnionizeSetting } from "./search-engine-store";
+import { getToolbarStyleSetting, setToolbarStyleSetting } from "./toolbar-style-store";
 
 app.name = "QueckSilver Arch";
 // No File/Edit/View/Window/Help bar — this app is deliberately chrome-free
@@ -2118,6 +2119,16 @@ function registerIpc() {
   ipcMain.handle("onionize:set", (_e, enabled: boolean) => {
     setOnionizeSetting(enabled);
     for (const { win } of windows.values()) win.webContents.send("onionize:changed", enabled);
+  });
+  // Same reasoning as searchEngine above: was localStorage before, but the
+  // chrome UI's window loads from a fresh http://127.0.0.1:<random port>
+  // origin every app launch (see ensureProductionServer), so a style
+  // chosen in Settings never survived a restart. Not window-scoped, same
+  // as search engine — one toolbar style across every window.
+  ipcMain.handle("toolbarStyle:get", () => getToolbarStyleSetting());
+  ipcMain.handle("toolbarStyle:set", (_e, style: string) => {
+    setToolbarStyleSetting(style);
+    for (const { win } of windows.values()) win.webContents.send("toolbarStyle:changed", style);
   });
 
   ipcMain.handle("window:minimize", (e) => contextFor(e)?.win.minimize());

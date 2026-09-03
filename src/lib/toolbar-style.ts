@@ -23,8 +23,8 @@ export type ToolbarStyleId =
   | "seamless-pill";
 
 export const TOOLBAR_STYLES: { id: ToolbarStyleId; label: string }[] = [
-  { id: "seamless-pill", label: "Default" },
-  { id: "underline-slide", label: "Sliding underline" },
+  { id: "underline-slide", label: "Default" },
+  { id: "seamless-pill", label: "Seamless pill" },
   { id: "plain", label: "Plain" },
   { id: "segmented-pill", label: "Segmented pill" },
   { id: "tinted-circles", label: "Tinted circles" },
@@ -42,23 +42,51 @@ export const TOOLBAR_STYLES: { id: ToolbarStyleId; label: string }[] = [
   { id: "sliding-drawer", label: "Sliding drawer" },
 ];
 
-const KEY = "qs-toolbar-style";
-const DEFAULT_STYLE: ToolbarStyleId = "seamless-pill";
+const DEFAULT_STYLE: ToolbarStyleId = "underline-slide";
 
-// Settings (where the picker lives) and the toolbar itself (routes/index.tsx)
-// are separate component instances, each with their own useToolbarStyle()
-// call — a plain useState+localStorage pair wouldn't let one instance's
-// change reach the other without a full reload. This tiny subscriber list
-// is what makes picking a style in Settings show up on the real toolbar
-// immediately.
+function isToolbarStyleId(value: string): value is ToolbarStyleId {
+  return TOOLBAR_STYLES.some((s) => s.id === value);
+}
+
+// Backed by the main process (electron/toolbar-style-store.ts), NOT
+// localStorage — this used to be a plain localStorage read/write, but the
+// chrome UI's window loads from a fresh http://127.0.0.1:<random port>
+// origin every time the app starts (see ensureProductionServer in
+// electron/main.ts), so a choice saved to that origin's localStorage was
+// unreachable — and looked "reset" — the next time the app launched.
+// Every other setting that's meant to survive a restart already goes
+// through the main process for exactly this reason (see
+// src/lib/settings-store.ts's useSearchEngine) — this brings toolbar
+// style in line.
+//
+// getToolbarStyle() below still needs to be readable synchronously by any
+// new useToolbarStyle() instance that mounts before its own IPC round
+// trip resolves — so this keeps a plain in-memory mirror, seeded by one
+// async IPC fetch on module load and kept current for the lifetime of
+// this window by a push event from main whenever ANY window changes it.
+let cachedStyle: ToolbarStyleId = DEFAULT_STYLE;
 const listeners = new Set<(style: ToolbarStyleId) => void>();
 
-export function useToolbarStyle() {
-  const [style, setStyleState] = useState<ToolbarStyleId>(() => {
-    if (typeof window === "undefined") return DEFAULT_STYLE;
-    const raw = window.localStorage.getItem(KEY) as ToolbarStyleId | null;
-    return raw && TOOLBAR_STYLES.some((s) => s.id === raw) ? raw : DEFAULT_STYLE;
+function setCachedStyle(style: ToolbarStyleId) {
+  cachedStyle = style;
+  listeners.forEach((l) => l(style));
+}
+
+if (typeof window !== "undefined" && window.browserAPI) {
+  window.browserAPI.toolbarStyle.get().then((s) => {
+    if (isToolbarStyleId(s)) setCachedStyle(s);
   });
+  window.browserAPI.toolbarStyle.onChanged((s) => {
+    if (isToolbarStyleId(s)) setCachedStyle(s);
+  });
+}
+
+export function getToolbarStyle(): ToolbarStyleId {
+  return cachedStyle;
+}
+
+export function useToolbarStyle() {
+  const [style, setStyleState] = useState<ToolbarStyleId>(cachedStyle);
 
   useEffect(() => {
     listeners.add(setStyleState);
@@ -68,8 +96,8 @@ export function useToolbarStyle() {
   }, []);
 
   const setStyle = useCallback((next: ToolbarStyleId) => {
-    window.localStorage.setItem(KEY, next);
-    for (const l of listeners) l(next);
+    setCachedStyle(next); // optimistic — feels instant, matches every other setting in this app
+    window.browserAPI?.toolbarStyle.set(next);
   }, []);
 
   return { style, setStyle };
