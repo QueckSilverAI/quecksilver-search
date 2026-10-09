@@ -1,37 +1,23 @@
-# Remix of QueckSilver Arch Portal
+# QueckSilver Arch
 
-Baue mir folgendes:
-Ein Browser App, es muss nur design sein, also die button müssen nicht funktionieren. 
+A calm, minimal, Swiss-designed desktop browser for Windows, macOS and Linux, with Zora built in.
 
-Das design sollte so wie in den beiden fotos sein, ich habe auch das quecksilver logo uploaded. der browser wird QueckSilver Arch heissen. auf der startseite des browser sollte folgendes sein:
+- **Browsing:** address bar for URLs and searches (15 search engines, default DuckDuckGo), favorites, tab groups, split view, optional vertical tabs, reader and night mode.
+- **Privacy:** ad and tracker blocker, Incognito and Tor windows, HTTPS-only, WebRTC leak protection, DNS-over-HTTPS, per-site permissions.
+- **Zora:** the same assistant as QueckSilver AI, in a sidebar next to the page, with tools to drive the browser. A permission preset (Autonomous, Balanced, Cautious) controls what runs without asking.
+- **Account:** sign in with your QueckSilver account to sync favorites, passwords and settings.
 
-oben eine cleane, minimalistche tobpar, wo einfach links klein das quecksilver logo ist (QueckSilver.), dann mittig im header sollte so eine pill sein, wo man die webadresse eingeben kann oder nach etwas suchen kann, "Search or enter URL...", dann gibt es mittig eine search bar, untendran lesezeichen (per + adden), sonst gibt es nichts
-noch: das masktochen sollte irgendwo so runter baumelt, also an der chain (ist im html)
-
-das main field der app ist aber so nicht gant am rand, also es hat überall so bisschen abstand wo dann einfach weiss ist
-
-als hintergrund der app (einfach das untere feld, also nicht die topbar,) sollte so ein grid sein. 
-ich habe die farben, quecksilver logo, masktochen, grid etc alles im html, benutze es von dort
-
-This project was built with [Lovable](https://lovable.dev).
-
-**Live app**: https://queck-silver-browser.lovable.app
-
-## Build with Lovable
-
-Continue developing this project in the [Lovable editor](https://lovable.dev/projects/fa2d32b3-c324-49dd-bf2a-d4c787104cab).
-
-- **Ship faster**: describe what you want to build and Lovable handles the code.
-- **Stay in sync**: every change made in Lovable is committed straight to this repository.
-- **Full ownership**: this code is yours. Push to `main` on GitHub and your changes sync back into Lovable, ready for your next prompt.
+Downloads: https://quecksilver.ch/arch
 
 ## Development
 
-Prefer working locally? You need Node.js and npm — [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating).
+Electron app with a TanStack Start renderer.
 
 ```sh
-git clone <this-repository-url>
-cd <repository-name>
-npm i
-npm run dev
+npm install
+npm run dev            # renderer only (browser fallback, no Electron APIs)
+npm run electron:dev   # renderer + Electron
+npm run electron:pack  # build installers
 ```
+
+Zora talks to the `search-chat` Edge Function of the QueckSilver AI project (see `src/lib/supabase-config.ts`). Releases are published to GitHub Releases as `QueckSilver.Arch-<version>-<os>-<arch>`.

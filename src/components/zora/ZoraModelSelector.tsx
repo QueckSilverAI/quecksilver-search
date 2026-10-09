@@ -2,12 +2,11 @@ import { Check, ChevronUp } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 // Same four Zora variants as QueckSilver AI's ModelSelector.tsx
-// (VARIANT_LABEL: omni/Flash/FlashLite/Pro), renamed to this app's own
-// "-Arch" naming. UI-only for now — search-chat always runs one fixed
-// backend model; picking a variant here doesn't change what actually
-// answers yet (see the master plan, this is scoped as a follow-up once
-// search-chat supports a `variant` parameter).
-const VARIANTS = ["6.1-Arch", "6.1-Flash-Arch", "6.1-Flash-Lite-Arch", "6.1-Pro-Arch"] as const;
+// (VARIANT_LABEL: omni/Flash/FlashLite/Pro) with the same current labels.
+// UI-only for now — search-chat always runs one fixed backend model;
+// picking a variant here doesn't change what actually answers yet (it
+// would need a `variant` parameter on search-chat).
+const VARIANTS = ["Zora 6.5", "Zora Flash", "Zora Flash Lite", "Zora Pro"] as const;
 
 // Lives inside ZoraChatInput's bottom row now (was the sidebar's own
 // header before) — same QueckSilver AI convention this was already
@@ -15,7 +14,7 @@ const VARIANTS = ["6.1-Arch", "6.1-Flash-Arch", "6.1-Flash-Lite-Arch", "6.1-Pro-
 // just applied here too. Opens upward (dropdown sits above the button)
 // since the button itself is now near the bottom of the panel.
 export function ZoraModelSelector() {
-  const [selected, setSelected] = useState<(typeof VARIANTS)[number]>("6.1-Flash-Lite-Arch");
+  const [selected, setSelected] = useState<(typeof VARIANTS)[number]>("Zora Flash Lite");
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
 
